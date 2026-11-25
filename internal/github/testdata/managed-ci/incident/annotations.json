@@ -1,0 +1,6 @@
+[
+  {
+    "annotation_level": "failure",
+    "message": "The job was not acquired by a runner within 10 minutes of the request. Job was cancelled."
+  }
+]

@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +13,153 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 type lifecycleCLIResultRunner struct {
 	output string
+}
+
+type managedCILifecycleClient struct {
+	*fakeGitHubClient
+	observation github.ManagedCIObservation
+	err         error
+	requests    []github.ManagedCIRequest
+}
+
+type retainedManagedCIFailureClient struct {
+	*fakeGitHubClient
+	failures      []github.ManagedCIFailureEvidence
+	diagnosisErr  error
+	executions    []github.ManagedCIExecution
+	active        *github.ManagedCIExecution
+	activeErr     error
+	activeReads   []github.ManagedCIActiveExecutionRequest
+	refreshed     *github.ManagedCIExecution
+	refreshErr    error
+	refreshReads  []github.ManagedCIExecution
+	identity      *github.ManagedCIPullRequestIdentity
+	identityReads []int
+}
+
+type observedRetainedManagedCIFailureClient struct {
+	jobs    []github.ManagedCIJobEvidence
+	jobsErr error
+	*managedCILifecycleClient
+	refreshed    *github.ManagedCIExecution
+	refreshErr   error
+	refreshReads []github.ManagedCIExecution
+	failures     []github.ManagedCIFailureEvidence
+	diagnoses    []github.ManagedCIExecution
+}
+
+func (c *observedRetainedManagedCIFailureClient) ReadManagedCIExecutionJobs(
+	_ context.Context, _ github.ManagedCIExecution,
+) ([]github.ManagedCIJobEvidence, error) {
+	return c.jobs, c.jobsErr
+}
+
+type managedCIActiveLifecycleClient struct {
+	*managedCILifecycleClient
+	active github.ManagedCIExecution
+}
+
+func (c *managedCILifecycleClient) ObserveManagedCI(_ context.Context, request github.ManagedCIRequest) (github.ManagedCIObservation, error) {
+	c.requests = append(c.requests, request)
+	observation := c.observation
+	if observation.SourceJobs == nil && len(observation.Failures) > 0 {
+		// These lifecycle fixtures provide the complete failure set but predate
+		// source-job inventory evidence. Model the observer's inventory from
+		// that complete set unless a test supplies SourceJobs explicitly.
+		observation.SourceJobs = make([]github.ManagedCIJobEvidence, 0, len(observation.Failures))
+		for _, failure := range observation.Failures {
+			conclusion := "failure"
+			if failure.Classification == github.ManagedCIRunnerShortage {
+				conclusion = "cancelled"
+			}
+			observation.SourceJobs = append(observation.SourceJobs, github.ManagedCIJobEvidence{
+				JobID: failure.JobID, RunID: failure.RunID, Attempt: failure.Attempt,
+				Name: failure.CheckName, Status: "completed", Conclusion: conclusion,
+			})
+		}
+	}
+	return observation, c.err
+}
+
+func (c *retainedManagedCIFailureClient) DiagnoseManagedCIExecutionFailure(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) ([]github.ManagedCIFailureEvidence, error) {
+	c.executions = append(c.executions, execution)
+	return c.failures, c.diagnosisErr
+}
+
+func (c *retainedManagedCIFailureClient) ObserveManagedCIActiveExecution(
+	_ context.Context,
+	request github.ManagedCIActiveExecutionRequest,
+) (github.ManagedCIExecution, error) {
+	c.activeReads = append(c.activeReads, request)
+	if c.activeErr != nil {
+		return github.ManagedCIExecution{}, c.activeErr
+	}
+	if c.active == nil {
+		return github.ManagedCIExecution{}, errors.New("active execution unavailable")
+	}
+	return *c.active, nil
+}
+
+func (c *retainedManagedCIFailureClient) RefreshManagedCIExecution(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) (github.ManagedCIExecution, error) {
+	c.refreshReads = append(c.refreshReads, execution)
+	if c.refreshErr != nil {
+		return github.ManagedCIExecution{}, c.refreshErr
+	}
+	if c.refreshed != nil {
+		return *c.refreshed, nil
+	}
+	return execution, nil
+}
+
+func (c *retainedManagedCIFailureClient) FetchManagedCIPullRequestIdentity(
+	_ context.Context,
+	pullRequest int,
+) (github.ManagedCIPullRequestIdentity, error) {
+	c.identityReads = append(c.identityReads, pullRequest)
+	if c.identity == nil {
+		return github.ManagedCIPullRequestIdentity{}, errors.New("PR identity unavailable")
+	}
+	return *c.identity, nil
+}
+
+func (c *observedRetainedManagedCIFailureClient) RefreshManagedCIExecution(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) (github.ManagedCIExecution, error) {
+	c.refreshReads = append(c.refreshReads, execution)
+	if c.refreshErr != nil {
+		return github.ManagedCIExecution{}, c.refreshErr
+	}
+	if c.refreshed != nil {
+		return *c.refreshed, nil
+	}
+	return execution, nil
+}
+
+func (c *observedRetainedManagedCIFailureClient) DiagnoseManagedCIExecutionFailure(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) ([]github.ManagedCIFailureEvidence, error) {
+	c.diagnoses = append(c.diagnoses, execution)
+	return c.failures, nil
+}
+
+func (c *managedCIActiveLifecycleClient) ObserveManagedCIActiveExecution(
+	_ context.Context,
+	_ github.ManagedCIActiveExecutionRequest,
+) (github.ManagedCIExecution, error) {
+	return c.active, nil
 }
 
 func (r lifecycleCLIResultRunner) Run(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -50,6 +194,2800 @@ func TestLifecycleObservation_VerifiedMergeWinsOverRetainedReview(t *testing.T) 
 	})
 	if verdict.Action != lifecycleSuccess || len(verdict.Evidence) != 0 {
 		t.Fatalf("verified merge verdict = (%v, %#v), want success with no failure evidence", verdict.Action, verdict.Evidence)
+	}
+}
+
+func TestLifecycleObservation_AuthoritativeGreenDoesNotRequireReplacementLinkage(t *testing.T) {
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", Body: "Closes #42", HeadRefOid: "current-sha",
+				BaseRefName: "main", StatusCheckRollup: "success", ReviewDecision: "APPROVED",
+				MergeStateStatus: "CLEAN",
+			}},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-authoritative-green",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action == lifecycleAwait && verdict.Evidence["gate"] == string(lifecycleGatePending) {
+		t.Fatalf("authoritative current-head green CI was blocked on replacement evidence: %+v", verdict)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("green PR unexpectedly queried failed-workflow replacement evidence: %+v", client.requests)
+	}
+}
+
+func TestManagedCIRequestUsesProviderBackedCurrentBaseIdentity(t *testing.T) {
+	pr := &github.PR{
+		Number: 17, State: "open", BaseRefName: "main", HeadRefOid: "current-sha",
+		StatusCheckRollup: "failure",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "101", FailedChecks: failedCIChecks("101", "build"),
+		},
+	}
+
+	request, ok := managedCIRequestForPR(pr, "current-sha", "owner/repo")
+	if !ok {
+		t.Fatal("managed CI request rejected gh output that omits baseRefOid")
+	}
+	if request.BaseSHA != "" {
+		t.Fatalf("base SHA = %q, want empty for the managed observer to resolve via REST", request.BaseSHA)
+	}
+}
+
+func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *testing.T) {
+	now := time.Unix(2_000, 0).UTC()
+	workDir := t.TempDir()
+	failedChecks := []github.CIFailedCheck{
+		{Name: "build (macos-latest)", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
+		{Name: "CI / quality-gate", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+	}
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks", MergeStateStatus: "BLOCKED",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "101", FailedChecks: failedChecks,
+					CheckNames: []string{"build (macos-latest)", "CI / quality-gate"},
+				},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+				Status: "completed", Conclusion: "cancelled",
+			},
+			SourceJobs: []github.ManagedCIJobEvidence{
+				{JobID: 138, RunID: 101, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 140, RunID: 101, Attempt: 1, Name: "CI / quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			Failures: []github.ManagedCIFailureEvidence{
+				{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build (macos-latest)",
+					DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+				},
+				{
+					JobID: 140, RunID: 101, Attempt: 1, CheckName: "CI / quality-gate",
+					DetailsURL: failedChecks[1].DetailsURL, Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"},
+				},
+			},
+			Replacement: &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+			},
+			ReplacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 142, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "queued",
+			}},
+		},
+	}
+	log := &spyEventLog{}
+	if err := log.Log(events.Event{
+		Type: "run.started", Timestamp: now.Add(-time.Minute),
+		RunID: "run-replacement-without-links", Issue: 42,
+		Payload: map[string]any{"branch": gateTestBranch},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, eventLog: log, errorLog: io.Discard},
+		renderCfg:   prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-replacement-without-links", HostPathsReady: true,
+		AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != string(lifecycleGatePending) {
+		t.Fatalf("verified queued replacement verdict = %+v, want pending CI await", verdict)
+	}
+	if len(client.requests) != 1 || client.requests[0].Repository != "owner/repo" ||
+		client.requests[0].PullRequest != 17 || client.requests[0].HeadSHA != "current-sha" ||
+		client.requests[0].BaseRefName != "main" || client.requests[0].FailedWorkflowRunID != "101" {
+		t.Fatalf("managed CI request = %+v, want full current PR/source identity", client.requests)
+	}
+	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+	if !ok || wait["execution_id"] != "actions:273743359:102:1" {
+		t.Fatalf("CI wait = %#v, want the replacement identity before rollup job links exist", verdict.Evidence["ci_wait"])
+	}
+	if _, sourceFailure := verdict.Evidence["managed_ci_source_failure"]; sourceFailure {
+		t.Fatalf("runner-shortage-only source run unexpectedly retained an independent failure: %#v",
+			verdict.Evidence["managed_ci_source_failure"])
+	}
+
+	client.prs[gateTestBranch].CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+		Name: "build-linux", DetailsURL: "https://github.com/owner/repo/actions/runs/102/job/33",
+		Repository: "owner/repo", RunID: 102,
+	}}
+	linked := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-replacement-without-links", HostPathsReady: true,
+		AttemptStatus: "success",
+	})
+	if linked.Action != lifecycleAwait {
+		t.Fatalf("linked replacement verdict = %+v, want the same external CI wait", linked)
+	}
+	session.emitAwait(t.Context(), "run-replacement-without-links", AgentRunResult{Branch: gateTestBranch}, linked.Evidence)
+	projected := events.ProjectRunStates(log.snapshot())
+	if len(projected) != 1 || projected[0].AwaitEvent == nil {
+		t.Fatalf("projected managed CI wait state = %+v, want one active await", projected)
+	}
+	eventWait, ok := projected[0].AwaitEvent.Payload["ci_wait"].(map[string]any)
+	if !ok || eventWait["execution_id"] != "actions:273743359:102:1" {
+		t.Fatalf("run.await event lost verified replacement identity: %#v", projected[0].AwaitEvent.Payload)
+	}
+	eventExecution, ok := eventWait["actions_execution"].(map[string]any)
+	if !ok || eventExecution["base_sha"] != "base-sha" {
+		t.Fatalf("run.await event lost current base identity: %#v", eventWait["actions_execution"])
+	}
+	eventLinks, ok := eventExecution["check_links"].([]any)
+	if !ok || len(eventLinks) != 1 {
+		t.Fatalf("run.await event lost replacement check-execution links: %#v", eventExecution["check_links"])
+	}
+	eventLink, ok := eventLinks[0].(map[string]any)
+	if !ok || eventLink["details_url"] != "https://github.com/owner/repo/actions/runs/102/job/33" {
+		t.Fatalf("run.await event lost replacement check-execution links: %#v", eventExecution["check_links"])
+	}
+}
+
+func TestLifecycleObservation_StaleAncestorCannotRollBackReplacementAfterRestart(t *testing.T) {
+	now := time.Unix(3_000, 0).UTC()
+	workDir := t.TempDir()
+	seedPR := &github.PR{
+		Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "rollup-a",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100"},
+	}
+	execution := func(runID, runNumber int64) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+			WorkflowID: 9, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: 1,
+			Status: "queued",
+		}
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	if _, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", execution(101, 51)); err != nil {
+		t.Fatalf("bind first replacement: %v", err)
+	}
+	seedPR.CIExecutionID = "rollup-b"
+	seedPR.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "101"}
+	now = now.Add(5 * time.Minute)
+	if _, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", execution(102, 52)); err != nil {
+		t.Fatalf("advance to second replacement: %v", err)
+	}
+
+	failedChecks := failedCIChecks("100", "build-macos")
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "rollup-a",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100", FailedChecks: failedChecks, CheckNames: []string{"build-macos"}},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+				Status: "completed", Conclusion: "cancelled",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 10, RunID: 100, Attempt: 1, CheckName: "build-macos",
+				DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+			}},
+			Replacement: func() *github.ManagedCIExecution {
+				failed := execution(101, 51)
+				failed.Status = "completed"
+				failed.Conclusion = "failure"
+				return failed
+			}(),
+			ReplacementFailures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/991",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	restarted := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(restarted).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-stale-replacement-ancestor",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != string(lifecycleGatePending) ||
+		!ok || wait["execution_id"] != "actions:9:102:1" || verdict.ciRepairRequired {
+		t.Fatalf("stale A→B observation after retained A→B→C = %+v, want an await on C without repair", verdict)
+	}
+	if failure, exists := verdict.Evidence["managed_ci_replacement_failure"]; exists {
+		t.Fatalf("stale B failure was promoted over the retained C generation: %#v", failure)
+	}
+}
+
+func TestLifecycleObservation_ConfirmedFailureWithoutCheckSupersessionStillTriggersRepair(t *testing.T) {
+	now := time.Unix(3_250, 0).UTC()
+	workDir := t.TempDir()
+	seedPR := &github.PR{
+		Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "rollup-a",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100"},
+	}
+	execution := func(runID, runNumber int64) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+			WorkflowID: 9, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: 1,
+			Status: "queued",
+		}
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	_, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", execution(101, 51))
+	if err != nil {
+		t.Fatalf("bind first replacement: %v", err)
+	}
+	seedPR.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "101"}
+	now = now.Add(time.Minute)
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", execution(102, 52))
+	if err != nil {
+		t.Fatalf("advance to newer replacement: %v", err)
+	}
+	failedChecks := failedCIChecks("101", "unit-tests")
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "rollup-b",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101", FailedChecks: failedChecks},
+	}
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 11, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	runID := "run-superseded-source-failure"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, eventLog: eventLog, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	if retained, established := newLifecycleObserver(session).priorOperationEvidence(runID, gateTestBranch, "current-sha"); !established {
+		t.Fatalf("seeded replacement wait is not valid prior operation evidence: %#v", retained)
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || !verdict.ciRepairRequired {
+		t.Fatalf("newer generation without a replacement check suppressed repair: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_CapacityReentryRepairsUnsupersededCheck(t *testing.T) {
+	now := time.Unix(3_300, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "rollup-a",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100", FailedChecks: failedCIChecks("100", "unit-tests")},
+	}
+	execution := func(runID, runNumber int64) *github.ManagedCIExecution {
+		return &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+			WorkflowID: 9, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: 1, Status: "queued",
+		}
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	if _, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", execution(101, 51)); err != nil {
+		t.Fatalf("bind first replacement: %v", err)
+	}
+	pr.CIFailedWorkflow = &github.CIFailedWorkflow{RunID: "101"}
+	now = now.Add(time.Minute)
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", execution(102, 52))
+	if err != nil {
+		t.Fatalf("advance to latest replacement: %v", err)
+	}
+	pr.CIFailedWorkflow = &github.CIFailedWorkflow{
+		RunID: "100", FailedChecks: failedCIChecks("100", "unit-tests"),
+	}
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 11, RunID: 100, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     pr.CIFailedWorkflow.FailedChecks[0].DetailsURL,
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	runID := "run-capacity-superseded-source"
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+		{Type: "run.capacity_queued", RunID: runID, Issue: 42, Payload: map[string]any{"ready": true}},
+	}}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, eventLog: log, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID, HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || !verdict.ciRepairRequired {
+		t.Fatalf("capacity re-entry suppressed unsuperseded check repair: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_FollowsVisibleHigherAttemptBeforeItReachesPRRollup(t *testing.T) {
+	now := time.Unix(3_400, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100", FailedChecks: failedCIChecks("100", "build-macos")},
+	}
+	retained := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+		Status: "in_progress",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", retained)
+	if err != nil {
+		t.Fatalf("bind initial replacement attempt: %v", err)
+	}
+	pr.StatusCheckRollup = "pending"
+	pr.CIHasActiveChecks = true
+	pr.CIFailedWorkflow = nil
+	pr.CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+		Name: "build (macos-latest)", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/33",
+		Repository: "owner/repo", RunID: 101,
+	}}
+	activeAttempt := *retained
+	activeAttempt.Attempt = 2
+	activeAttempt.Status = "in_progress"
+	client := &managedCIActiveLifecycleClient{
+		managedCILifecycleClient: &managedCILifecycleClient{
+			fakeGitHubClient: &fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+				prs:    map[string]*github.PR{gateTestBranch: pr},
+			},
+		},
+		active: activeAttempt,
+	}
+	runID := "run-visible-higher-attempt"
+	log := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, eventLog: log, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID, HostPathsReady: true, AttemptStatus: "success",
+	})
+	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+	execution, executionOK := wait["actions_execution"].(map[string]any)
+	if verdict.Action != lifecycleAwait || !ok || !executionOK ||
+		execution["run_id"] != int64(101) || execution["attempt"] != 2 ||
+		verdict.Kind == lifecycleVerdictGitHubUnavailable {
+		t.Fatalf("visible higher attempt did not advance the retained CI wait: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_UnexplainedPeerDoesNotBlockVerifiedReplacement(t *testing.T) {
+	now := time.Unix(3_500, 0).UTC()
+	failedChecks := []github.CIFailedCheck{
+		{Name: "build (macos-latest)", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/10"},
+		{Name: "validation", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/11"},
+	}
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "100", FailedChecks: failedChecks, CheckNames: []string{"build (macos-latest)", "validation"},
+				},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+				Status: "completed", Conclusion: "cancelled",
+			},
+			Failures: []github.ManagedCIFailureEvidence{
+				{
+					JobID: 10, RunID: 100, Attempt: 1, CheckName: failedChecks[0].Name,
+					DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+				},
+				{
+					JobID: 11, RunID: 100, Attempt: 1, CheckName: failedChecks[1].Name,
+					DetailsURL: failedChecks[1].DetailsURL, Classification: github.ManagedCIUnexplainedFailure,
+				},
+			},
+			Replacement: &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+				Status: "queued",
+			},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-shortage-plus-unexplained",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+	if verdict.Action != lifecycleAwait || verdict.Kind == lifecycleVerdictGitHubUnavailable ||
+		!ok || wait["execution_id"] != "actions:9:101:1" {
+		t.Fatalf("unexplained peer blocked the verified replacement wait: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_UnexplainedActiveJobUsesOrdinaryCIFailureHandling(t *testing.T) {
+	now := time.Unix(3_600, 0).UTC()
+	failedChecks := failedCIChecks("100", "unit-tests")
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "failed-checks",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "100", FailedChecks: failedChecks, CheckNames: []string{"unit-tests"},
+				},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+				Status: "in_progress",
+			},
+			SourceJobs: []github.ManagedCIJobEvidence{{
+				JobID: 11, RunID: 100, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "failure",
+			}},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 11, RunID: 100, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIUnexplainedFailure,
+			}},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-unexplained-active-source",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["gate"] != "ci-failure" ||
+		verdict.Kind == lifecycleVerdictGitHubUnavailable {
+		t.Fatalf("complete active-workflow failure was not handled as ordinary CI failure: %+v", verdict)
+	}
+}
+
+func TestManagedCICompletedReplacementRetainsDiagnosedNonCodeOutcome(t *testing.T) {
+	request := github.ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha",
+		HeadSHA: "current-sha", FailedWorkflowRunID: "100",
+		FailedChecks: []github.CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/10",
+		}},
+	}
+	source := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+		Status: "completed", Conclusion: "cancelled",
+	}
+	replacement := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+		Status: "completed", Conclusion: "cancelled",
+	}
+	observation := github.ManagedCIObservation{
+		Source: source,
+		SourceJobs: []github.ManagedCIJobEvidence{{
+			JobID: 10, RunID: 100, Attempt: 1, Name: "build-macos", Status: "completed", Conclusion: "cancelled",
+		}},
+		Failures: []github.ManagedCIFailureEvidence{{
+			JobID: 10, RunID: 100, Attempt: 1, CheckName: "build-macos",
+			DetailsURL: request.FailedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+		}},
+		Replacement: &replacement,
+		ReplacementFailures: []github.ManagedCIFailureEvidence{{
+			JobID: 20, RunID: 101, Attempt: 1, CheckName: "build (macos-latest)",
+			DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/20",
+			Classification: github.ManagedCIRunnerShortage,
+		}},
+	}
+	got := classifyManagedCIFailureObservation("owner/repo", request, observation, nil)
+	if got.Unknown || got.IndependentFailure || got.Replacement == nil ||
+		got.Replacement.RunID != replacement.RunID || got.Replacement.Status != "completed" ||
+		got.Replacement.Conclusion != "cancelled" {
+		t.Fatalf("completed replacement shortage lost its verified terminal state: %+v", got)
+	}
+}
+
+func TestLifecycleObservation_ReplacementStatusDoesNotManufactureGreenCI(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string
+		conclusion string
+		wantAction lifecycleAction
+	}{
+		{name: "queued", status: "queued", wantAction: lifecycleAwait},
+		{name: "running", status: "in_progress", wantAction: lifecycleAwait},
+		{name: "passed but required rollup is stale failure", status: "completed", conclusion: "success", wantAction: lifecycleAwait},
+		{name: "completed failure without replacement diagnostics is inconclusive", status: "completed", conclusion: "failure", wantAction: lifecycleAwait},
+		{name: "unknown replacement status is inconclusive", status: "mystery", wantAction: lifecycleAwait},
+		{name: "unknown completed conclusion is inconclusive", status: "completed", conclusion: "mystery", wantAction: lifecycleAwait},
+		{name: "active replacement with conclusion is contradictory", status: "queued", conclusion: "success", wantAction: lifecycleAwait},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(4_000, 0).UTC()
+			client := &managedCILifecycleClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs: map[string]*github.PR{gateTestBranch: {
+						Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+						StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks", MergeStateStatus: "BLOCKED",
+						CIFailedWorkflow: &github.CIFailedWorkflow{
+							RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"), CheckNames: []string{"build-macos"},
+						},
+					}},
+				},
+				observation: github.ManagedCIObservation{
+					Source: github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+						Status: "completed", Conclusion: "cancelled",
+					},
+					Failures: []github.ManagedCIFailureEvidence{{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					}},
+					Replacement: &github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+						Status: test.status, Conclusion: test.conclusion,
+					},
+				},
+			}
+			session := &runSession{
+				issueNumber: 42,
+				deps:        runDeps{githubClient: client, errorLog: io.Discard},
+				renderCfg:   prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-replacement-status",
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			if verdict.Action != test.wantAction {
+				t.Fatalf("replacement status verdict = %+v, want action %v", verdict, test.wantAction)
+			}
+			if test.status == "completed" && test.conclusion == "failure" &&
+				verdict.Kind != lifecycleVerdictGitHubUnavailable {
+				t.Fatalf("undocumented completed replacement failure fell back to stale source checks: %+v", verdict)
+			}
+			if test.status == "completed" && test.conclusion == "success" {
+				if verdict.Evidence["gate"] != string(lifecycleGatePending) {
+					t.Fatalf("passed replacement turned stale PR failure green: %+v", verdict.Evidence)
+				}
+				if _, ok := verdict.Evidence["ci_wait"]; !ok {
+					t.Fatalf("stale required-check failure lost its bounded replacement wait: %+v", verdict.Evidence)
+				}
+			}
+			if test.conclusion == "failure" && managedCIReplacementStillResolves(verdict.Evidence, client.prs[gateTestBranch], "owner/repo") {
+				t.Fatalf("completed failing replacement remained authorized as a resolving wait: %+v", verdict.Evidence)
+			}
+		})
+	}
+}
+
+func TestManagedCIDependentFailureRequiresUniqueShortagePrerequisite(t *testing.T) {
+	tests := []struct {
+		name     string
+		failures []github.ManagedCIFailureEvidence
+		jobs     []github.ManagedCIJobEvidence
+		want     bool
+	}{
+		{
+			name: "one exact aggregate prerequisite",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: true,
+		},
+		{
+			name: "unreported independent failed job prevents shortage attribution",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+				{JobID: 30, RunID: 100, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "reported independent failed job prevents shortage attribution",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+				{JobID: 30, RunID: 100, Attempt: 1, CheckName: "unit-tests", Classification: github.ManagedCIConfirmedCodeTestFailure},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+				{JobID: 30, RunID: 100, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "normalized cause collides with another job in the full attempt",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 11, RunID: 100, Attempt: 1, Name: "buildmacos", Status: "completed", Conclusion: "skipped"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "normalized cause collides with another failed check",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 11, RunID: 100, Attempt: 1, CheckName: "build-macos", Classification: github.ManagedCIUnexplainedFailure},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 11, RunID: 100, Attempt: 1, Name: "build-macos", Status: "completed", Conclusion: "failure"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "cause does not identify a shortage",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"unit-tests"}, CausedByResults: []string{"failure"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "missing cause",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+		{
+			name: "cause result conflicts with observed job conclusion",
+			failures: []github.ManagedCIFailureEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build (macos-latest)", Classification: github.ManagedCIRunnerShortage},
+				{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate", Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"failure"}},
+			},
+			jobs: []github.ManagedCIJobEvidence{
+				{JobID: 10, RunID: 100, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
+				{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			},
+			want: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := managedCIDependentFailuresMatchShortage(test.failures, test.jobs); got != test.want {
+				t.Fatalf("unique prerequisite match = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestClassifyManagedCIFailureObservation_UnprovenAggregateDoesNotVetoVerifiedReplacement(t *testing.T) {
+	request := github.ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
+		FailedWorkflowRunID: "100",
+		FailedChecks: []github.CIFailedCheck{
+			{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/10"},
+			{Name: "quality-gate", DetailsURL: "https://github.com/owner/repo/actions/runs/100/job/20"},
+		},
+	}
+	observation := github.ManagedCIObservation{
+		Source: github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: 100, RunNumber: 50, Attempt: 1,
+			Status: "completed", Conclusion: "cancelled",
+		},
+		SourceJobs: []github.ManagedCIJobEvidence{
+			{JobID: 10, RunID: 100, Attempt: 1, Name: "build-macos", Status: "completed", Conclusion: "cancelled"},
+			{JobID: 20, RunID: 100, Attempt: 1, Name: "quality-gate", Status: "completed", Conclusion: "failure"},
+			{JobID: 30, RunID: 100, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "failure"},
+		},
+		Failures: []github.ManagedCIFailureEvidence{
+			{JobID: 10, RunID: 100, Attempt: 1, CheckName: "build-macos",
+				DetailsURL: request.FailedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage},
+			{JobID: 20, RunID: 100, Attempt: 1, CheckName: "quality-gate",
+				DetailsURL: request.FailedChecks[1].DetailsURL, Classification: github.ManagedCIDependentFailure,
+				CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"}},
+		},
+		Replacement: &github.ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
+			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+			Status: "queued",
+		},
+	}
+
+	got := classifyManagedCIFailureObservation("owner/repo", request, observation, nil)
+	if got.Unknown || got.IndependentFailure || got.Replacement == nil ||
+		got.Replacement.RunID != observation.Replacement.RunID {
+		t.Fatalf("unproven aggregate evidence = %+v, want the independently verified replacement without shortage attribution", got)
+	}
+
+	contradictory := observation
+	contradictory.SourceJobs = append([]github.ManagedCIJobEvidence(nil), observation.SourceJobs...)
+	contradictory.SourceJobs[0].JobID = 999
+	got = classifyManagedCIFailureObservation("owner/repo", request, contradictory, nil)
+	if !got.Unknown || got.Replacement != nil {
+		t.Fatalf("unbound shortage job evidence = %+v, want inconclusive without replacement authorization", got)
+	}
+
+	unboundIndependent := observation
+	unboundIndependent.SourceJobs = append([]github.ManagedCIJobEvidence(nil), observation.SourceJobs...)
+	unboundIndependent.SourceJobs[0].JobID = 999
+	unboundIndependent.SourceJobs[0].Conclusion = "failure"
+	unboundIndependent.Failures = append([]github.ManagedCIFailureEvidence(nil), observation.Failures...)
+	unboundIndependent.Failures[0].Classification = github.ManagedCIConfirmedCodeTestFailure
+	got = classifyManagedCIFailureObservation("owner/repo", request, unboundIndependent, nil)
+	if !got.Unknown || got.IndependentFailure || got.Replacement != nil {
+		t.Fatalf("unbound source code-failure claim = %+v, want inconclusive without repair authorization", got)
+	}
+}
+
+func TestManagedCIReplacementOutcomeComparisonUsesPersistedGeneration(t *testing.T) {
+	waitEvidence := map[string]any{"ci_wait": map[string]any{
+		"actions_execution": map[string]any{
+			"repository": "owner/repo", "pull_request": 17, "base_ref_name": "main",
+			"base_sha": "base-sha",
+			"head_sha": "current-sha", "workflow_id": int64(9), "event": "pull_request",
+			"run_id": int64(102), "run_number": int64(52), "attempt": 1,
+			"status": "completed", "conclusion": "success", "replacement": true,
+		},
+	}}
+	conflictingSameAttempt := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	if !managedCIReplacementOutcomeConflicts(waitEvidence, conflictingSameAttempt) {
+		t.Fatal("opposite completed conclusions for one persisted attempt were not rejected")
+	}
+	if managedCIWaitMatchesReplacement(waitEvidence, conflictingSameAttempt) {
+		t.Fatal("a conflicting same-attempt failure matched the persisted successful generation")
+	}
+	staleAncestor := *conflictingSameAttempt
+	staleAncestor.RunID = 101
+	staleAncestor.RunNumber = 51
+	if managedCIReplacementOutcomeConflicts(waitEvidence, &staleAncestor) {
+		t.Fatal("an older replacement was treated as a contradiction of the retained generation")
+	}
+}
+
+func TestManagedCIReplacementFailureDoesNotReuseOlderPRRollup(t *testing.T) {
+	registration := ciWaitRegistration{
+		Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: "current-sha",
+		ExecutionID: "actions:9:102:1", StartedUnixSeconds: 100, DeadlineUnixSeconds: 1900,
+		EffectiveTimeoutSecs: int64(ciWaitTimeout / time.Second),
+		ActionsExecution: &ciWaitActionsExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+			WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+			Status: "completed", Conclusion: "failure", Replacement: true,
+		},
+	}
+	evidence, err := ciWaitEvidenceFromRegistration(registration, 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := &github.PR{
+		Number: 17, BaseRefName: "main", BaseRefOid: "base-sha", HeadRefOid: "current-sha", StatusCheckRollup: "failure",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100"},
+	}
+	if !managedCIReplacementRollupIsStale(evidence, pr, "owner/repo", nil) {
+		t.Fatal("completed replacement failure allowed repair from the older source rollup")
+	}
+	pr.CIFailedWorkflow.RunID = "102"
+	currentReplacement := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	if managedCIReplacementRollupIsStale(evidence, pr, "owner/repo", currentReplacement) {
+		t.Fatal("current replacement rollup was rejected after its failure became visible")
+	}
+}
+
+func TestLifecycleObservation_CompletedFailedReplacementDoesNotHoldAtExpiry(t *testing.T) {
+	now := time.Unix(4_250, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "102",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "102", FailedChecks: failedCIChecks("102", "build-macos"), CheckNames: []string{"build-macos"},
+		},
+	}
+	execution := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	if _, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", execution); err != nil {
+		t.Fatalf("seed replacement wait: %v", err)
+	}
+	now = now.Add(ciWaitTimeout + time.Minute)
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "build-macos",
+				DetailsURL:     pr.CIFailedWorkflow.FailedChecks[0].DetailsURL,
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-pending-replacement-expired",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+		!verdict.ciRepairRequired {
+		t.Fatalf("completed failed replacement remained in the timeout hold instead of current CI repair: %+v", verdict)
+	}
+}
+
+func TestLifecycleObservation_PendingOnlyRollupKeepsReplacementTimeoutHold(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		checks []github.CIWorkflowCheck
+	}{
+		{
+			name: "replacement job link visible",
+			checks: []github.CIWorkflowCheck{{
+				Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/102/job/21",
+				Repository: "owner/repo", RunID: 102,
+			}},
+		},
+		{name: "replacement job links not visible yet"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(4_750, 0).UTC()
+			workDir := t.TempDir()
+			seedPR := &github.PR{
+				Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101"},
+			}
+			replacement := &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+				Status: "queued",
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			if _, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", replacement); err != nil {
+				t.Fatalf("seed replacement wait: %v", err)
+			}
+			now = now.Add(ciWaitTimeout + time.Minute)
+			pendingPR := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "pending", CIExecutionID: "pending-only-rollup", CIHasActiveChecks: true,
+				CIActiveWorkflowChecks: test.checks, MergeStateStatus: "BLOCKED",
+			}
+			session := &runSession{
+				issueNumber: 42,
+				deps: runDeps{githubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs:    map[string]*github.PR{gateTestBranch: pendingPR},
+				}, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: workDir, Branch: gateTestBranch, RunID: "run-pending-only-replacement-expired",
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+			if verdict.Action != lifecycleAwait || verdict.Evidence["reason"] != "CI_WAIT_TIMEOUT" ||
+				!ok || wait["execution_id"] != "actions:9:102:1" {
+				t.Fatalf("pending-only rollup did not retain the replacement timeout hold: %+v", verdict)
+			}
+		})
+	}
+}
+
+func TestManagedCIVisibleReplacementChecksRequireTheRetainedRunLink(t *testing.T) {
+	execution := map[string]any{
+		"repository": "owner/repo", "run_id": int64(102),
+	}
+	for _, test := range []struct {
+		name   string
+		checks []github.CIWorkflowCheck
+		want   bool
+	}{
+		{
+			name: "pending job links retained run",
+			checks: []github.CIWorkflowCheck{{
+				Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/102/job/21",
+				Repository: "owner/repo", RunID: 102,
+			}},
+			want: true,
+		},
+		{
+			name: "pending job links another run",
+			checks: []github.CIWorkflowCheck{{
+				Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/103/job/22",
+				Repository: "owner/repo", RunID: 103,
+			}},
+		},
+		{
+			name: "pending job link belongs to another repository",
+			checks: []github.CIWorkflowCheck{{
+				Name: "build-macos", DetailsURL: "https://github.com/other/repo/actions/runs/102/job/21",
+				Repository: "other/repo", RunID: 102,
+			}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pr := &github.PR{
+				Number: 17, HeadRefOid: "current-sha", StatusCheckRollup: "pending",
+				CIHasActiveChecks: true, CIActiveWorkflowChecks: test.checks,
+			}
+			if got := managedCIVisibleReplacementChecksPending(pr, execution); got != test.want {
+				t.Fatalf("visible replacement checks pending = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_RediagnosesRetainedFailureUnderPendingRollup(t *testing.T) {
+	tests := []struct {
+		name                 string
+		failures             []github.ManagedCIFailureEvidence
+		diagnosisErr         error
+		wantAction           lifecycleAction
+		wantKind             lifecycleVerdictKind
+		wantRepair           bool
+		supersedingActiveRun bool
+	}{
+		{
+			name: "confirmed completed replacement failure resumes repair",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+			wantAction: lifecycleResume, wantRepair: true,
+		},
+		{
+			name:         "inconclusive exact-attempt lookup uses GitHub recovery",
+			diagnosisErr: errors.New("workflow attempt lookup unavailable"),
+			wantAction:   lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+		},
+		{
+			name: "unexplained exact-attempt failure uses GitHub recovery",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "build",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+				Classification: github.ManagedCIUnexplainedFailure,
+			}},
+			wantAction: lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+		},
+		{
+			name:       "different visible active run does not establish supersession",
+			wantAction: lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+			supersedingActiveRun: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(4_800, 0).UTC()
+			workDir := t.TempDir()
+			seedPR := &github.PR{
+				Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "old-rollup",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101"},
+			}
+			replacement := &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", replacement)
+			if err != nil {
+				t.Fatalf("seed completed replacement wait: %v", err)
+			}
+			runID := "run-retained-failure-pending-rollup"
+			eventLog := &spyEventLog{events: []events.Event{
+				{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+				{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+					"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+				}},
+			}}
+			pendingPR := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "pending", CIExecutionID: "pending-rollup",
+				CIHasActiveChecks: true, CIActiveFailedWorkflowRunID: "102",
+				MergeStateStatus: "BLOCKED",
+			}
+			if test.supersedingActiveRun {
+				pendingPR.CIActiveFailedWorkflowRunID = ""
+				pendingPR.CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+					Name: "build-macos", Repository: "owner/repo", RunID: 103,
+					DetailsURL: "https://github.com/owner/repo/actions/runs/103/job/22",
+				}}
+			}
+			client := &retainedManagedCIFailureClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs:    map[string]*github.PR{gateTestBranch: pendingPR},
+				},
+				failures: test.failures, diagnosisErr: test.diagnosisErr,
+			}
+			e := &runExecutor{deps: runDeps{
+				githubClient: client, eventLog: eventLog,
+				layout: paths.NewLayout(nil, t.TempDir()), errorLog: io.Discard,
+				runSessionOpts: runSessionOptions{
+					now:         func() time.Time { return now.Add(time.Minute) },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}}
+			row := RowSpec{IssueNumber: 42, RunID: runID, Branches: map[int]string{42: gateTestBranch}}
+			verdict := e.observeAwaitingRowLifecycle(t.Context(), row)
+			if verdict.Action != test.wantAction || verdict.Kind != test.wantKind ||
+				verdict.ciRepairRequired != test.wantRepair {
+				t.Fatalf("pending-rollup replacement verdict = %+v, want action %v, kind %v, repair %t",
+					verdict, test.wantAction, test.wantKind, test.wantRepair)
+			}
+			if len(client.executions) != 1 || client.executions[0] != *replacement {
+				t.Fatalf("diagnosed executions = %+v, want exactly retained replacement %+v",
+					client.executions, *replacement)
+			}
+			if test.wantRepair {
+				if verdict.ciExecutionID != "actions:9:102:1" ||
+					verdict.Evidence["reason"] != "CI_FAILURE" ||
+					verdict.Evidence["managed_ci_replacement_failure"] == nil {
+					t.Fatalf("confirmed replacement failure did not target its current execution: %+v", verdict)
+				}
+			} else if verdict.Evidence["lookup_error"] == nil ||
+				verdict.Evidence["reason"] == "CI_WAIT_TIMEOUT" ||
+				verdict.Evidence["gate"] == string(lifecycleGatePending) {
+				t.Fatalf("inconclusive replacement diagnosis fell back to stale pending CI: %+v", verdict.Evidence)
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_FollowsHigherAttemptFromVisibleSameRunCheck(t *testing.T) {
+	now := time.Unix(4_900, 0).UTC()
+	layout := paths.NewLayout(nil, t.TempDir())
+	workDir := filepath.Join(layout.WorktreeDir, gateTestBranch)
+	retained := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	seedPR := &github.PR{
+		Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "old-rollup",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101"},
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", retained)
+	if err != nil {
+		t.Fatalf("seed completed attempt-1 wait: %v", err)
+	}
+	runID := "run-same-run-higher-attempt"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	currentAttempt := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 2,
+		Status: "in_progress",
+	}
+	pendingPR := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "pending", CIExecutionID: "pending-attempt-2",
+		CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		CIActiveWorkflowChecks: []github.CIWorkflowCheck{{
+			Name: "unit-tests", Repository: "owner/repo", RunID: 102,
+			DetailsURL: "https://github.com/owner/repo/actions/runs/102/job/992",
+		}},
+	}
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pendingPR},
+		},
+		active: currentAttempt,
+		failures: []github.ManagedCIFailureEvidence{{
+			JobID: 991, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+			DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+			Classification: github.ManagedCIConfirmedCodeTestFailure,
+		}},
+	}
+	executor := &runExecutor{deps: runDeps{
+		githubClient: client, eventLog: eventLog,
+		layout: layout, errorLog: io.Discard,
+		runSessionOpts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}}
+	row := RowSpec{IssueNumber: 42, RunID: runID, Branches: map[int]string{42: gateTestBranch}}
+	verdict := executor.observeAwaitingRowLifecycle(t.Context(), row)
+	if verdict.Action != lifecycleAwait || verdict.ciRepairRequired ||
+		verdict.Kind == lifecycleVerdictGitHubUnavailable {
+		t.Fatalf("higher same-run attempt was not followed as active CI: %+v", verdict)
+	}
+	if len(client.executions) != 0 {
+		t.Fatalf("superseded attempt was diagnosed for repair: %+v", client.executions)
+	}
+	if len(client.activeReads) != 1 || client.activeReads[0].RunID != retained.RunID ||
+		client.activeReads[0].WorkflowID != retained.WorkflowID ||
+		len(client.activeReads[0].Checks) != 1 || client.activeReads[0].Checks[0].RunID != retained.RunID {
+		t.Fatalf("active same-run attempt lookup was not bound to the visible check: %+v", client.activeReads)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil {
+		t.Fatalf("read advanced CI wait: %v", err)
+	}
+	if registration.ActionsExecution.RunID != currentAttempt.RunID ||
+		registration.ActionsExecution.Attempt != currentAttempt.Attempt ||
+		registration.ActionsExecution.Status != currentAttempt.Status {
+		t.Fatalf("retained wait = %+v, want verified active attempt 2", registration.ActionsExecution)
+	}
+	if registration.DeadlineUnixSeconds != now.Add(time.Minute+ciWaitTimeout).Unix() {
+		t.Fatalf("higher attempt deadline = %d, want a fresh per-attempt bound", registration.DeadlineUnixSeconds)
+	}
+}
+
+func TestLifecycleObservation_CompletedReplacementFailureTargetsItsVerifiedJobs(t *testing.T) {
+	now := time.Unix(4_500, 0).UTC()
+	failedChecks := failedCIChecks("101", "build-macos")
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "obsolete-rollup-checks",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "101", FailedChecks: failedChecks, CheckNames: []string{"build-macos"},
+				},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+				Status: "completed", Conclusion: "cancelled",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+				DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+			}},
+			Replacement: &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			},
+			ReplacementFailures: []github.ManagedCIFailureEvidence{{
+				JobID: 991, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/991",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-failed-replacement",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["gate"] != "ci-failure" ||
+		!verdict.ciRepairRequired {
+		t.Fatalf("completed replacement failure verdict = %+v, want repair of the current failure", verdict)
+	}
+	if verdict.ciExecutionID != "actions:273743359:102:1" {
+		t.Fatalf("repair execution identity = %q, want the replacement attempt, not obsolete rollup %q",
+			verdict.ciExecutionID, client.prs[gateTestBranch].CIExecutionID)
+	}
+	failure, ok := verdict.Evidence["managed_ci_replacement_failure"].(map[string]any)
+	if !ok || failure["run_id"] != int64(102) {
+		t.Fatalf("replacement failure diagnostics = %#v, want verified run 102", verdict.Evidence["managed_ci_replacement_failure"])
+	}
+	failedJobs, ok := failure["failed_jobs"].([]any)
+	if !ok || len(failedJobs) != 1 || failedJobs[0].(map[string]any)["job_id"] != int64(991) {
+		t.Fatalf("replacement failed-job evidence = %#v, want job 991", failure["failed_jobs"])
+	}
+	prerequisite, ok := verdict.Evidence[ciRecoveryPrerequisiteKey].(map[string]any)
+	if !ok || prerequisite["workflow_run_id"] != "102" {
+		t.Fatalf("repair prerequisite = %#v, want the verified replacement run 102", prerequisite)
+	}
+}
+
+func TestLifecycleObservation_CurrentReplacementSourceAdvancesItsRetainedStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		classification github.ManagedCIFailureClassification
+		wantAction     lifecycleAction
+		wantRepair     bool
+		wantKind       lifecycleVerdictKind
+	}{
+		{
+			name:           "confirmed failure is repaired against the current rollup",
+			classification: github.ManagedCIConfirmedCodeTestFailure,
+			wantAction:     lifecycleResume, wantRepair: true,
+		},
+		{
+			name:           "unexplained failure remains inconclusive with completed status",
+			classification: github.ManagedCIUnexplainedFailure,
+			wantAction:     lifecycleAwait, wantKind: lifecycleVerdictGitHubUnavailable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(4_600, 0).UTC()
+			workDir := t.TempDir()
+			seedPR := &github.PR{
+				Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "rollup-a",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101"},
+			}
+			replacement := &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+				Status: "queued",
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", replacement)
+			if err != nil {
+				t.Fatalf("seed replacement wait: %v", err)
+			}
+			failedChecks := failedCIChecks("102", "unit-tests")
+			pr := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "rollup-b",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "102", FailedChecks: failedChecks},
+			}
+			client := &managedCILifecycleClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs:    map[string]*github.PR{gateTestBranch: pr},
+				},
+				observation: github.ManagedCIObservation{
+					Source: github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+						Status: "completed", Conclusion: "failure",
+					},
+					Failures: []github.ManagedCIFailureEvidence{{
+						JobID: 12, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL: failedChecks[0].DetailsURL, Classification: test.classification,
+					}},
+				},
+			}
+			runID := "run-current-replacement-source-failure"
+			eventLog := &spyEventLog{events: []events.Event{
+				{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+				{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+					"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+				}},
+			}}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{githubClient: client, eventLog: eventLog, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now.Add(time.Minute) },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+			if err != nil {
+				t.Fatalf("read updated CI wait: %v", err)
+			}
+			if registration.ActionsExecution.Status != "completed" || registration.ActionsExecution.Conclusion != "failure" {
+				t.Fatalf("retained current replacement status = %q/%q, want completed/failure",
+					registration.ActionsExecution.Status, registration.ActionsExecution.Conclusion)
+			}
+			if verdict.Action != test.wantAction || verdict.ciRepairRequired != test.wantRepair ||
+				verdict.Kind != test.wantKind {
+				t.Fatalf("current replacement source verdict = %+v, want action %v, repair %t, kind %v",
+					verdict, test.wantAction, test.wantRepair, test.wantKind)
+			}
+			if test.wantRepair && verdict.ciExecutionID != "rollup-b" {
+				t.Fatalf("confirmed current replacement failure targets execution %q, want rollup-b",
+					verdict.ciExecutionID)
+			}
+			if !test.wantRepair {
+				wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+				execution, executionOK := wait["actions_execution"].(map[string]any)
+				if !ok || !executionOK || execution["status"] != "completed" || execution["conclusion"] != "failure" {
+					t.Fatalf("inconclusive verdict lost current completed replacement status: %+v", verdict.Evidence)
+				}
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_NewerWaitAloneDoesNotSupersedeConfirmedCheckFailure(t *testing.T) {
+	now := time.Unix(4_700, 0).UTC()
+	workDir := t.TempDir()
+	failedChecks := failedCIChecks("102", "unit-tests")
+	source := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	currentReplacement := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 9, Event: "pull_request", RunID: 103, RunNumber: 53, Attempt: 1,
+		Status: "queued",
+	}
+	seedPR := &github.PR{
+		Number: 17, HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", CIExecutionID: "rollup-b",
+		CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "102"},
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, seedPR, "current-sha", currentReplacement)
+	if err != nil {
+		t.Fatalf("seed newer replacement wait: %v", err)
+	}
+
+	runID := "run-stale-source-failure"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "rollup-b",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "102", FailedChecks: failedChecks},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: *source,
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 12, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, eventLog: eventLog, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || !verdict.ciRepairRequired {
+		t.Fatalf("newer workflow alone suppressed confirmed check failure: %+v", verdict)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil {
+		t.Fatalf("read retained replacement wait: %v", err)
+	}
+	if registration.ActionsExecution.RunID != currentReplacement.RunID ||
+		registration.ActionsExecution.RunNumber != currentReplacement.RunNumber {
+		t.Fatalf("stale source replaced the newer retained execution: %+v", registration.ActionsExecution)
+	}
+}
+
+func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsCheckIsRerun(t *testing.T) {
+	tests := []struct {
+		name                  string
+		replacementStatus     string
+		replacementConclusion string
+		replacementJobs       []github.ManagedCIJobEvidence
+		wantRepair            bool
+	}{
+		{name: "queued replacement alone does not supersede the source check", wantRepair: true},
+		{
+			name: "replacement runs a different check",
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 238, RunID: 102, Attempt: 1, Name: "build-macos", Status: "queued",
+			}},
+			wantRepair: true,
+		},
+		{
+			name:              "provider shows the failed check is running in the replacement",
+			replacementStatus: "in_progress",
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "in_progress",
+			}},
+		},
+		{
+			name: "provider shows the failed check is queued in the replacement",
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 240, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "queued",
+			}},
+			wantRepair: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(5_000, 0).UTC()
+			failedChecks := []github.CIFailedCheck{
+				{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
+				{Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+			}
+			replacementStatus := test.replacementStatus
+			if replacementStatus == "" {
+				replacementStatus = "queued"
+			}
+			client := &managedCILifecycleClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs: map[string]*github.PR{gateTestBranch: {
+						Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+						StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+						CIFailedWorkflow: &github.CIFailedWorkflow{
+							RunID: "101", FailedChecks: failedChecks, CheckNames: []string{"build-macos", "unit-tests"},
+						},
+					}},
+				},
+				observation: github.ManagedCIObservation{
+					Source: github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+						Status: "completed", Conclusion: "failure",
+					},
+					Failures: []github.ManagedCIFailureEvidence{
+						{
+							JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+							DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+						},
+						{
+							JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+							DetailsURL: failedChecks[1].DetailsURL, Classification: github.ManagedCIConfirmedCodeTestFailure,
+						},
+					},
+					Replacement: &github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+						Status:     replacementStatus,
+						Conclusion: test.replacementConclusion,
+					},
+					ReplacementJobs: test.replacementJobs,
+				},
+			}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-mixed-ci-failure",
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			if test.wantRepair {
+				if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+					!verdict.ciRepairRequired {
+					t.Fatalf("completed source failure was hidden without evidence that its check was rerun: %+v", verdict)
+				}
+				sourceFailure, ok := verdict.Evidence["managed_ci_source_failure"].(map[string]any)
+				if !ok || sourceFailure["run_id"] != int64(101) {
+					t.Fatalf("confirmed source failure was lost while waiting: %#v", verdict.Evidence)
+				}
+				failedJobs, ok := sourceFailure["failed_jobs"].([]any)
+				if !ok || len(failedJobs) != 1 ||
+					failedJobs[0].(map[string]any)["classification"] != string(github.ManagedCIConfirmedCodeTestFailure) {
+					t.Fatalf("retained source failure details = %#v", sourceFailure["failed_jobs"])
+				}
+			} else if verdict.Action != lifecycleAwait || verdict.ciRepairRequired ||
+				verdict.Kind == lifecycleVerdictGitHubUnavailable {
+				t.Fatalf("explicitly rerun source check did not yield to the replacement: %+v", verdict)
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_UnknownManagedCILookupWaitsForGitHubRecovery(t *testing.T) {
+	tests := []struct {
+		name            string
+		failedChecks    []github.CIFailedCheck
+		observation     github.ManagedCIObservation
+		err             error
+		wantAction      lifecycleAction
+		wantGate        string
+		wantReplacement bool
+	}{
+		{
+			name:       "optional lookup failed",
+			err:        errors.New("Actions read unavailable"),
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name:        "incomplete response",
+			observation: github.ManagedCIObservation{},
+			wantAction:  lifecycleAwait,
+			wantGate:    gateGitHubUnavailable,
+		},
+		{
+			name: "unknown failure classification",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: "unrecognized",
+				}},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name: "dependent failure without confirmed shortage cause",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "failure",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIDependentFailure,
+					CausedByChecks: []string{"unit-tests"}, CausedByResults: []string{"failure"},
+				}},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name:         "confirmed independent source failure survives unknown classification",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: "unrecognized",
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name:         "confirmed independent source failure survives replacement lookup error",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			err:          errors.New("replacement workflow list unavailable"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name:         "confirmed independent source failure survives contradictory replacement",
+			failedChecks: failedCIChecks("101", "build-macos", "unit-tests"),
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/12",
+						Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+				Replacement: &github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "release", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name: "contradictory replacement identity",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIRunnerShortage,
+				}},
+				Replacement: &github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "release", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+				},
+			},
+			wantAction: lifecycleAwait,
+			wantGate:   gateGitHubUnavailable,
+		},
+		{
+			name: "shortage has no verified replacement",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIRunnerShortage,
+				}},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+		{
+			name: "unexplained cancellation does not qualify for replacement wait",
+			observation: github.ManagedCIObservation{
+				Source: github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+					Status: "completed", Conclusion: "cancelled",
+				},
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIUnexplainedFailure,
+				}},
+				Replacement: &github.ManagedCIExecution{
+					Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+					WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+				},
+			},
+			wantAction: lifecycleResume,
+			wantGate:   "ci-failure",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(5_500, 0).UTC()
+			if test.observation.Source.RunID > 0 && len(test.observation.SourceJobs) == 0 {
+				for _, failure := range test.observation.Failures {
+					test.observation.SourceJobs = append(test.observation.SourceJobs, github.ManagedCIJobEvidence{
+						JobID: failure.JobID, RunID: failure.RunID, Attempt: failure.Attempt,
+						Name: failure.CheckName, Status: "completed", Conclusion: "failure",
+					})
+				}
+			}
+			failedChecks := test.failedChecks
+			if failedChecks == nil {
+				failedChecks = failedCIChecks("101", "build-macos")
+			}
+			client := &managedCILifecycleClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs: map[string]*github.PR{gateTestBranch: {
+						Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+						StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+						CIFailedWorkflow: &github.CIFailedWorkflow{
+							RunID: "101", FailedChecks: failedChecks, CheckNames: []string{"build-macos"},
+						},
+					}},
+				},
+				observation: test.observation,
+				err:         test.err,
+			}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-unverified-replacement",
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			if verdict.Action != test.wantAction || verdict.Evidence["gate"] != test.wantGate {
+				t.Fatalf("managed CI lookup verdict = %+v, want action %v and gate %q", verdict, test.wantAction, test.wantGate)
+			}
+			if test.wantGate == gateGitHubUnavailable {
+				if _, ok := verdict.Evidence[githubRecoveryKey].(map[string]any); !ok {
+					t.Fatalf("inconclusive managed CI observation did not enter bounded GitHub recovery: %#v", verdict.Evidence)
+				}
+				if _, ok := verdict.Evidence["ci_wait"]; ok {
+					t.Fatalf("inconclusive evidence established a CI execution wait: %#v", verdict.Evidence)
+				}
+			} else if wait, ok := verdict.Evidence["ci_wait"].(map[string]any); test.wantReplacement {
+				if !ok || wait["execution_id"] != "actions:273743359:102:1" {
+					t.Fatalf("verified replacement was not retained in the CI wait: %#v", verdict.Evidence)
+				}
+			} else if ok {
+				if _, replacement := wait["actions_execution"]; replacement {
+					t.Fatalf("unverified evidence established a replacement wait: %#v", wait)
+				}
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_MissingManagedCIObserverWaitsForGitHubRecovery(t *testing.T) {
+	now := time.Unix(5_600, 0).UTC()
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+			StatusCheckRollup: "failure", CIExecutionID: "failed-checks",
+			CIFailedWorkflow: &github.CIFailedWorkflow{
+				RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"),
+				CheckNames: []string{"build-macos"},
+			},
+		}},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-without-managed-ci-observer",
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable ||
+		verdict.Evidence["gate"] != string(gateGitHubUnavailable) {
+		t.Fatalf("missing Actions observer verdict = %+v, want bounded GitHub recovery", verdict)
+	}
+	if _, ok := verdict.Evidence[githubRecoveryKey].(map[string]any); !ok {
+		t.Fatalf("missing Actions observer did not establish GitHub recovery evidence: %#v", verdict.Evidence)
+	}
+	if _, ok := verdict.Evidence["ci_wait"]; ok {
+		t.Fatalf("missing Actions observer established an unverified CI wait: %#v", verdict.Evidence)
+	}
+}
+
+func TestLifecycleObservation_ReplacementSuccessRetainsOriginalCITimeout(t *testing.T) {
+	now := time.Unix(6_000, 0).UTC()
+	workDir := t.TempDir()
+	client := &managedCILifecycleClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"), CheckNames: []string{"build-macos"},
+				},
+			}},
+		},
+		observation: github.ManagedCIObservation{
+			Source: github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+				Status: "completed", Conclusion: "cancelled",
+			},
+			Failures: []github.ManagedCIFailureEvidence{{
+				JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+				Classification: github.ManagedCIRunnerShortage,
+			}},
+			Replacement: &github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+				Status: "completed", Conclusion: "success",
+			},
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	observer := newLifecycleObserver(session)
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: "run-replacement-deadline",
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+	initial := observer.Observe(t.Context(), request)
+	if initial.Action != lifecycleAwait || !managedCIReplacementStillResolves(initial.Evidence, client.prs[gateTestBranch], "owner/repo") {
+		t.Fatalf("passed replacement with stale failing PR rollup = %+v, want bounded await", initial)
+	}
+	wait := initial.Evidence["ci_wait"].(map[string]any)
+	deadline := wait["deadline_unix_seconds"].(int64)
+	client.prs[gateTestBranch].CIExecutionID = "replacement-check-links-now-visible"
+	now = now.Add(5 * time.Minute)
+	linked := observer.Observe(t.Context(), request)
+	if linked.Action != lifecycleAwait {
+		t.Fatalf("stale failing rollup after replacement check links appeared = %+v, want original wait", linked)
+	}
+	linkedWait := linked.Evidence["ci_wait"].(map[string]any)
+	if linkedWait["deadline_unix_seconds"] != deadline ||
+		!managedCIReplacementStillResolves(linked.Evidence, client.prs[gateTestBranch], "owner/repo") {
+		t.Fatalf("appearance of replacement links renewed or regressed its wait: %#v", linkedWait)
+	}
+	now = time.Unix(deadline, 0).UTC()
+	expired := observer.Observe(t.Context(), request)
+	if expired.Action != lifecycleAwait || !continuityHoldPayload(expired.Evidence) ||
+		stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(expired.Evidence, "reason") != "CI_WAIT_TIMEOUT" ||
+		stringEvidence(expired.Evidence, "replacement_ci_outcome") != "passed_required_check_rollup_stale" {
+		t.Fatalf("replacement wait expiry = %+v, want the existing CI_WAIT_TIMEOUT hold with stale-rollup diagnosis", expired)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || registration.DeadlineUnixSeconds != deadline {
+		t.Fatalf("replacement success renewed its bounded deadline: registration=%+v err=%v", registration, err)
+	}
+}
+
+func TestLifecycleObservation_RefreshesRetainedReplacementDespiteStaleFailureRollup(t *testing.T) {
+	now := time.Unix(6_500, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"),
+		},
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "in_progress",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	pr.BaseRefOid = ""
+	wait := waitEvidence["ci_wait"].(map[string]any)
+	deadline := wait["deadline_unix_seconds"].(int64)
+	runID := "run-refresh-retained-replacement"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": wait,
+		}},
+	}}
+	refreshed := retained
+	refreshed.Status = "completed"
+	refreshed.Conclusion = "success"
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		refreshed: &refreshed,
+		identity: &github.ManagedCIPullRequestIdentity{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			BaseSHA: "base-sha", HeadSHA: "current-sha",
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(5 * time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+	observer := newLifecycleObserver(session)
+	observed := observer.Observe(t.Context(), request)
+	observedWait, ok := observed.Evidence["ci_wait"].(map[string]any)
+	observedExecution, executionOK := observedWait["actions_execution"].(map[string]any)
+	if observed.Action != lifecycleAwait || observed.Kind == lifecycleVerdictGitHubUnavailable ||
+		!ok || !executionOK || observedExecution["status"] != "completed" ||
+		observedExecution["conclusion"] != "success" {
+		t.Fatalf("retained replacement was not refreshed without PR check links: %+v", observed)
+	}
+	if len(client.refreshReads) != 1 || client.refreshReads[0].RunID != retained.RunID ||
+		client.refreshReads[0].Attempt != retained.Attempt ||
+		len(client.activeReads) != 0 {
+		t.Fatalf("refresh did not target the retained execution directly: refresh=%+v active=%+v",
+			client.refreshReads, client.activeReads)
+	}
+	if len(client.identityReads) != 1 || client.identityReads[0] != pr.Number {
+		t.Fatalf("missing PR base SHA was not resolved through the managed identity provider: %+v", client.identityReads)
+	}
+	if observedWait["deadline_unix_seconds"] != deadline {
+		t.Fatalf("refresh renewed the retained execution deadline: got %v want %v",
+			observedWait["deadline_unix_seconds"], deadline)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || registration.DeadlineUnixSeconds != deadline {
+		t.Fatalf("refreshed wait registration = %+v err=%v, want original deadline %d",
+			registration, err, deadline)
+	}
+
+	now = time.Unix(deadline, 0).UTC()
+	session.opts.now = func() time.Time { return now }
+	expired := observer.Observe(t.Context(), request)
+	if expired.Action != lifecycleAwait || !continuityHoldPayload(expired.Evidence) ||
+		stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(expired.Evidence, "replacement_ci_outcome") != "passed_required_check_rollup_stale" {
+		t.Fatalf("refreshed replacement expiry = %+v, want the existing CI timeout hold", expired)
+	}
+}
+
+func TestLifecycleObservation_RefreshesRetainedReplacementAfterStalePendingLink(t *testing.T) {
+	now := time.Unix(6_700, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "pending", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+		CIExecutionID: "stale-replacement-link", CIActiveWorkflowChecks: []github.CIWorkflowCheck{{
+			Name: "build-macos", Repository: "owner/repo", RunID: 102,
+			DetailsURL: "https://github.com/owner/repo/actions/runs/102/job/238",
+		}},
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "in_progress",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	pr.BaseRefOid = ""
+	wait := waitEvidence["ci_wait"].(map[string]any)
+	deadline := wait["deadline_unix_seconds"].(int64)
+	runID := "run-refresh-stale-pending-link"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": wait,
+		}},
+	}}
+	refreshed := retained
+	refreshed.Status = "completed"
+	refreshed.Conclusion = "success"
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		activeErr: errors.New("linked job is no longer active"), refreshed: &refreshed,
+		identity: &github.ManagedCIPullRequestIdentity{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			BaseSHA: "base-sha", HeadSHA: "current-sha",
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(5 * time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+	observed := newLifecycleObserver(session).Observe(t.Context(), request)
+	observedWait, ok := observed.Evidence["ci_wait"].(map[string]any)
+	execution, executionOK := observedWait["actions_execution"].(map[string]any)
+	if observed.Action != lifecycleAwait || observed.Kind == lifecycleVerdictGitHubUnavailable ||
+		!ok || !executionOK || execution["status"] != "completed" ||
+		execution["conclusion"] != "success" {
+		t.Fatalf("retained replacement behind a stale pending job link was not refreshed: %+v", observed)
+	}
+	if len(client.activeReads) != 1 || len(client.refreshReads) != 1 ||
+		client.refreshReads[0].RunID != retained.RunID ||
+		client.refreshReads[0].Attempt != retained.Attempt {
+		t.Fatalf("stale link did not fall back to the retained execution: active=%+v refresh=%+v",
+			client.activeReads, client.refreshReads)
+	}
+	if observedWait["deadline_unix_seconds"] != deadline {
+		t.Fatalf("stale job link renewed the retained wait: got %v want %d",
+			observedWait["deadline_unix_seconds"], deadline)
+	}
+}
+
+func TestLifecycleObservation_DiagnosesRetainedReplacementFailureBehindStaleRollup(t *testing.T) {
+	now := time.Unix(6_800, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"),
+		},
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "in_progress",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	wait := waitEvidence["ci_wait"].(map[string]any)
+	runID := "run-diagnose-retained-replacement"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": wait,
+		}},
+	}}
+	refreshed := retained
+	refreshed.Status = "completed"
+	refreshed.Conclusion = "failure"
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		refreshed: &refreshed,
+		failures: []github.ManagedCIFailureEvidence{{
+			JobID: 238, RunID: retained.RunID, Attempt: retained.Attempt, CheckName: "unit-tests",
+			DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/238",
+			Classification: github.ManagedCIConfirmedCodeTestFailure,
+		}},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(5 * time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+		!verdict.ciRepairRequired {
+		t.Fatalf("completed retained replacement failure was hidden by the stale rollup: %+v", verdict)
+	}
+	if len(client.refreshReads) != 1 || len(client.executions) != 1 ||
+		client.executions[0].RunID != retained.RunID || client.executions[0].Attempt != retained.Attempt {
+		t.Fatalf("completed retained execution was not diagnosed directly: refresh=%+v diagnosis=%+v",
+			client.refreshReads, client.executions)
+	}
+}
+
+func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAndUnrelatedChecks(t *testing.T) {
+	tests := []struct {
+		name                string
+		refreshedStatus     string
+		refreshedConclusion string
+		failures            []github.ManagedCIFailureEvidence
+		wantRepair          bool
+		retainedSuccess     bool
+		newAttempt          bool
+	}{
+		{
+			name:                "listing still reports retained execution queued but exact read passes",
+			refreshedStatus:     "completed",
+			refreshedConclusion: "success",
+		},
+		{
+			name:                "unrelated active workflow does not block exact failure diagnosis",
+			refreshedStatus:     "completed",
+			refreshedConclusion: "failure",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 238, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/238",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+			wantRepair: true,
+		},
+		{
+			name:            "contradictory same-attempt failure is inconclusive",
+			retainedSuccess: true, refreshedStatus: "completed", refreshedConclusion: "failure",
+		},
+		{
+			name:            "verified higher attempt may fail after retained success",
+			retainedSuccess: true, newAttempt: true, refreshedStatus: "completed", refreshedConclusion: "failure",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 238, RunID: 102, Attempt: 2, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/238",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+			wantRepair: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(6_600, 0).UTC()
+			workDir := t.TempDir()
+			pr := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+				CIExecutionID: "obsolete-failure",
+				CIFailedWorkflow: &github.CIFailedWorkflow{
+					RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"),
+				},
+				CIActiveWorkflowChecks: []github.CIWorkflowCheck{{
+					Name: "portal-continuity-browser", Repository: "owner/repo", RunID: 999,
+					DetailsURL: "https://github.com/owner/repo/actions/runs/999/job/9991",
+				}},
+			}
+			source := github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			}
+			retained := github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+				Status: "queued",
+			}
+			listed := retained
+			if test.retainedSuccess {
+				retained.Status, retained.Conclusion = "completed", "success"
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+			if err != nil {
+				t.Fatalf("seed retained replacement wait: %v", err)
+			}
+			wait := waitEvidence["ci_wait"].(map[string]any)
+			runID := "run-reconcile-retained-replacement"
+			eventLog := &spyEventLog{events: []events.Event{
+				{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+				{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+					"await_reason": "pending", "branch": gateTestBranch, "ci_wait": wait,
+				}},
+			}}
+			observation := github.ManagedCIObservation{
+				Source: source,
+				Failures: []github.ManagedCIFailureEvidence{{
+					JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+					Classification: github.ManagedCIRunnerShortage,
+				}},
+				Replacement: &listed,
+			}
+			refreshed := retained
+			refreshed.Status = test.refreshedStatus
+			refreshed.Conclusion = test.refreshedConclusion
+			if test.newAttempt {
+				refreshed.Attempt++
+			}
+			client := &observedRetainedManagedCIFailureClient{
+				managedCILifecycleClient: &managedCILifecycleClient{
+					fakeGitHubClient: &fakeGitHubClient{
+						issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+						prs:    map[string]*github.PR{gateTestBranch: pr},
+					},
+					observation: observation,
+				},
+				refreshed: &refreshed, failures: test.failures,
+			}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{
+					githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+				},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now.Add(5 * time.Minute) },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			if len(client.refreshReads) != 1 ||
+				client.refreshReads[0].RunID != retained.RunID ||
+				client.refreshReads[0].Attempt != retained.Attempt {
+				t.Fatalf("retained execution was not refreshed despite the stale listing: %+v", client.refreshReads)
+			}
+			if test.wantRepair {
+				if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+					!verdict.ciRepairRequired || len(client.diagnoses) != 1 ||
+					client.diagnoses[0].RunID != retained.RunID {
+					t.Fatalf("unrelated active workflow suppressed retained failure diagnosis: verdict=%+v diagnoses=%+v",
+						verdict, client.diagnoses)
+				}
+				return
+			}
+			if test.retainedSuccess {
+				if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable ||
+					verdict.ciRepairRequired || len(client.diagnoses) != 0 {
+					t.Fatalf("contradictory attempt authorized repair: verdict=%+v diagnoses=%+v", verdict, client.diagnoses)
+				}
+				return
+			}
+			if verdict.Action != lifecycleAwait || verdict.Kind == lifecycleVerdictGitHubUnavailable {
+				t.Fatalf("exact retained success did not remain on the bounded wait: %+v", verdict)
+			}
+			observedWait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+			if !ok || observedWait["execution_id"] != wait["execution_id"] ||
+				observedWait["deadline_unix_seconds"] != wait["deadline_unix_seconds"] ||
+				observedWait["deadline_unix_seconds"] == nil {
+				t.Fatalf("exact retained success changed the wait identity or deadline: got %+v, seeded %+v", observedWait, wait)
+			}
+			if len(client.diagnoses) != 0 {
+				t.Fatalf("successful retained execution was diagnosed as failed: %+v", client.diagnoses)
+			}
+		})
+	}
+}
+
+func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailure(t *testing.T) {
+	tests := []struct {
+		name            string
+		replacementJobs []github.ManagedCIJobEvidence
+		omitListing     bool
+		wantRepair      bool
+		jobsErr         error
+	}{
+		{name: "queued replacement without failed check", wantRepair: true},
+		{name: "missing exact jobs evidence is inconclusive", omitListing: true, jobsErr: errors.New("job read unavailable")},
+		{
+			name: "skipped matching job does not replace the failed check", wantRepair: true,
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "skipped",
+			}},
+		},
+		{
+			name: "exact job evidence survives an omitted listing", omitListing: true,
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "in_progress",
+			}},
+		},
+		{
+			name: "exact failed check has started in replacement",
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "in_progress",
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Unix(6_750, 0).UTC()
+			workDir := t.TempDir()
+			failedChecks := []github.CIFailedCheck{
+				{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
+				{Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+			}
+			pr := &github.PR{
+				Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+				StatusCheckRollup: "failure", MergeStateStatus: "BLOCKED",
+				CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "101", FailedChecks: failedChecks},
+			}
+			source := github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+				Status: "completed", Conclusion: "failure",
+			}
+			replacement := github.ManagedCIExecution{
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+				Status: "queued",
+			}
+			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &replacement)
+			if err != nil {
+				t.Fatalf("seed replacement wait: %v", err)
+			}
+			runID := "run-retained-independent-failure"
+			eventLog := &spyEventLog{events: []events.Event{
+				{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+				{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+					"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+				}},
+			}}
+			observation := github.ManagedCIObservation{
+				Source: source,
+				Failures: []github.ManagedCIFailureEvidence{
+					{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL: failedChecks[0].DetailsURL, Classification: github.ManagedCIRunnerShortage,
+					},
+					{
+						JobID: 139, RunID: 101, Attempt: 1, CheckName: "unit-tests",
+						DetailsURL: failedChecks[1].DetailsURL, Classification: github.ManagedCIConfirmedCodeTestFailure,
+					},
+				},
+				Replacement: &replacement, ReplacementJobs: test.replacementJobs,
+			}
+			if test.omitListing {
+				observation.Replacement, observation.ReplacementJobs = nil, nil
+			}
+			client := &observedRetainedManagedCIFailureClient{
+				managedCILifecycleClient: &managedCILifecycleClient{
+					fakeGitHubClient: &fakeGitHubClient{
+						issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+						prs:    map[string]*github.PR{gateTestBranch: pr},
+					},
+					observation: observation,
+				},
+				refreshed: &replacement, jobs: test.replacementJobs, jobsErr: test.jobsErr,
+			}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{
+					githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+				},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now.Add(time.Minute) },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+				WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+				HostPathsReady: true, AttemptStatus: "success",
+			})
+			if test.jobsErr != nil {
+				if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable || verdict.ciRepairRequired {
+					t.Fatalf("jobs lookup failure authorized repair: %+v", verdict)
+				}
+				return
+			}
+			if test.wantRepair {
+				if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+					!verdict.ciRepairRequired {
+					t.Fatalf("retained workflow-level wait hid an unsuperseded test failure: %+v", verdict)
+				}
+				return
+			}
+			if verdict.Action != lifecycleAwait || verdict.ciRepairRequired ||
+				verdict.Kind == lifecycleVerdictGitHubUnavailable {
+				t.Fatalf("started exact replacement check did not supersede the old failure: %+v", verdict)
+			}
+		})
+	}
+}
+
+func TestManagedCIRefreshRejectsContradictoryConclusionForSameAttempt(t *testing.T) {
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, HeadSHA: "head", BaseRefName: "main", BaseSHA: "base",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "success",
+	}
+	refreshed := retained
+	refreshed.Conclusion = "failure"
+	if managedCIRefreshedExecutionMatches(retained, refreshed) {
+		t.Fatal("same attempt changed its terminal conclusion")
+	}
+	refreshed.Attempt++
+	if !managedCIRefreshedExecutionMatches(retained, refreshed) {
+		t.Fatal("a newer failed attempt did not match the retained workflow")
+	}
+}
+
+func TestLifecycleObservation_VerifiedMergeSkipsRetainedActionsRefresh(t *testing.T) {
+	now := time.Unix(6_850, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "merged", Merged: true, Body: "Closes #42",
+		HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure", MergeStateStatus: "CONFLICTING",
+		CIFailedWorkflow: &github.CIFailedWorkflow{
+			RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"),
+		},
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "queued",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	runID := "run-merged-with-actions-unavailable"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		refreshErr: errors.New("Actions refresh unavailable"),
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	verdict := newLifecycleObserver(session).Observe(t.Context(), lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	})
+	if verdict.Action != lifecycleSuccess || len(client.refreshReads) != 0 {
+		t.Fatalf("verified merge depended on retained Actions refresh: verdict=%+v refreshes=%+v",
+			verdict, client.refreshReads)
+	}
+}
+
+func TestLifecycleObservation_AuthoritativeGreenSkipsRetainedFailureRefresh(t *testing.T) {
+	now := time.Unix(6_900, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "completed", Conclusion: "failure",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	runID := "run-authoritative-green"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": waitEvidence["ci_wait"],
+		}},
+	}}
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		failures: []github.ManagedCIFailureEvidence{{
+			JobID: 238, RunID: retained.RunID, Attempt: retained.Attempt, CheckName: "unit-tests",
+			Classification: github.ManagedCIConfirmedCodeTestFailure,
+		}},
+		refreshed: &retained,
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		opts: runSessionOptions{now: func() time.Time { return now.Add(time.Minute) }},
+	}
+	observed := newLifecycleObserver(session).observeManagedCIFailureForAttempt(
+		t.Context(), pr, "current-sha", "owner/repo", runID, gateTestBranch, "current-sha",
+	)
+	if observed.Failure.IndependentFailure || observed.Failure.Replacement != nil ||
+		observed.Failure.Unknown || len(client.refreshReads) != 0 || len(client.executions) != 0 {
+		t.Fatalf("retained failed execution overrode authoritative green PR checks: result=%+v refresh=%+v diagnosis=%+v",
+			observed.Failure, client.refreshReads, client.executions)
+	}
+}
+
+func TestLifecycleObservation_NonterminalReplacementExpiryUsesCITimeoutHold(t *testing.T) {
+	for _, replacementStatus := range []string{"queued", "waiting", "requested", "pending"} {
+		t.Run(replacementStatus, func(t *testing.T) {
+			now := time.Unix(7_000, 0).UTC()
+			workDir := t.TempDir()
+			client := &managedCILifecycleClient{
+				fakeGitHubClient: &fakeGitHubClient{
+					issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+					prs: map[string]*github.PR{gateTestBranch: {
+						Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+						StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks",
+						CIFailedWorkflow: &github.CIFailedWorkflow{
+							RunID: "101", FailedChecks: failedCIChecks("101", "build-macos"), CheckNames: []string{"build-macos"},
+						},
+					}},
+				},
+				observation: github.ManagedCIObservation{
+					Source: github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 101, RunNumber: 5288, Attempt: 1,
+						Status: "completed", Conclusion: "cancelled",
+					},
+					Failures: []github.ManagedCIFailureEvidence{{
+						JobID: 138, RunID: 101, Attempt: 1, CheckName: "build-macos",
+						DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
+						Classification: github.ManagedCIRunnerShortage,
+					}},
+					Replacement: &github.ManagedCIExecution{
+						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: replacementStatus,
+					},
+				},
+			}
+			session := &runSession{
+				issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			request := lifecycleObservationRequest{
+				WorkDir: workDir, Branch: gateTestBranch, RunID: "run-pending-replacement-expiry",
+				HostPathsReady: true, AttemptStatus: "success",
+			}
+			initial := newLifecycleObserver(session).Observe(t.Context(), request)
+			if initial.Action != lifecycleAwait {
+				t.Fatalf("replacement status %q = %+v, want bounded await", replacementStatus, initial)
+			}
+			wait := initial.Evidence["ci_wait"].(map[string]any)
+			deadline := wait["deadline_unix_seconds"].(int64)
+			now = time.Unix(deadline, 0).UTC()
+
+			restarted := &runSession{
+				issueNumber: 42, deps: runDeps{githubClient: client, errorLog: io.Discard},
+				renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+				opts: runSessionOptions{
+					now:         func() time.Time { return now },
+					currentHead: func(string) (string, error) { return "current-sha", nil },
+				},
+			}
+			expired := newLifecycleObserver(restarted).Observe(t.Context(), request)
+			if expired.Action != lifecycleAwait || !continuityHoldPayload(expired.Evidence) ||
+				stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+				stringEvidence(expired.Evidence, "reason") != "CI_WAIT_TIMEOUT" ||
+				stringEvidence(expired.Evidence, "replacement_ci_outcome") != "pending_past_deadline" {
+				t.Fatalf("pending replacement expiry = %+v, want the existing CI_WAIT_TIMEOUT hold", expired)
+			}
+			expiredWait := expired.Evidence["ci_wait"].(map[string]any)
+			if expiredWait["deadline_unix_seconds"] != deadline {
+				t.Fatalf("replacement hold changed the operation deadline: initial=%v expired=%v",
+					deadline, expiredWait["deadline_unix_seconds"])
+			}
+			greenPR := client.prs[gateTestBranch]
+			pendingPR := *greenPR
+			pendingPR.StatusCheckRollup = "pending"
+			pendingPR.CIExecutionID = "different-rollup"
+			pendingPR.CIFailedWorkflow = nil
+			pendingPR.CIHasActiveChecks = true
+			pendingPR.CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+				Repository: "owner/repo", RunID: 999, Name: "unrelated",
+			}}
+			if !managedCIReplacementStillResolves(expired.Evidence, &pendingPR, "owner/repo") {
+				t.Fatal("unrelated active job disarmed the retained replacement deadline")
+			}
+			greenPR.StatusCheckRollup = "success"
+			if managedCIReplacementStillResolves(expired.Evidence, greenPR, "owner/repo") {
+				t.Fatalf("authoritative green PR rollup left the replacement wait active: %+v", expired.Evidence)
+			}
+			green := newLifecycleObserver(restarted).Observe(t.Context(), request)
+			if stringEvidence(green.Evidence, "gate") == gateCIWaitTimeout ||
+				stringEvidence(green.Evidence, "reason") == "CI_WAIT_TIMEOUT" {
+				t.Fatalf("green current-head rollup still timed out its replacement wait: %+v", green)
+			}
+		})
 	}
 }
 

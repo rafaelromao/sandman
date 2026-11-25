@@ -1,0 +1,17 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 138027527159,
+      "run_id": 45270155099,
+      "run_attempt": 1,
+      "name": "build-macos",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "runner_name": null,
+      "runner_id": null,
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/731"
+    }
+  ]
+}

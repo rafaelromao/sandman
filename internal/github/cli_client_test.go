@@ -345,7 +345,7 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,baseRefName,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
 	}
@@ -512,6 +512,27 @@ func TestCLIClient_FindPRByBranch_PreservesActiveSiblingsAlongsideFailure(t *tes
 	}
 	if len(pr.CIActiveFailedWorkflowRunFailedCheckNames) != 1 || pr.CIActiveFailedWorkflowRunFailedCheckNames[0] != "opencode-canary" {
 		t.Fatalf("failed check identities = %v, want the failed canary", pr.CIActiveFailedWorkflowRunFailedCheckNames)
+	}
+	if !reflect.DeepEqual(pr.CIActiveWorkflowChecks, []CIWorkflowCheck{
+		{Name: "build-macos", DetailsURL: "https://github.com/o/r/actions/runs/101/job/12", Repository: "o/r", RunID: 101},
+		{Name: "portal-browser", DetailsURL: "https://github.com/o/r/actions/runs/202/job/21", Repository: "o/r", RunID: 202},
+	}) {
+		t.Fatalf("active workflow check links = %+v, want links for every queued/running Actions job", pr.CIActiveWorkflowChecks)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_PreservesPendingOnlyWorkflowLinks(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","headRefOid":"source-head","statusCheckRollup":[{"__typename":"CheckRun","status":"IN_PROGRESS","name":"build-macos","detailsUrl":"https://github.com/o/r/actions/runs/102/job/21"},{"__typename":"CheckRun","status":"QUEUED","name":"quality-gate","detailsUrl":"https://github.com/o/r/actions/runs/102/job/22"}]}]`}}}
+	pr, err := (&CLIClient{runner: runner}).FindPRByBranch(t.Context(), "pending-only")
+	if err != nil || pr == nil {
+		t.Fatalf("FindPRByBranch() = (%+v, %v)", pr, err)
+	}
+	if pr.StatusCheckRollup != "pending" || !pr.CIHasActiveChecks ||
+		!reflect.DeepEqual(pr.CIActiveWorkflowChecks, []CIWorkflowCheck{
+			{Name: "build-macos", DetailsURL: "https://github.com/o/r/actions/runs/102/job/21", Repository: "o/r", RunID: 102},
+			{Name: "quality-gate", DetailsURL: "https://github.com/o/r/actions/runs/102/job/22", Repository: "o/r", RunID: 102},
+		}) {
+		t.Fatalf("pending-only rollup lost its linked current Actions jobs: %+v", pr)
 	}
 }
 
@@ -1723,6 +1744,9 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	}
 	if pr.BaseRefName != "release" {
 		t.Errorf("expected PR comparison base to round-trip, got %q", pr.BaseRefName)
+	}
+	if pr.BaseRefOid != "" {
+		t.Errorf("base oid should be omitted from gh CLI reads for compatibility, got %q", pr.BaseRefOid)
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected 2 commands, got %d", len(runner.calls))

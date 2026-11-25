@@ -215,6 +215,7 @@ type prPayload struct {
 	HeadRefName             string          `json:"headRefName"`
 	HeadRefOid              string          `json:"headRefOid"`
 	BaseRefName             string          `json:"baseRefName"`
+	BaseRefOid              string          `json:"baseRefOid"`
 	UpdatedAt               string          `json:"updatedAt"`
 	ClosedAt                string          `json:"closedAt"`
 	ReviewDecision          string          `json:"reviewDecision"`
@@ -300,6 +301,35 @@ func ciHasActiveChecksFromJSON(raw json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+func ciActiveWorkflowChecksFromJSON(raw json.RawMessage) []CIWorkflowCheck {
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil || len(checks) == 0 {
+		return nil
+	}
+	active := make([]CIWorkflowCheck, 0)
+	for _, check := range checks {
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		isActive := false
+		switch status {
+		case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED", "CANCEL_REQUESTED":
+			isActive = true
+		case "":
+			switch strings.ToUpper(strings.TrimSpace(check.State)) {
+			case "PENDING", "QUEUED", "IN_PROGRESS":
+				isActive = true
+			}
+		}
+		if isActive {
+			repository, identity, _ := managedActionsJobURLIdentity(strings.TrimSpace(check.DetailsURL))
+			active = append(active, CIWorkflowCheck{
+				Name: strings.TrimSpace(check.Name), DetailsURL: strings.TrimSpace(check.DetailsURL),
+				Repository: repository, RunID: identity.RunID,
+			})
+		}
+	}
+	return active
 }
 
 // CIFailedWorkflow identifies the only workflow responsible for failed CI.
@@ -748,6 +778,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		HeadRefName:        payload.HeadRefName,
 		HeadRefOid:         payload.HeadRefOid,
 		BaseRefName:        payload.BaseRefName,
+		BaseRefOid:         payload.BaseRefOid,
 		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers: linkedIssueNumbers,
 	}, nil
@@ -812,7 +843,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 
 // FindPRByBranch finds the most recent pull request for a branch via gh CLI.
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
-	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
+	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,baseRefName,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -852,6 +883,8 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		Merged:                      strings.TrimSpace(payload.MergedAt) != "",
 		HeadRefName:                 payload.HeadRefName,
 		HeadRefOid:                  payload.HeadRefOid,
+		BaseRefName:                 payload.BaseRefName,
+		BaseRefOid:                  payload.BaseRefOid,
 		linkedIssueNumber:           firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers:          linkedIssueNumbers,
 		UpdatedAt:                   parseGitHubTime(payload.UpdatedAt),
@@ -860,6 +893,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		MergeStateStatus:            payload.MergeStateStatus,
 		StatusCheckRollup:           rollupStateFromJSON(payload.StatusCheckRollup),
 		CIHasActiveChecks:           ciHasActiveChecksFromJSON(payload.StatusCheckRollup),
+		CIActiveWorkflowChecks:      ciActiveWorkflowChecksFromJSON(payload.StatusCheckRollup),
 		CIFailedWorkflow:            rerunEvidence,
 		CIMultipleFailedWorkflows:   multipleFailures,
 		CIActiveFailedWorkflowRunID: activeFailedWorkflowRunID,

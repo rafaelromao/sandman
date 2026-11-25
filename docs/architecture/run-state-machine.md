@@ -39,6 +39,7 @@ queued → running ⇄ waiting → success / failure / aborted
 | --- | --- |
 | Unstarted row awaiting first admission | Stay **queued**, unfinished and cancellation-aware |
 | Started run yields for current-head queued/running CI | **Running → waiting**; release execution capacity |
+| Verified same-head replacement succeeds while the PR rollup still shows its superseded failure | Stay **waiting** for authoritative required-check evidence under the replacement's already-bound CI deadline; expiry uses the existing `CI_WAIT_TIMEOUT` hold. The individual workflow does not make the PR green, and the wait is not renewed. |
 | Confirmed review request pending, reviewer not yet started | Stay **waiting** |
 | Pending review request, but aggregate PR looks clean | Stay **waiting**; no approval-based resume |
 | Current-request actionable feedback | Resume implementation when capacity permits |

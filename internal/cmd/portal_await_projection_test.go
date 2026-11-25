@@ -54,6 +54,15 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 			"base_branch":   "main",
 			"gate":          "pending",
 			"retries_total": float64(0),
+			"ci_wait": map[string]any{
+				"execution_id": "actions:9:101:1",
+				"actions_execution": map[string]any{
+					"base_sha": "base-sha",
+					"check_links": []any{map[string]any{
+						"details_url": "https://github.com/owner/repo/actions/runs/101/job/33",
+					}},
+				},
+			},
 		}},
 	})
 
@@ -86,6 +95,7 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	if got.Branch != "42-fix-bug" {
 		t.Fatalf("expected branch '42-fix-bug', got %q", got.Branch)
 	}
+	assertPortalManagedCIWait(t, got)
 
 	previousStaleCleaner := portalStaleCleaner
 	portalStaleCleaner = func(string) error { return nil }
@@ -102,6 +112,7 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	if responseRun == nil || responseRun.Status != "waiting" {
 		t.Fatalf("expected /api/runs issue 42 to return waiting, got %#v", responseRuns)
 	}
+	assertPortalManagedCIWait(t, responseRun)
 
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
 	if err := eventLog.Log(events.Event{
@@ -151,6 +162,33 @@ func TestPortal_AwaitEventShowsWaiting(t *testing.T) {
 	}
 }
 
+func assertPortalManagedCIWait(t *testing.T, row *portalRun) {
+	t.Helper()
+	for _, event := range row.Events {
+		if event.Type != "run.await" {
+			continue
+		}
+		wait, ok := event.Payload["ci_wait"].(map[string]any)
+		if !ok || wait["execution_id"] != "actions:9:101:1" {
+			t.Fatalf("portal event projection lost replacement identity: %#v", event.Payload)
+		}
+		execution, ok := wait["actions_execution"].(map[string]any)
+		if !ok || execution["base_sha"] != "base-sha" {
+			t.Fatalf("portal event projection lost replacement base identity: %#v", wait["actions_execution"])
+		}
+		links, ok := execution["check_links"].([]any)
+		if !ok || len(links) != 1 {
+			t.Fatalf("portal event projection lost replacement check links: %#v", execution["check_links"])
+		}
+		link, ok := links[0].(map[string]any)
+		if !ok || link["details_url"] != "https://github.com/owner/repo/actions/runs/101/job/33" {
+			t.Fatalf("portal event projection changed replacement check link: %#v", links)
+		}
+		return
+	}
+	t.Fatal("portal event projection omitted run.await evidence")
+}
+
 func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -189,6 +227,13 @@ func TestPortal_StartupPreservesAwaitingRunWithUnexpiredLease(t *testing.T) {
 		{Type: "run.await", RunID: runID, Issue: 42, Timestamp: now.Add(-10 * time.Minute), Payload: map[string]any{
 			"await_reason": "pending", "ci_wait": map[string]any{
 				"deadline_unix_seconds": now.Add(30 * time.Minute).Unix(),
+				"execution_id":          "actions:9:101:1",
+				"actions_execution": map[string]any{
+					"base_sha": "base-sha",
+					"check_links": []any{map[string]any{
+						"details_url": "https://github.com/owner/repo/actions/runs/101/job/33",
+					}},
+				},
 			},
 		}},
 	})

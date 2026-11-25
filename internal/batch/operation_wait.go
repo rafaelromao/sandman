@@ -59,7 +59,8 @@ func (s *lifecycleObserver) priorOperationEvidence(runID, branch, head string) (
 		return evidence, false
 	}
 	state, ok := states[runID]
-	if !ok || !state.IsAwaiting() || state.IsCapacityQueued() || state.AwaitEvent == nil || state.Branch() != branch || head == "" {
+	if !ok || (!state.IsAwaiting() && !state.IsCapacityQueued()) ||
+		state.AwaitEvent == nil || state.Branch() != branch || head == "" {
 		return evidence, false
 	}
 	valid := false

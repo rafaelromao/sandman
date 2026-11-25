@@ -140,7 +140,18 @@ func TestStatus_UsesActiveDurationWhileAwaiting(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
 			{Type: "run.started", Timestamp: startedAt, RunID: "run-status-await", Issue: 42},
-			{Type: "run.await", Timestamp: awaitAt, RunID: "run-status-await", Issue: 42},
+			{Type: "run.await", Timestamp: awaitAt, RunID: "run-status-await", Issue: 42, Payload: map[string]any{
+				"await_reason": "pending",
+				"ci_wait": map[string]any{
+					"execution_id": "actions:9:101:1",
+					"actions_execution": map[string]any{
+						"base_sha": "base-sha",
+						"check_links": []any{map[string]any{
+							"details_url": "https://github.com/owner/repo/actions/runs/101/job/33",
+						}},
+					},
+				},
+			}},
 		},
 	}
 
@@ -152,7 +163,8 @@ func TestStatus_UsesActiveDurationWhileAwaiting(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := buf.String(); !strings.Contains(got, "elapsed 5m0s") {
+	if got := buf.String(); !strings.Contains(got, "Active runs:") ||
+		!strings.Contains(got, "#42") || !strings.Contains(got, "elapsed 5m0s") {
 		t.Fatalf("status duration = %q, want frozen 5m0s", got)
 	}
 }

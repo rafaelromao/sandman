@@ -1,0 +1,16 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 138027527160,
+      "run_id": 45270155099,
+      "run_attempt": 2,
+      "name": "build-macos",
+      "status": "in_progress",
+      "conclusion": null,
+      "runner_id": 501,
+      "runner_name": "GitHub Actions 12",
+      "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/991"
+    }
+  ]
+}
