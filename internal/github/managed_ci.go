@@ -466,7 +466,10 @@ func (c *CLIClient) readManagedCISource(
 	if err != nil {
 		return ManagedCIExecution{}, nil, nil, err
 	}
-	source, identityOK := managedCIExecution(sourceRun, scope.repository, request, false)
+	// The request's failed checks came from the live PR rollup. Matching those
+	// exact check links to this run's jobs binds a source execution even when
+	// GitHub omits pull_requests from the workflow-run payload.
+	source, identityOK := managedCIExecution(sourceRun, scope.repository, request, true)
 	if !identityOK || source.RunID != scope.runID || source.Attempt != sourceAttempt ||
 		!strings.EqualFold(strings.TrimSpace(sourceRun.Event), "pull_request") {
 		return ManagedCIExecution{}, nil, nil,

@@ -800,37 +800,6 @@ func managedCIReplacementOutcomeConflicts(evidence map[string]any, candidate *gi
 		retainedConclusion != "" && candidateConclusion != "" && retainedConclusion != candidateConclusion
 }
 
-func managedCISourceSupersededByWait(
-	evidence map[string]any,
-	pr *github.PR,
-	source *github.ManagedCIExecution,
-) bool {
-	if pr == nil || source == nil {
-		return false
-	}
-	// A failing job in a still-running workflow is current evidence, even if a
-	// runner-shortage replacement has already been queued. Only a completed
-	// failing source execution can be superseded by a later generation.
-	if !strings.EqualFold(strings.TrimSpace(source.Status), "completed") ||
-		strings.EqualFold(strings.TrimSpace(source.Conclusion), "success") {
-		return false
-	}
-	wait, ok := evidence["ci_wait"].(map[string]any)
-	if !ok {
-		return false
-	}
-	execution, ok := wait["actions_execution"].(map[string]any)
-	if !ok {
-		return false
-	}
-	retained, ok := ciWaitActionsExecutionFromEvidence(execution)
-	if !ok {
-		return false
-	}
-	candidate := ciWaitActionsExecutionFromExecution(source, pr, pr.HeadRefOid)
-	return candidate != nil && compareCIWaitActionsExecution(candidate, retained) == -1
-}
-
 func ciWaitActionsExecutionFromEvidence(evidence map[string]any) (*ciWaitActionsExecution, bool) {
 	replacement, ok := evidence["replacement"].(bool)
 	if !ok || !replacement {
@@ -1142,7 +1111,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	if err == nil && pr != nil {
 		gate = lifecycleGate(checkPRExternalGateForPR(pr, headSHA, true))
 	}
-	if err == nil && pr != nil {
+	if err == nil && pr != nil && !pr.Merged && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		managedCI := s.observeManagedCIFailureForAttempt(
 			ctx, pr, headSHA, repository, runID, branch, worktreeHeadSHA,
 		)
@@ -1311,13 +1280,6 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) {
 		var ciEvidence map[string]any
 		var ciErr error
-		if confirmedIndependentCI {
-			if managedCISourceSupersededByWait(evidence.payload, pr, managedCISource) {
-				// A confirmed failure from an older attempt cannot spend repair
-				// budget after a newer verified replacement generation was retained.
-				confirmedIndependentCI = false
-			}
-		}
 		waitExecution := managedCIReplacement
 		sourceIsRetainedExecution := waitExecution == nil &&
 			managedCIWaitIncludesExecution(evidence.payload, managedCISource)

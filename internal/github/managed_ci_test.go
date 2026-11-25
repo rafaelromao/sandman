@@ -109,7 +109,7 @@ func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testi
 	}
 }
 
-func TestCLIClient_ManagedCIIncidentWithoutRunPRBaseIdentityIsInconclusive(t *testing.T) {
+func TestCLIClient_ManagedCIIncidentWithoutMatchingPRRollupCheckIsInconclusive(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
@@ -122,6 +122,44 @@ func TestCLIClient_ManagedCIIncidentWithoutRunPRBaseIdentityIsInconclusive(t *te
 		FailedChecks: []CIFailedCheck{
 			{
 				Name:       "build (macos-latest)",
+				DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/999999999",
+			},
+			{
+				Name:       "quality-gate",
+				DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138036364100",
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed check has no matching current-attempt job") {
+		t.Fatalf("incident without an exact PR-rollup-to-job link was attributed to the current PR/base: %v", err)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
+			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
+		}
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("source shortage annotations or replacements were queried without exact PR-rollup check identity: %+v", runner.calls)
+	}
+}
+
+func TestCLIClient_ManagedCIIncidentUsesPRRollupBindingWhenActionsRunLinksAreEmpty(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
+		{output: fixtureAt(t, "incident-replay", "jobs.json")},
+		{output: fixtureAt(t, "incident-replay", "source-run.json")},
+		{output: fixtureAt(t, "incident-replay", "shortage-annotations.json")},
+		{output: fixtureAt(t, "incident-replay", "aggregate-annotations.json")},
+		{output: fixtureAt(t, "incident-replay", "workflow-runs.json")},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
+		HeadSHA:             "f454c9077c0c41046fe8429e57777795b66e46a7",
+		FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{
+			{
+				Name:       "build (macos-latest)",
 				DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138027527159",
 			},
 			{
@@ -130,16 +168,19 @@ func TestCLIClient_ManagedCIIncidentWithoutRunPRBaseIdentityIsInconclusive(t *te
 			},
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "source workflow identity") {
-		t.Fatalf("incident with unlinked Actions source was attributed to the current PR/base: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "newer workflow run has no pull request identity") {
+		t.Fatalf("incident replacement without provider-backed PR/base identity error = %v, want fail-closed inconclusive replacement", err)
+	}
+	if observation.Source.RunID != 45270155099 ||
+		len(observation.Failures) != 2 ||
+		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
+		observation.Replacement != nil {
+		t.Fatalf("incident observation = %+v; want the rollup-bound source shortage and no unverified replacement", observation)
 	}
 	for _, call := range runner.calls {
 		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
-			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
+			t.Fatalf("managed CI incident observation attempted a mutation: %v", call.args)
 		}
-	}
-	if len(runner.calls) != 4 {
-		t.Fatalf("source shortage annotations or replacements were queried without PR/base-bound source identity: %+v", runner.calls)
 	}
 }
 
