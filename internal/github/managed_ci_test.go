@@ -52,7 +52,7 @@ func TestManagedCIExecutionRequiresTheCurrentBaseCommit(t *testing.T) {
 		BaseSHA: "current-base", HeadSHA: "head",
 	}
 
-	if _, ok := managedCIExecution(run, "owner/repo", request); ok {
+	if _, ok := managedCIExecution(run, "owner/repo", request, false); ok {
 		t.Fatal("workflow run bound to an old base commit was accepted")
 	}
 }
@@ -112,6 +112,8 @@ func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testi
 func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
+		{output: `[{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}]`},
 		{output: fixtureAt(t, "incident-replay", "jobs.json")},
 		{output: fixtureAt(t, "incident-replay", "source-run.json")},
 		{output: fixtureAt(t, "incident-replay", "shortage-annotations.json")},
@@ -119,7 +121,7 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 		{output: fixtureAt(t, "incident-replay", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main", BaseSHA: "base-sha",
+		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
 		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{
 			{
@@ -134,6 +136,9 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if observation.Source.BaseSHA != "ef8b1df0b2b836334477ef0a53812645311e9814" {
+		t.Fatalf("source base SHA = %q, want provider-backed current PR base", observation.Source.BaseSHA)
 	}
 	if len(observation.Failures) != 2 ||
 		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
@@ -153,6 +158,96 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
 			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
 		}
+	}
+}
+
+func TestCLIClient_ManagedCIRequiresAProviderBackedPullRequestBaseWhenGHOmitsIt(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{
+			name: "wrong pull request",
+			mutate: func(payload map[string]any) {
+				payload["number"] = float64(18)
+			},
+		},
+		{
+			name: "wrong target repository",
+			mutate: func(payload map[string]any) {
+				payload["base"].(map[string]any)["repo"].(map[string]any)["full_name"] = "other/repo"
+			},
+		},
+		{
+			name: "wrong base",
+			mutate: func(payload map[string]any) {
+				payload["base"].(map[string]any)["ref"] = "release"
+			},
+		},
+		{
+			name: "wrong head",
+			mutate: func(payload map[string]any) {
+				payload["head"].(map[string]any)["sha"] = "other-head"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(`{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`), &payload); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(payload)
+			encoded, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &fakeRunner{responses: []fakeResponse{
+				{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+				{output: string(encoded)},
+			}}
+			_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+				Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
+				HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
+				FailedChecks: []CIFailedCheck{{
+					Name:       "build (macos-latest)",
+					DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138027527159",
+				}},
+			})
+			if err == nil {
+				t.Fatal("conflicting provider-backed PR identity was accepted")
+			}
+			for _, call := range runner.calls {
+				if strings.Contains(strings.Join(call.args, " "), "actions/") {
+					t.Fatalf("Actions queried after invalid PR identity: %v", call.args)
+				}
+			}
+		})
+	}
+}
+
+func TestCLIClient_ManagedCIRejectsAmbiguousPRHeadAssociation(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
+		{output: `[{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}][{"number":3030,"base":{"ref":"release","sha":"other-base","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}]`},
+	}}
+	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
+		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name:       "build (macos-latest)",
+			DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "head association is ambiguous") {
+		t.Fatalf("managed CI accepted a head shared by multiple PRs: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("Actions queried without a unique PR/head association: %+v", runner.calls)
+	}
+	if !strings.Contains(strings.Join(runner.calls[2].args, " "), "--paginate") {
+		t.Fatalf("association lookup did not paginate before asserting uniqueness: %v", runner.calls[2].args)
 	}
 }
 
@@ -825,6 +920,57 @@ func TestCLIClient_ObserveManagedCIActiveExecutionIdentifiesSameRunHigherAttempt
 		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
 			t.Fatalf("active execution observation attempted a mutation: %v", call.args)
 		}
+	}
+}
+
+func TestCLIClient_RefreshManagedCIExecutionWithoutPRRollupLinks(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: `{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
+		{output: `[{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}]`},
+		{output: `{"id":45270155099,"run_number":5288,"run_attempt":2,"workflow_id":273743359,"event":"pull_request","status":"in_progress","conclusion":null,"head_sha":"incident-source-head","pull_requests":[]}`},
+	}}
+	execution, err := (&CLIClient{runner: runner}).RefreshManagedCIExecution(context.Background(),
+		ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha",
+			HeadSHA: "incident-source-head", WorkflowID: 273743359, Event: "pull_request",
+			RunID: 45270155099, RunNumber: 5288, Attempt: 1, Status: "queued",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.RunID != 45270155099 || execution.Attempt != 2 ||
+		execution.Status != "in_progress" || execution.Conclusion != "" {
+		t.Fatalf("refreshed execution = %+v, want the current higher attempt without PR links", execution)
+	}
+	if len(runner.calls) != 4 ||
+		strings.Join(runner.calls[3].args, " ") != "api repos/owner/repo/actions/runs/45270155099" {
+		t.Fatalf("refresh did not read the exact retained workflow run: %+v", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
+			t.Fatalf("managed CI refresh attempted a mutation: %v", call.args)
+		}
+	}
+}
+
+func TestCLIClient_RefreshManagedCIExecutionFailsClosedWhenPRBaseChanges(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: `{"number":17,"base":{"ref":"main","sha":"new-base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
+		{output: `[{"number":17,"base":{"ref":"main","sha":"new-base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}]`},
+	}}
+	_, err := (&CLIClient{runner: runner}).RefreshManagedCIExecution(context.Background(),
+		ManagedCIExecution{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha",
+			HeadSHA: "incident-source-head", WorkflowID: 273743359, Event: "pull_request",
+			RunID: 45270155099, RunNumber: 5288, Attempt: 1, Status: "queued",
+		})
+	if err == nil || !strings.Contains(err.Error(), "pull request identity changed") {
+		t.Fatalf("refresh accepted a changed PR base identity: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("Actions run was queried after PR identity changed: %+v", runner.calls)
 	}
 }
 

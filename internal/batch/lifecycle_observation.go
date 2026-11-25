@@ -93,13 +93,39 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 	result.SourceFailure = managedCISourceFailureEvidence(
 		result.Failure.Source, result.Failure.SourceFailures,
 	)
+	if result.PR != nil && strings.TrimSpace(result.PR.BaseRefOid) == "" &&
+		result.Failure.Source != nil && strings.TrimSpace(result.Failure.Source.BaseSHA) != "" {
+		resolvedPR := *result.PR
+		resolvedPR.BaseRefOid = strings.TrimSpace(result.Failure.Source.BaseSHA)
+		result.PR = &resolvedPR
+	}
 	if !result.Failure.IndependentFailure && result.Failure.Replacement == nil &&
 		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
 		ciActive(pr, headSHA) {
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 		if established {
+			if _, retainedReplacement := managedCIReplacementWait(retained); result.PR != nil &&
+				strings.TrimSpace(result.PR.BaseRefOid) == "" && retainedReplacement {
+				provider, ok := s.deps.githubClient.(github.ManagedCIPullRequestIdentityProvider)
+				if !ok {
+					result.Failure.Unknown = true
+				} else if identity, identityErr := provider.FetchManagedCIPullRequestIdentity(
+					ctx, result.PR.Number,
+				); identityErr != nil ||
+					identity.PullRequest != result.PR.Number ||
+					identity.BaseRefName != result.PR.BaseRefName ||
+					!strings.EqualFold(identity.HeadSHA, result.PR.HeadRefOid) ||
+					result.Failure.Repository != "" &&
+						!strings.EqualFold(identity.Repository, result.Failure.Repository) {
+					result.Failure.Unknown = true
+				} else {
+					resolvedPR := *result.PR
+					resolvedPR.BaseRefOid = identity.BaseSHA
+					result.PR = &resolvedPR
+				}
+			}
 			retainedExecution := managedCIReplacementExecutionForObservation(
-				retained, pr, result.Failure.Repository,
+				retained, result.PR, result.Failure.Repository,
 			)
 			if retainedExecution != nil {
 				if result.Failure.Repository == "" {
@@ -112,9 +138,9 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 				}
 				if !result.Failure.Unknown &&
 					strings.EqualFold(retainedExecution.Repository, result.Failure.Repository) {
-					if managedCIVisibleActiveRunDiffers(pr, retainedExecution) {
+					if managedCIVisibleActiveRunDiffers(result.PR, retainedExecution) {
 						result.Failure.Unknown = true
-					} else if checks := managedCIVisibleActiveChecksForRun(pr, retainedExecution); len(checks) > 0 {
+					} else if checks := managedCIVisibleActiveChecksForRun(result.PR, retainedExecution); len(checks) > 0 {
 						activeExecution, activeErr := s.observeManagedCIActiveExecution(
 							ctx, *retainedExecution, checks,
 						)
@@ -123,6 +149,31 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 						} else {
 							result.Failure.Repository = activeExecution.Repository
 							result.Failure.Replacement = activeExecution
+						}
+					} else if refresher, ok := s.deps.githubClient.(github.ManagedCIExecutionRefresher); ok {
+						refreshed, refreshErr := refresher.RefreshManagedCIExecution(ctx, *retainedExecution)
+						if refreshErr != nil ||
+							!managedCIRefreshedExecutionMatches(*retainedExecution, refreshed) {
+							result.Failure.Unknown = true
+						} else {
+							result.Failure.Repository = refreshed.Repository
+							result.Failure.Replacement = &refreshed
+							if strings.EqualFold(strings.TrimSpace(refreshed.Status), "completed") &&
+								!strings.EqualFold(strings.TrimSpace(refreshed.Conclusion), "success") {
+								diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, refreshed)
+								if diagnosis.Unknown {
+									result.Failure.Unknown = true
+								} else if diagnosis.Replacement != nil {
+									result.Failure.Replacement = diagnosis.Replacement
+									result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
+									result.Failure.IndependentFailure = diagnosis.IndependentFailure
+									if diagnosis.IndependentFailure {
+										result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+											result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
+										)
+									}
+								}
+							}
 						}
 					} else if strings.EqualFold(strings.TrimSpace(retainedExecution.Status), "completed") &&
 						!strings.EqualFold(strings.TrimSpace(retainedExecution.Conclusion), "success") {
@@ -136,10 +187,12 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 							result.Failure.IndependentFailure = diagnosis.IndependentFailure
 							if diagnosis.IndependentFailure {
 								result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
-									pr, diagnosis.Replacement, diagnosis.ReplacementFailures,
+									result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
 								)
 							}
 						}
+					} else {
+						result.Failure.Unknown = true
 					}
 				} else if !result.Failure.Unknown {
 					result.Failure.Unknown = true
@@ -154,6 +207,22 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 		}
 	}
 	return result
+}
+
+func managedCIRefreshedExecutionMatches(
+	retained github.ManagedCIExecution,
+	refreshed github.ManagedCIExecution,
+) bool {
+	return strings.EqualFold(strings.TrimSpace(retained.Repository), strings.TrimSpace(refreshed.Repository)) &&
+		retained.PullRequest == refreshed.PullRequest &&
+		retained.BaseRefName == refreshed.BaseRefName &&
+		strings.EqualFold(strings.TrimSpace(retained.BaseSHA), strings.TrimSpace(refreshed.BaseSHA)) &&
+		strings.EqualFold(strings.TrimSpace(retained.HeadSHA), strings.TrimSpace(refreshed.HeadSHA)) &&
+		retained.WorkflowID == refreshed.WorkflowID &&
+		strings.EqualFold(strings.TrimSpace(retained.Event), strings.TrimSpace(refreshed.Event)) &&
+		retained.RunID == refreshed.RunID && retained.RunNumber == refreshed.RunNumber &&
+		refreshed.Attempt >= retained.Attempt &&
+		github.ValidManagedCIExecutionStatus(refreshed.Status, refreshed.Conclusion)
 }
 
 func (s *lifecycleObserver) observeManagedCIActiveExecution(
@@ -357,7 +426,7 @@ func managedCIRequestForPR(pr *github.PR, headSHA, repository string) (github.Ma
 		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") ||
 		strings.TrimSpace(headSHA) == "" ||
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
-		strings.TrimSpace(pr.BaseRefName) == "" || strings.TrimSpace(pr.BaseRefOid) == "" ||
+		strings.TrimSpace(pr.BaseRefName) == "" ||
 		pr.CIFailedWorkflow == nil ||
 		strings.TrimSpace(pr.CIFailedWorkflow.RunID) == "" || len(pr.CIFailedWorkflow.FailedChecks) == 0 {
 		return github.ManagedCIRequest{}, false
@@ -417,6 +486,9 @@ func classifyManagedCIFailureObservation(
 	}
 	replacementFailed := strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") &&
 		!strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success")
+	sourceFailureIsCurrent := independentFailure &&
+		!(strings.EqualFold(strings.TrimSpace(source.Status), "completed") &&
+			!strings.EqualFold(strings.TrimSpace(source.Conclusion), "success"))
 	if replacementFailed && !replacementHasConfirmedFailure {
 		// A terminal replacement with diagnosed non-code outcomes has a
 		// verified execution state even though it does not authorize code
@@ -426,7 +498,8 @@ func classifyManagedCIFailureObservation(
 			replacement := *observation.Replacement
 			return managedCIFailureObservation{
 				Repository: repository, Source: &source, Replacement: &replacement,
-				SourceFailures: confirmedSourceFailures,
+				IndependentFailure: sourceFailureIsCurrent,
+				SourceFailures:     confirmedSourceFailures,
 			}
 		}
 		return managedCIFailureObservation{
@@ -437,6 +510,7 @@ func classifyManagedCIFailureObservation(
 	replacement := *observation.Replacement
 	return managedCIFailureObservation{
 		Repository: repository, Source: &source, Replacement: &replacement,
+		IndependentFailure:  sourceFailureIsCurrent,
 		ReplacementFailures: confirmedReplacementFailures, SourceFailures: confirmedSourceFailures,
 	}
 }
@@ -806,7 +880,8 @@ func managedCISourceFailuresMatchRequest(observation github.ManagedCIObservation
 		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(request.Repository)) ||
 		source.PullRequest != request.PullRequest ||
 		strings.TrimSpace(source.BaseRefName) != strings.TrimSpace(request.BaseRefName) ||
-		!strings.EqualFold(strings.TrimSpace(source.BaseSHA), strings.TrimSpace(request.BaseSHA)) ||
+		strings.TrimSpace(request.BaseSHA) != "" &&
+			!strings.EqualFold(strings.TrimSpace(source.BaseSHA), strings.TrimSpace(request.BaseSHA)) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
 		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
 		len(observation.Failures) != len(request.FailedChecks) {

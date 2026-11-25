@@ -10,13 +10,8 @@
       "status": "completed",
       "conclusion": "failure",
       "head_sha": "f454c9077c0c41046fe8429e57777795b66e46a7",
-      "pull_requests": [
-        {
-          "number": 3029,
-          "base": {"ref": "main", "sha": "base-sha"},
-          "head": {"sha": "f454c9077c0c41046fe8429e57777795b66e46a7"}
-        }
-      ]
+      "check_suite_id": 122503172436,
+      "pull_requests": []
     },
     {
       "id": 45276896986,
@@ -27,13 +22,8 @@
       "status": "completed",
       "conclusion": "success",
       "head_sha": "f454c9077c0c41046fe8429e57777795b66e46a7",
-      "pull_requests": [
-        {
-          "number": 3029,
-          "base": {"ref": "main", "sha": "base-sha"},
-          "head": {"sha": "f454c9077c0c41046fe8429e57777795b66e46a7"}
-        }
-      ]
+      "check_suite_id": 122521066407,
+      "pull_requests": []
     }
   ]
 }

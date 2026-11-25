@@ -808,6 +808,13 @@ func managedCISourceSupersededByWait(
 	if pr == nil || source == nil {
 		return false
 	}
+	// A failing job in a still-running workflow is current evidence, even if a
+	// runner-shortage replacement has already been queued. Only a completed
+	// failing source execution can be superseded by a later generation.
+	if !strings.EqualFold(strings.TrimSpace(source.Status), "completed") ||
+		strings.EqualFold(strings.TrimSpace(source.Conclusion), "success") {
+		return false
+	}
 	wait, ok := evidence["ci_wait"].(map[string]any)
 	if !ok {
 		return false

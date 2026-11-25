@@ -296,6 +296,24 @@ type ManagedCIRequest struct {
 	FailedChecks        []CIFailedCheck
 }
 
+// ManagedCIPullRequestIdentity contains the provider-backed PR/base identity
+// needed by managed CI when an older gh CLI cannot expose baseRefOid. The
+// provider also verifies that the PR is the unique association for HeadSHA.
+type ManagedCIPullRequestIdentity struct {
+	Repository  string
+	PullRequest int
+	BaseRefName string
+	BaseSHA     string
+	HeadSHA     string
+}
+
+// ManagedCIPullRequestIdentityProvider reads the exact PR base identity and
+// head association for managed diagnosis without adding fields to general-
+// purpose gh pr queries.
+type ManagedCIPullRequestIdentityProvider interface {
+	FetchManagedCIPullRequestIdentity(ctx context.Context, pullRequest int) (ManagedCIPullRequestIdentity, error)
+}
+
 // ManagedCIActiveExecutionRequest binds active PR check links to one same-run
 // Actions execution so a higher attempt can supersede retained failure evidence.
 type ManagedCIActiveExecutionRequest struct {
@@ -386,6 +404,15 @@ type ManagedCIActiveExecutionObserver interface {
 	ObserveManagedCIActiveExecution(
 		ctx context.Context,
 		request ManagedCIActiveExecutionRequest,
+	) (ManagedCIExecution, error)
+}
+
+// ManagedCIExecutionRefresher refreshes one retained Actions execution by its
+// exact provider identity, without depending on links in the current PR rollup.
+type ManagedCIExecutionRefresher interface {
+	RefreshManagedCIExecution(
+		ctx context.Context,
+		execution ManagedCIExecution,
 	) (ManagedCIExecution, error)
 }
 

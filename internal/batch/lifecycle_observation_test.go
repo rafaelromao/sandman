@@ -29,12 +29,17 @@ type managedCILifecycleClient struct {
 
 type retainedManagedCIFailureClient struct {
 	*fakeGitHubClient
-	failures     []github.ManagedCIFailureEvidence
-	diagnosisErr error
-	executions   []github.ManagedCIExecution
-	active       *github.ManagedCIExecution
-	activeErr    error
-	activeReads  []github.ManagedCIActiveExecutionRequest
+	failures      []github.ManagedCIFailureEvidence
+	diagnosisErr  error
+	executions    []github.ManagedCIExecution
+	active        *github.ManagedCIExecution
+	activeErr     error
+	activeReads   []github.ManagedCIActiveExecutionRequest
+	refreshed     *github.ManagedCIExecution
+	refreshErr    error
+	refreshReads  []github.ManagedCIExecution
+	identity      *github.ManagedCIPullRequestIdentity
+	identityReads []int
 }
 
 type managedCIActiveLifecycleClient struct {
@@ -84,6 +89,31 @@ func (c *retainedManagedCIFailureClient) ObserveManagedCIActiveExecution(
 		return github.ManagedCIExecution{}, errors.New("active execution unavailable")
 	}
 	return *c.active, nil
+}
+
+func (c *retainedManagedCIFailureClient) RefreshManagedCIExecution(
+	_ context.Context,
+	execution github.ManagedCIExecution,
+) (github.ManagedCIExecution, error) {
+	c.refreshReads = append(c.refreshReads, execution)
+	if c.refreshErr != nil {
+		return github.ManagedCIExecution{}, c.refreshErr
+	}
+	if c.refreshed != nil {
+		return *c.refreshed, nil
+	}
+	return execution, nil
+}
+
+func (c *retainedManagedCIFailureClient) FetchManagedCIPullRequestIdentity(
+	_ context.Context,
+	pullRequest int,
+) (github.ManagedCIPullRequestIdentity, error) {
+	c.identityReads = append(c.identityReads, pullRequest)
+	if c.identity == nil {
+		return github.ManagedCIPullRequestIdentity{}, errors.New("PR identity unavailable")
+	}
+	return *c.identity, nil
 }
 
 func (c *managedCIActiveLifecycleClient) ObserveManagedCIActiveExecution(
@@ -158,7 +188,7 @@ func TestLifecycleObservation_AuthoritativeGreenDoesNotRequireReplacementLinkage
 	}
 }
 
-func TestManagedCIRequestRequiresCurrentBaseSHA(t *testing.T) {
+func TestManagedCIRequestUsesProviderBackedCurrentBaseIdentity(t *testing.T) {
 	pr := &github.PR{
 		Number: 17, State: "open", BaseRefName: "main", HeadRefOid: "current-sha",
 		StatusCheckRollup: "failure",
@@ -167,8 +197,12 @@ func TestManagedCIRequestRequiresCurrentBaseSHA(t *testing.T) {
 		},
 	}
 
-	if _, ok := managedCIRequestForPR(pr, "current-sha", "owner/repo"); ok {
-		t.Fatal("managed CI request accepted a PR without its current base SHA")
+	request, ok := managedCIRequestForPR(pr, "current-sha", "owner/repo")
+	if !ok {
+		t.Fatal("managed CI request rejected gh output that omits baseRefOid")
+	}
+	if request.BaseSHA != "" {
+		t.Fatalf("base SHA = %q, want empty for the managed observer to resolve via REST", request.BaseSHA)
 	}
 }
 
@@ -1704,7 +1738,7 @@ func TestLifecycleObservation_SupersededSourceFailureDoesNotResumeRepair(t *test
 	}
 }
 
-func TestLifecycleObservation_ConfirmedCodeFailureIsRetainedWhileReplacementRuns(t *testing.T) {
+func TestLifecycleObservation_CurrentCodeFailureIsRepairedWhileReplacementIsQueued(t *testing.T) {
 	now := time.Unix(5_000, 0).UTC()
 	failedChecks := []github.CIFailedCheck{
 		{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
@@ -1755,13 +1789,9 @@ func TestLifecycleObservation_ConfirmedCodeFailureIsRetainedWhileReplacementRuns
 		WorkDir: t.TempDir(), Branch: gateTestBranch, RunID: "run-mixed-ci-failure",
 		HostPathsReady: true, AttemptStatus: "success",
 	})
-	if verdict.Action != lifecycleAwait || verdict.Evidence["gate"] != string(lifecycleGatePending) ||
-		verdict.ciRepairRequired {
-		t.Fatalf("confirmed source failure should wait for the verified replacement: %+v", verdict)
-	}
-	wait, ok := verdict.Evidence["ci_wait"].(map[string]any)
-	if !ok || wait["execution_id"] != "actions:273743359:102:1" {
-		t.Fatalf("confirmed source failure did not retain the verified replacement wait: %#v", verdict.Evidence)
+	if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
+		!verdict.ciRepairRequired {
+		t.Fatalf("current independent source failure was hidden by a queued replacement: %+v", verdict)
 	}
 	sourceFailure, ok := verdict.Evidence["managed_ci_source_failure"].(map[string]any)
 	if !ok || sourceFailure["run_id"] != int64(101) {
@@ -2145,6 +2175,99 @@ func TestLifecycleObservation_ReplacementSuccessRetainsOriginalCITimeout(t *test
 	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
 	if err != nil || registration.DeadlineUnixSeconds != deadline {
 		t.Fatalf("replacement success renewed its bounded deadline: registration=%+v err=%v", registration, err)
+	}
+}
+
+func TestLifecycleObservation_RefreshesRetainedReplacementWithoutRollupLinks(t *testing.T) {
+	now := time.Unix(6_500, 0).UTC()
+	workDir := t.TempDir()
+	pr := &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "pending", CIHasActiveChecks: true, MergeStateStatus: "BLOCKED",
+	}
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
+		WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+		Status: "in_progress",
+	}
+	seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
+	if err != nil {
+		t.Fatalf("seed retained replacement wait: %v", err)
+	}
+	pr.BaseRefOid = ""
+	wait := waitEvidence["ci_wait"].(map[string]any)
+	deadline := wait["deadline_unix_seconds"].(int64)
+	runID := "run-refresh-retained-replacement"
+	eventLog := &spyEventLog{events: []events.Event{
+		{Type: "run.started", RunID: runID, Issue: 42, Payload: map[string]any{"branch": gateTestBranch}},
+		{Type: "run.await", RunID: runID, Issue: 42, Payload: map[string]any{
+			"await_reason": "pending", "branch": gateTestBranch, "ci_wait": wait,
+		}},
+	}}
+	refreshed := retained
+	refreshed.Status = "completed"
+	refreshed.Conclusion = "success"
+	client := &retainedManagedCIFailureClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+			prs:    map[string]*github.PR{gateTestBranch: pr},
+		},
+		refreshed: &refreshed,
+		identity: &github.ManagedCIPullRequestIdentity{
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			BaseSHA: "base-sha", HeadSHA: "current-sha",
+		},
+	}
+	session := &runSession{
+		issueNumber: 42, deps: runDeps{
+			githubClient: client, eventLog: eventLog, errorLog: io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review"},
+		opts: runSessionOptions{
+			now:         func() time.Time { return now.Add(5 * time.Minute) },
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
+	}
+	request := lifecycleObservationRequest{
+		WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
+		HostPathsReady: true, AttemptStatus: "success",
+	}
+	observer := newLifecycleObserver(session)
+	observed := observer.Observe(t.Context(), request)
+	observedWait, ok := observed.Evidence["ci_wait"].(map[string]any)
+	observedExecution, executionOK := observedWait["actions_execution"].(map[string]any)
+	if observed.Action != lifecycleAwait || observed.Kind == lifecycleVerdictGitHubUnavailable ||
+		!ok || !executionOK || observedExecution["status"] != "completed" ||
+		observedExecution["conclusion"] != "success" {
+		t.Fatalf("retained replacement was not refreshed without PR check links: %+v", observed)
+	}
+	if len(client.refreshReads) != 1 || client.refreshReads[0].RunID != retained.RunID ||
+		client.refreshReads[0].Attempt != retained.Attempt ||
+		len(client.activeReads) != 0 {
+		t.Fatalf("refresh did not target the retained execution directly: refresh=%+v active=%+v",
+			client.refreshReads, client.activeReads)
+	}
+	if len(client.identityReads) != 1 || client.identityReads[0] != pr.Number {
+		t.Fatalf("missing PR base SHA was not resolved through the managed identity provider: %+v", client.identityReads)
+	}
+	if observedWait["deadline_unix_seconds"] != deadline {
+		t.Fatalf("refresh renewed the retained execution deadline: got %v want %v",
+			observedWait["deadline_unix_seconds"], deadline)
+	}
+	registration, err := readCIWaitRegistration(filepath.Join(workDir, ".sandman", "state", "17.ci_wait.json"))
+	if err != nil || registration.DeadlineUnixSeconds != deadline {
+		t.Fatalf("refreshed wait registration = %+v err=%v, want original deadline %d",
+			registration, err, deadline)
+	}
+
+	now = time.Unix(deadline, 0).UTC()
+	session.opts.now = func() time.Time { return now }
+	expired := observer.Observe(t.Context(), request)
+	if expired.Action != lifecycleAwait || !continuityHoldPayload(expired.Evidence) ||
+		stringEvidence(expired.Evidence, "gate") != gateCIWaitTimeout ||
+		stringEvidence(expired.Evidence, "replacement_ci_outcome") != "passed_required_check_rollup_stale" {
+		t.Fatalf("refreshed replacement expiry = %+v, want the existing CI timeout hold", expired)
 	}
 }
 
