@@ -893,10 +893,10 @@ func managedCIUnsupersededSourceFailures(
 			!managedCIExecutionIsActive(*replacement) {
 		return sourceFailures
 	}
-	// A run-level replacement is not enough: only an exact logical check
-	// observed in the replacement attempt proves that this prior failure has
-	// been superseded. Missing or ambiguous job evidence keeps the old failure
-	// actionable.
+	// A run-level replacement is not enough: only an exact logical check that
+	// has started in the replacement attempt proves this prior failure has been
+	// superseded. Queued checks have not run yet, and missing or ambiguous job
+	// evidence keeps the old failure actionable.
 	jobsByName := make(map[string][]github.ManagedCIJobEvidence, len(replacementJobs))
 	jobsByID := make(map[int64]struct{}, len(replacementJobs))
 	sourceFailuresByName := make(map[string]int, len(sourceFailures))
@@ -914,7 +914,12 @@ func managedCIUnsupersededSourceFailures(
 		jobsByID[job.JobID] = struct{}{}
 		status := strings.ToLower(strings.TrimSpace(job.Status))
 		switch status {
-		case "queued", "in_progress":
+		case "queued":
+			if strings.TrimSpace(job.Conclusion) != "" {
+				return sourceFailures
+			}
+			continue
+		case "in_progress":
 			if strings.TrimSpace(job.Conclusion) != "" {
 				return sourceFailures
 			}

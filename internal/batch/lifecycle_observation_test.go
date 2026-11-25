@@ -212,7 +212,6 @@ func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *te
 	failedChecks := []github.CIFailedCheck{
 		{Name: "build (macos-latest)", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
 		{Name: "CI / quality-gate", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
-		{Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/13"},
 	}
 	client := &managedCILifecycleClient{
 		fakeGitHubClient: &fakeGitHubClient{
@@ -222,7 +221,7 @@ func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *te
 				StatusCheckRollup: "failure", CIExecutionID: "old-failed-checks", MergeStateStatus: "BLOCKED",
 				CIFailedWorkflow: &github.CIFailedWorkflow{
 					RunID: "101", FailedChecks: failedChecks,
-					CheckNames: []string{"build (macos-latest)", "CI / quality-gate", "unit-tests"},
+					CheckNames: []string{"build (macos-latest)", "CI / quality-gate"},
 				},
 			}},
 		},
@@ -235,7 +234,6 @@ func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *te
 			SourceJobs: []github.ManagedCIJobEvidence{
 				{JobID: 138, RunID: 101, Attempt: 1, Name: "build (macos-latest)", Status: "completed", Conclusion: "cancelled"},
 				{JobID: 140, RunID: 101, Attempt: 1, Name: "CI / quality-gate", Status: "completed", Conclusion: "failure"},
-				{JobID: 141, RunID: 101, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "failure"},
 			},
 			Failures: []github.ManagedCIFailureEvidence{
 				{
@@ -246,10 +244,6 @@ func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *te
 					JobID: 140, RunID: 101, Attempt: 1, CheckName: "CI / quality-gate",
 					DetailsURL: failedChecks[1].DetailsURL, Classification: github.ManagedCIDependentFailure,
 					CausedByChecks: []string{"build-macos"}, CausedByResults: []string{"abandoned"},
-				},
-				{
-					JobID: 141, RunID: 101, Attempt: 1, CheckName: "unit-tests",
-					DetailsURL: failedChecks[2].DetailsURL, Classification: github.ManagedCIConfirmedCodeTestFailure,
 				},
 			},
 			Replacement: &github.ManagedCIExecution{
@@ -294,8 +288,8 @@ func TestLifecycleObservation_WaitsForVerifiedReplacementWithoutPRJobLinks(t *te
 	if !ok || wait["execution_id"] != "actions:273743359:102:1" {
 		t.Fatalf("CI wait = %#v, want the replacement identity before rollup job links exist", verdict.Evidence["ci_wait"])
 	}
-	if _, superseded := verdict.Evidence["managed_ci_source_failure"]; superseded {
-		t.Fatalf("requeued source check remained actionable after its exact replacement job appeared: %#v",
+	if _, sourceFailure := verdict.Evidence["managed_ci_source_failure"]; sourceFailure {
+		t.Fatalf("runner-shortage-only source run unexpectedly retained an independent failure: %#v",
 			verdict.Evidence["managed_ci_source_failure"])
 	}
 
@@ -1737,9 +1731,11 @@ func TestLifecycleObservation_SupersededSourceFailureDoesNotResumeRepair(t *test
 
 func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsCheckIsRerun(t *testing.T) {
 	tests := []struct {
-		name            string
-		replacementJobs []github.ManagedCIJobEvidence
-		wantRepair      bool
+		name                  string
+		replacementStatus     string
+		replacementConclusion string
+		replacementJobs       []github.ManagedCIJobEvidence
+		wantRepair            bool
 	}{
 		{name: "queued replacement alone does not supersede the source check", wantRepair: true},
 		{
@@ -1750,7 +1746,8 @@ func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsChe
 			wantRepair: true,
 		},
 		{
-			name: "provider shows the failed check is running in the replacement",
+			name:              "provider shows the failed check is running in the replacement",
+			replacementStatus: "in_progress",
 			replacementJobs: []github.ManagedCIJobEvidence{{
 				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "in_progress",
 			}},
@@ -1760,6 +1757,7 @@ func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsChe
 			replacementJobs: []github.ManagedCIJobEvidence{{
 				JobID: 240, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "queued",
 			}},
+			wantRepair: true,
 		},
 	}
 	for _, test := range tests {
@@ -1768,6 +1766,10 @@ func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsChe
 			failedChecks := []github.CIFailedCheck{
 				{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
 				{Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+			}
+			replacementStatus := test.replacementStatus
+			if replacementStatus == "" {
+				replacementStatus = "queued"
 			}
 			client := &managedCILifecycleClient{
 				fakeGitHubClient: &fakeGitHubClient{
@@ -1798,7 +1800,9 @@ func TestLifecycleObservation_CompletedSourceFailureRemainsActionableUntilItsChe
 					},
 					Replacement: &github.ManagedCIExecution{
 						Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-sha",
-						WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1, Status: "queued",
+						WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
+						Status:     replacementStatus,
+						Conclusion: test.replacementConclusion,
 					},
 					ReplacementJobs: test.replacementJobs,
 				},
