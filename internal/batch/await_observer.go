@@ -135,6 +135,10 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]any {
 	payload := cloneLifecycleExtras(observed)
 	for _, operation := range []string{"ci_wait", "review_request"} {
+		if operation == "ci_wait" && payloadBoolValue(observed, daemon.CICompletedDuringReviewKey) {
+			delete(payload, operation)
+			continue
+		}
 		if _, ok := awaitIdentitySignature(payload, operation); ok {
 			continue
 		}
@@ -161,6 +165,9 @@ func awaitOperationChanged(previous, observed map[string]any) bool {
 	observedRecovery, observedRecovering := githubRecoverySignature(observed)
 	if previousRecovering || observedRecovering {
 		return previousRecovering != observedRecovering || previousRecovery != observedRecovery
+	}
+	if _, retainedCI := previous["ci_wait"]; retainedCI && payloadBoolValue(observed, daemon.CICompletedDuringReviewKey) {
+		return true
 	}
 	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
 		previousValue, previousOK := previous[key]

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -1122,6 +1123,15 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		}
 		extras["next_action"] = nextAction
 		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}
+	}
+	if decision.action == lifecycleAwait && unresolvedDaemonReviewRequest(extras) &&
+		strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.TrimSpace(headSHA) != "" &&
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) &&
+		strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "success") && !ciActive(pr, headSHA) {
+		// Distinguish a completed CI operation from an observation that
+		// could not refresh it. The durable await also retires its lease cap.
+		delete(extras, "ci_wait")
+		extras[daemon.CICompletedDuringReviewKey] = true
 	}
 	return lifecycleVerdict{
 		Action: decision.action, Evidence: extras,

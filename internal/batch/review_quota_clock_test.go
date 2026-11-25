@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -134,6 +135,101 @@ func TestDaemonReviewWaitRemainsRecoverableAcrossQuotaBoundary(t *testing.T) {
 	evidence["ci_wait"] = map[string]any{"deadline_unix_seconds": ciDeadline.Unix()}
 	if _, got, ok := lifecycleOwnershipOperation(evidence, "run"); !ok || !got.Equal(ciDeadline) {
 		t.Fatalf("review wait changed CI's independent cutoff: %v, bounded=%t", got, ok)
+	}
+}
+
+func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
+	for _, checkpoint := range []bool{true, false} {
+		name := "after new checkpoint"
+		if !checkpoint {
+			name = "crash before new checkpoint"
+		}
+		t.Run(name, func(t *testing.T) {
+			start := time.Date(2026, 11, 25, 11, 5, 0, 0, time.UTC)
+			now := start
+			root := t.TempDir()
+			layout := paths.NewLayout(nil, root)
+			location := layout.LocateBatch("batch", "")
+			if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
+				ID: location.ID, Path: location.Dir, Status: batchindex.StatusActive, Kind: batchindex.KindIssue,
+			}}}).Save(layout.BatchesIndexPath); err != nil {
+				t.Fatal(err)
+			}
+			pr := continuityProbePR()
+			pr.StatusCheckRollup, pr.CIHasActiveChecks, pr.CIExecutionID = "pending", true, "check-execution"
+			client := &registrationGitHubClient{
+				fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{continuityBranch: pr}},
+				comments: []github.PRComment{{
+					ID: "trigger-1001", Body: "/sandman review", CreatedAt: start.Add(-time.Minute),
+				}},
+			}
+			row := RowSpec{RunID: "run", BatchID: location.ID, IssueNumber: 42, BaseBranch: "main",
+				Branches:  map[int]string{42: continuityBranch},
+				RenderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+			}
+			log := &spyEventLog{events: []events.Event{{
+				Type: "run.started", RunID: row.RunID, Issue: row.IssueNumber, Timestamp: start,
+				Payload: map[string]any{"branch": continuityBranch, "batch_id": row.BatchID},
+			}}}
+			executor := &runExecutor{deps: runDeps{githubClient: client, layout: layout, eventLog: log, runSessionOpts: runSessionOptions{
+				now: func() time.Time { return now }, currentHead: func(string) (string, error) { return pr.HeadRefOid, nil },
+			}}}
+			session := newRunSession(executor, row)
+			session.reviewAttemptStartedAt = start.Add(-2 * time.Minute)
+			if err := session.registerReviewRequest(t.Context(), root, pr, pr.HeadRefOid); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(layout.ReviewsDir(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := atomicfs.WriteAtomicJSON(reviewquota.Path(layout.ReviewsDir()), reviewquota.State{Paused: true, StartedAt: now}, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			observe := func() {
+				t.Helper()
+				observer := newLifecycleObserver(newRunSession(executor, row))
+				verdict := observer.decideLifecycleForAttempt(t.Context(), root, continuityBranch, row.RunID, true, "success", false, true, nil)
+				if verdict.Action != lifecycleAwait {
+					t.Fatalf("at %v: got %s, want await: %v", now, verdict.status(), verdict.Evidence)
+				}
+				if err := executor.persistObservedAwait(t.Context(), row, verdict.Evidence); err != nil {
+					t.Fatal(err)
+				}
+			}
+			owner, err := newWaitOwner(layout, location, daemon.RunWait{
+				Protocol: "run-wait/v1", RunID: row.RunID, BatchID: row.BatchID, Issue: row.IssueNumber,
+				Branch: continuityBranch, BaseBranch: row.BaseBranch, OperationID: "admission",
+			}, func() time.Time { return now }, log, make(chan time.Time))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer owner.close()
+			observe()
+			ciDeadline := start.Add(ciWaitTimeout)
+			now = ciDeadline.Add(-time.Minute)
+			if err := owner.checkpoint(row, false, 30*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			active, err := daemon.ReadRunWaitAt(layout, location, row.RunID)
+			if err != nil || !active.OperationDeadline.Equal(ciDeadline) || active.RecoverableAt(ciDeadline) {
+				t.Fatalf("active CI still needs its independent cutoff: %+v, %v", active, err)
+			}
+			pr.StatusCheckRollup, pr.CIHasActiveChecks = "success", false
+			observe()
+			if checkpoint {
+				if err := owner.checkpoint(row, false, 30*time.Second); err != nil {
+					t.Fatal(err)
+				}
+			}
+			owner.close()
+			ready := FindReadyContinuationsAt(log.snapshot(), layout, ciDeadline.Add(time.Second))
+			if len(ready) != 1 || ready[0].RunID != row.RunID || ready[0].Wait == nil || !ready[0].Wait.OperationDeadline.IsZero() {
+				t.Fatalf("completed CI stranded the same paused review after restart: %+v", ready)
+			}
+			if ready := FindReadyContinuationsAt(log.snapshot(), layout, now.Add(daemon.RunRecoveryGrace)); len(ready) != 0 {
+				t.Fatalf("discovery renewed expired ownerless grace: %+v", ready)
+			}
+		})
 	}
 }
 

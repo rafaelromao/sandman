@@ -212,6 +212,7 @@ func reconcileRecoveryWait(record daemon.RunWait, state events.RunState) (daemon
 		return record, false, true
 	}
 	previous := record
+	record = daemon.ReconcileReviewAfterCI(record, state)
 	record.InitialAdmission, record.AdmissionMode = false, int(ModeContinue)
 	record.Branch = state.Branch()
 	record.PreviousRunID, record.PreviousBatchID = state.RunID, record.BatchID

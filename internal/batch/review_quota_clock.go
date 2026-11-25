@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/reviewquota"
 	"github.com/rafaelromao/sandman/internal/reviewtrigger"
 )
@@ -76,16 +77,20 @@ func reviewRequestOperationDeadline(request map[string]any) (time.Time, bool) {
 // The ownership lease therefore uses fixed recovery grace, capped only by
 // independent CI when present. The observer enforces the actual review budget.
 func lifecycleOwnershipOperation(extras map[string]any, runID string) (string, time.Time, bool) {
-	request, ok := extras["review_request"].(map[string]any)
-	if ok && confirmedReviewExpiryEvidence(request) && daemonReviewRequest(stringEvidence(request, "trigger_prefix")) &&
-		!payloadBoolValue(request, "operation_resolved") {
+	if unresolvedDaemonReviewRequest(extras) {
 		if deadline, bounded := lifecycleCIWaitDeadline(extras); bounded {
 			return fmt.Sprintf("%s:%d", gateCIWaitTimeout, deadline.Unix()), deadline, true
 		}
-		return "daemon-review:" + runID, time.Time{}, true
+		return daemon.DaemonReviewWaitID(runID), time.Time{}, true
 	}
 	if deadline, gate, bounded := lifecycleDeadline(extras); bounded {
 		return fmt.Sprintf("%s:%d", gate, deadline.Unix()), deadline, true
 	}
 	return "", time.Time{}, false
+}
+
+func unresolvedDaemonReviewRequest(extras map[string]any) bool {
+	request, ok := extras["review_request"].(map[string]any)
+	return ok && confirmedReviewExpiryEvidence(request) && daemonReviewRequest(stringEvidence(request, "trigger_prefix")) &&
+		!payloadBoolValue(request, "operation_resolved")
 }

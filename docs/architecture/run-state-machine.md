@@ -519,6 +519,9 @@ daemon-backed wait uses normal ownerless recovery grace rather than a fixed
 review deadline as its ownership cutoff, so a pause between observations cannot
 strand the Run. Any independent current-head CI cutoff is unchanged. Standalone
 review, blind review, and requests for external reviewers do not use this clock.
+Once current-head CI is observed green, the review wait drops that CI cutoff.
+If the process stops before checkpointing the change, the observation anchors
+the ordinary ownerless grace without renewing it on discovery.
 Durable decision-publication recovery does not require a duplicate
 reviewer launch. Stopping the reviewer daemon preserves recoverable requests and
 publications. Implementation abort ends its own lifecycle without rewriting the
