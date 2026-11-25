@@ -2593,6 +2593,12 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 			if verdict.Action != lifecycleAwait || verdict.Kind == lifecycleVerdictGitHubUnavailable {
 				t.Fatalf("exact retained success did not remain on the bounded wait: %+v", verdict)
 			}
+			observedWait, ok := verdict.Evidence["ci_wait"].(map[string]any)
+			if !ok || observedWait["execution_id"] != wait["execution_id"] ||
+				observedWait["deadline_unix_seconds"] != wait["deadline_unix_seconds"] ||
+				observedWait["deadline_unix_seconds"] == nil {
+				t.Fatalf("exact retained success changed the wait identity or deadline: got %+v, seeded %+v", observedWait, wait)
+			}
 			if len(client.diagnoses) != 0 {
 				t.Fatalf("successful retained execution was diagnosed as failed: %+v", client.diagnoses)
 			}
