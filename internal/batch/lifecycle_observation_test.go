@@ -43,12 +43,19 @@ type retainedManagedCIFailureClient struct {
 }
 
 type observedRetainedManagedCIFailureClient struct {
+	jobs []github.ManagedCIJobEvidence
 	*managedCILifecycleClient
 	refreshed    *github.ManagedCIExecution
 	refreshErr   error
 	refreshReads []github.ManagedCIExecution
 	failures     []github.ManagedCIFailureEvidence
 	diagnoses    []github.ManagedCIExecution
+}
+
+func (c *observedRetainedManagedCIFailureClient) ReadManagedCIExecutionJobs(
+	_ context.Context, _ github.ManagedCIExecution,
+) ([]github.ManagedCIJobEvidence, error) {
+	return c.jobs, nil
 }
 
 type managedCIActiveLifecycleClient struct {
@@ -2610,9 +2617,22 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 	tests := []struct {
 		name            string
 		replacementJobs []github.ManagedCIJobEvidence
+		omitListing     bool
 		wantRepair      bool
 	}{
 		{name: "queued replacement without failed check", wantRepair: true},
+		{
+			name: "skipped matching job does not replace the failed check", wantRepair: true,
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "completed", Conclusion: "skipped",
+			}},
+		},
+		{
+			name: "exact job evidence survives an omitted listing", omitListing: true,
+			replacementJobs: []github.ManagedCIJobEvidence{{
+				JobID: 239, RunID: 102, Attempt: 1, Name: "unit-tests", Status: "in_progress",
+			}},
+		},
 		{
 			name: "exact failed check has started in replacement",
 			replacementJobs: []github.ManagedCIJobEvidence{{
@@ -2669,6 +2689,9 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 				},
 				Replacement: &replacement, ReplacementJobs: test.replacementJobs,
 			}
+			if test.omitListing {
+				observation.Replacement, observation.ReplacementJobs = nil, nil
+			}
 			client := &observedRetainedManagedCIFailureClient{
 				managedCILifecycleClient: &managedCILifecycleClient{
 					fakeGitHubClient: &fakeGitHubClient{
@@ -2677,7 +2700,7 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 					},
 					observation: observation,
 				},
-				refreshed: &replacement,
+				refreshed: &replacement, jobs: test.replacementJobs,
 			}
 			session := &runSession{
 				issueNumber: 42, deps: runDeps{
@@ -2705,6 +2728,23 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 				t.Fatalf("started exact replacement check did not supersede the old failure: %+v", verdict)
 			}
 		})
+	}
+}
+
+func TestManagedCIRefreshRejectsContradictoryConclusionForSameAttempt(t *testing.T) {
+	retained := github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, HeadSHA: "head", BaseRefName: "main", BaseSHA: "base",
+		WorkflowID: 9, Event: "pull_request", RunID: 102, RunNumber: 52, Attempt: 1,
+		Status: "completed", Conclusion: "success",
+	}
+	refreshed := retained
+	refreshed.Conclusion = "failure"
+	if managedCIRefreshedExecutionMatches(retained, refreshed) {
+		t.Fatal("same attempt changed its terminal conclusion")
+	}
+	refreshed.Attempt++
+	if !managedCIRefreshedExecutionMatches(retained, refreshed) {
+		t.Fatal("a newer failed attempt did not match the retained workflow")
 	}
 }
 
@@ -2888,6 +2928,17 @@ func TestLifecycleObservation_NonterminalReplacementExpiryUsesCITimeoutHold(t *t
 					deadline, expiredWait["deadline_unix_seconds"])
 			}
 			greenPR := client.prs[gateTestBranch]
+			pendingPR := *greenPR
+			pendingPR.StatusCheckRollup = "pending"
+			pendingPR.CIExecutionID = "different-rollup"
+			pendingPR.CIFailedWorkflow = nil
+			pendingPR.CIHasActiveChecks = true
+			pendingPR.CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+				Repository: "owner/repo", RunID: 999, Name: "unrelated",
+			}}
+			if !managedCIReplacementStillResolves(expired.Evidence, &pendingPR, "owner/repo") {
+				t.Fatal("unrelated active job disarmed the retained replacement deadline")
+			}
 			greenPR.StatusCheckRollup = "success"
 			if managedCIReplacementStillResolves(expired.Evidence, greenPR, "owner/repo") {
 				t.Fatalf("authoritative green PR rollup left the replacement wait active: %+v", expired.Evidence)

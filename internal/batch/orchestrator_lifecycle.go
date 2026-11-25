@@ -672,10 +672,6 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 			if !ciActive(pr, pr.HeadRefOid) {
 				return false
 			}
-			if managedCIHasVisibleActionsJobChecks(pr) &&
-				!managedCIVisibleReplacementChecksPending(pr, execution) {
-				return false
-			}
 		}
 	}
 	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
@@ -868,18 +864,6 @@ func managedCIVisibleReplacementChecksPending(pr *github.PR, execution map[strin
 	for _, check := range pr.CIActiveWorkflowChecks {
 		if check.RunID == runID && repository != "" &&
 			strings.EqualFold(strings.TrimSpace(check.Repository), repository) {
-			return true
-		}
-	}
-	return false
-}
-
-func managedCIHasVisibleActionsJobChecks(pr *github.PR) bool {
-	if pr == nil {
-		return false
-	}
-	for _, check := range pr.CIActiveWorkflowChecks {
-		if check.RunID > 0 && strings.TrimSpace(check.Repository) != "" {
 			return true
 		}
 	}
@@ -1314,7 +1298,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				"next_action": "inspect the persisted CI wait state and repair the current pull-request checks",
 			}}
 		}
-		if !confirmedIndependentCI && waitExecution != nil {
+		if waitExecution != nil {
 			if managedCIReplacementOutcomeConflicts(ciEvidence, waitExecution) {
 				retained, _ := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 				retained["lookup_error"] = "contradictory-managed-ci-replacement-outcome"
@@ -1322,7 +1306,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 					Action: lifecycleAwait, Evidence: retained, Kind: lifecycleVerdictGitHubUnavailable,
 				}
 			}
-			if managedCIReplacement != nil && managedCIWaitMatchesReplacement(ciEvidence, managedCIReplacement) &&
+			if !confirmedIndependentCI && managedCIReplacement != nil && managedCIWaitMatchesReplacement(ciEvidence, managedCIReplacement) &&
 				len(managedCIReplacementFailures) > 0 {
 				pr, managedCIReplacementFailure = managedCIReplacementFailurePR(
 					pr, managedCIReplacement, managedCIReplacementFailures,

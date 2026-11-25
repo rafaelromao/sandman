@@ -401,6 +401,11 @@ type ManagedCIObserver interface {
 	ObserveManagedCI(ctx context.Context, request ManagedCIRequest) (ManagedCIObservation, error)
 }
 
+// ManagedCIExecutionJobsReader reads jobs for an already verified execution.
+type ManagedCIExecutionJobsReader interface {
+	ReadManagedCIExecutionJobs(context.Context, ManagedCIExecution) ([]ManagedCIJobEvidence, error)
+}
+
 // ManagedCIActiveExecutionObserver resolves visible active Actions job links
 // to their verified workflow attempt without requiring a failed-check rollup.
 type ManagedCIActiveExecutionObserver interface {

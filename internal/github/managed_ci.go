@@ -624,6 +624,21 @@ func (c *CLIClient) listManagedWorkflowJobs(ctx context.Context, owner, repo str
 	return jobs, nil
 }
 
+func (c *CLIClient) ReadManagedCIExecutionJobs(ctx context.Context, execution ManagedCIExecution) ([]ManagedCIJobEvidence, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(owner+"/"+repo, execution.Repository) || execution.RunID <= 0 || execution.Attempt <= 0 {
+		return nil, fmt.Errorf("managed CI jobs: invalid execution identity")
+	}
+	jobs, err := c.listManagedWorkflowJobs(ctx, owner, repo, execution.RunID)
+	if err != nil {
+		return nil, err
+	}
+	return managedCIJobsForAttempt(jobs, execution.Attempt), nil
+}
+
 func managedCIJobsForAttempt(jobs []CIWorkflowJob, attempt int) []ManagedCIJobEvidence {
 	out := make([]ManagedCIJobEvidence, 0, len(jobs))
 	for _, job := range jobs {

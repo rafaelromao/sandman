@@ -72,6 +72,7 @@ type managedCIFailureObservation struct {
 	Unknown             bool
 	ReplacementFailures []github.ManagedCIFailureEvidence
 	SourceFailures      []github.ManagedCIFailureEvidence
+	ConfirmedSourceJobs []github.ManagedCIFailureEvidence
 }
 
 type managedCILifecycleObservation struct {
@@ -103,7 +104,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 	authoritativeGreen := result.PR != nil &&
 		strings.EqualFold(strings.TrimSpace(result.PR.StatusCheckRollup), "success") &&
 		!ciActive(result.PR, headSHA)
-	if !authoritativeGreen && !result.Failure.IndependentFailure {
+	if !authoritativeGreen {
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 		if established {
 			if _, retainedReplacement := managedCIReplacementWait(retained); result.PR != nil &&
@@ -133,7 +134,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 				listed := result.Failure.Replacement
 				if managedCIReplacementFollows(*retainedExecution, *listed) ||
 					managedCIExecutionIdentityMatches(*retainedExecution, *listed) &&
-						strings.EqualFold(listed.Status, "completed") {
+						(strings.EqualFold(listed.Status, "completed") || result.Failure.IndependentFailure) {
 					retainedExecution = nil
 				}
 			}
@@ -173,7 +174,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 									} else if diagnosis.Replacement != nil {
 										result.Failure.Replacement = diagnosis.Replacement
 										result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-										result.Failure.IndependentFailure = diagnosis.IndependentFailure
+										result.Failure.IndependentFailure = result.Failure.IndependentFailure || diagnosis.IndependentFailure
 										if diagnosis.IndependentFailure {
 											result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
 												result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
@@ -203,7 +204,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 								} else if diagnosis.Replacement != nil {
 									result.Failure.Replacement = diagnosis.Replacement
 									result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-									result.Failure.IndependentFailure = diagnosis.IndependentFailure
+									result.Failure.IndependentFailure = result.Failure.IndependentFailure || diagnosis.IndependentFailure
 									if diagnosis.IndependentFailure {
 										result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
 											result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
@@ -221,7 +222,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 							result.Failure.Repository = diagnosis.Repository
 							result.Failure.Replacement = diagnosis.Replacement
 							result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-							result.Failure.IndependentFailure = diagnosis.IndependentFailure
+							result.Failure.IndependentFailure = result.Failure.IndependentFailure || diagnosis.IndependentFailure
 							if diagnosis.IndependentFailure {
 								result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
 									result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
@@ -236,6 +237,25 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 				}
 			}
 		}
+	}
+	if retainedExecutionRefreshed && result.Failure.Replacement != nil && result.Failure.Source != nil &&
+		managedCIReplacementFollows(*result.Failure.Source, *result.Failure.Replacement) {
+		sourceFailures := result.Failure.SourceFailures
+		if result.Failure.ConfirmedSourceJobs != nil {
+			sourceFailures = result.Failure.ConfirmedSourceJobs
+		}
+		var jobs []github.ManagedCIJobEvidence
+		if reader, ok := s.deps.githubClient.(github.ManagedCIExecutionJobsReader); ok {
+			if len(sourceFailures) > 0 {
+				readJobs, err := reader.ReadManagedCIExecutionJobs(ctx, *result.Failure.Replacement)
+				if err == nil {
+					jobs = readJobs
+				}
+			}
+		}
+		result.Failure.SourceFailures = managedCIUnsupersededSourceFailures(sourceFailures, result.Failure.Replacement, jobs)
+		result.Failure.IndependentFailure = len(result.Failure.SourceFailures) > 0 || result.ReplacementFailure != nil
+		result.SourceFailure = managedCISourceFailureEvidence(result.Failure.Source, result.Failure.SourceFailures)
 	}
 	if result.Failure.Unknown && !result.Failure.IndependentFailure &&
 		!retainedExecutionRefreshed && ctx.Err() == nil {
@@ -260,6 +280,8 @@ func managedCIRefreshedExecutionMatches(
 		strings.EqualFold(strings.TrimSpace(retained.Event), strings.TrimSpace(refreshed.Event)) &&
 		retained.RunID == refreshed.RunID && retained.RunNumber == refreshed.RunNumber &&
 		refreshed.Attempt >= retained.Attempt &&
+		(refreshed.Attempt > retained.Attempt || !strings.EqualFold(retained.Status, "completed") ||
+			strings.EqualFold(refreshed.Status, "completed") && strings.EqualFold(retained.Conclusion, refreshed.Conclusion)) &&
 		github.ValidManagedCIExecutionStatus(refreshed.Status, refreshed.Conclusion)
 }
 
@@ -523,8 +545,9 @@ func classifyManagedCIFailureObservation(
 			replacement := *observation.Replacement
 			return managedCIFailureObservation{
 				Repository: repository, Source: &source, Replacement: &replacement,
-				IndependentFailure: sourceFailureIsCurrent,
-				SourceFailures:     currentSourceFailures,
+				IndependentFailure:  sourceFailureIsCurrent,
+				SourceFailures:      currentSourceFailures,
+				ConfirmedSourceJobs: confirmedSourceFailures,
 			}
 		}
 		return managedCIFailureObservation{
@@ -537,6 +560,7 @@ func classifyManagedCIFailureObservation(
 		Repository: repository, Source: &source, Replacement: &replacement,
 		IndependentFailure:  sourceFailureIsCurrent,
 		ReplacementFailures: confirmedReplacementFailures, SourceFailures: currentSourceFailures,
+		ConfirmedSourceJobs: confirmedSourceFailures,
 	}
 }
 
@@ -914,11 +938,23 @@ func managedCIUnsupersededSourceFailures(
 	for _, failure := range sourceFailures {
 		name := strings.ToLower(strings.TrimSpace(failure.CheckName))
 		matches := jobsByName[name]
-		if sourceFailuresByName[name] != 1 || len(matches) != 1 {
+		if sourceFailuresByName[name] != 1 || len(matches) != 1 || !managedCIReplacementJobExecuted(matches[0]) {
 			remaining = append(remaining, failure)
 		}
 	}
 	return remaining
+}
+
+func managedCIReplacementJobExecuted(job github.ManagedCIJobEvidence) bool {
+	if strings.EqualFold(strings.TrimSpace(job.Status), "in_progress") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(job.Conclusion)) {
+	case "success", "failure", "timed_out":
+		return true
+	default:
+		return false
+	}
 }
 
 func managedCIConfirmedIndependentSourceFailureClaimsMatchJobs(
