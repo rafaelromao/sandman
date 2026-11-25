@@ -1007,6 +1007,55 @@ func TestCLIClient_ManagedCIFollowsHigherNumberedWorkflowRun(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ManagedCIReadsReplacementJobsForIndependentSourceFailures(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: `{"total_count":2,"jobs":[
+			{"id":11,"run_id":101,"run_attempt":1,"name":"build-macos","status":"completed","conclusion":"cancelled","runner_name":null,"runner_id":null,"steps":[],"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/731"},
+			{"id":12,"run_id":101,"run_attempt":1,"name":"unit-tests","status":"completed","conclusion":"failure","runner_name":"runner","runner_id":42,"steps":[{"name":"Run tests","status":"completed","conclusion":"failure"}],"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/732"}
+		]}`},
+		{output: `{"id":101,"run_number":51,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"completed","conclusion":"failure","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main","sha":"base"},"head":{"sha":"head"}}]}`},
+		{output: `[{"annotation_level":"failure","message":"The job was not acquired by Runner of type hosted even after multiple attempts"}]`},
+		{output: `[{"annotation_level":"failure","message":"--- FAIL: TestCurrentHead (0.00s)","path":"internal/example_test.go","start_line":10}]`},
+		{output: `{"total_count":2,"workflow_runs":[
+			{"id":101,"run_number":51,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"completed","conclusion":"failure","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main","sha":"base"},"head":{"sha":"head"}}]},
+			{"id":102,"run_number":52,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"queued","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main","sha":"base"},"head":{"sha":"head"}}]}
+		]}`},
+		{output: `{"total_count":1,"jobs":[{"id":21,"run_id":102,"run_attempt":1,"name":"build-macos","status":"queued","conclusion":null}]}`},
+	}}
+	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base",
+		HeadSHA: "head", FailedWorkflowRunID: "101",
+		FailedChecks: []CIFailedCheck{
+			{Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11"},
+			{Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/12"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.Replacement == nil || observation.Replacement.RunID != 102 ||
+		len(observation.Failures) != 2 ||
+		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
+		observation.Failures[1].Classification != ManagedCIConfirmedCodeTestFailure ||
+		len(observation.ReplacementJobs) != 1 ||
+		observation.ReplacementJobs[0].Name != "build-macos" ||
+		observation.ReplacementJobs[0].RunID != 102 ||
+		observation.ReplacementJobs[0].Attempt != 1 ||
+		observation.ReplacementJobs[0].Status != "queued" {
+		t.Fatalf("observation = %+v; want the queued replacement's exact job inventory and independent source failure", observation)
+	}
+	if len(runner.calls) != 7 ||
+		!strings.Contains(strings.Join(runner.calls[6].args, " "), "actions/runs/102/jobs") {
+		t.Fatalf("replacement job inventory was not read after independent source failure: %+v", runner.calls)
+	}
+	for _, call := range runner.calls {
+		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
+			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
+		}
+	}
+}
+
 func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},

@@ -90,6 +90,7 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 	result := managedCILifecycleObservation{
 		PR: pr, Failure: s.observeManagedCIFailure(ctx, pr, headSHA, repository),
 	}
+	retainedExecutionRefreshed := false
 	result.SourceFailure = managedCISourceFailureEvidence(
 		result.Failure.Source, result.Failure.SourceFailures,
 	)
@@ -99,9 +100,10 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 		resolvedPR.BaseRefOid = strings.TrimSpace(result.Failure.Source.BaseSHA)
 		result.PR = &resolvedPR
 	}
-	if !result.Failure.IndependentFailure && result.Failure.Replacement == nil &&
-		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
-		ciActive(pr, headSHA) {
+	authoritativeGreen := result.PR != nil &&
+		strings.EqualFold(strings.TrimSpace(result.PR.StatusCheckRollup), "success") &&
+		!ciActive(result.PR, headSHA)
+	if !authoritativeGreen && !result.Failure.IndependentFailure && result.Failure.Replacement == nil {
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 		if established {
 			if _, retainedReplacement := managedCIReplacementWait(retained); result.PR != nil &&
@@ -136,19 +138,49 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 						result.Failure.Repository = strings.TrimSpace(name)
 					}
 				}
-				if !result.Failure.Unknown &&
-					strings.EqualFold(retainedExecution.Repository, result.Failure.Repository) {
-					if managedCIVisibleActiveRunDiffers(result.PR, retainedExecution) {
-						result.Failure.Unknown = true
-					} else if checks := managedCIVisibleActiveChecksForRun(result.PR, retainedExecution); len(checks) > 0 {
+				if strings.EqualFold(retainedExecution.Repository, result.Failure.Repository) {
+					if checks := managedCIVisibleActiveChecksForRun(result.PR, retainedExecution); len(checks) > 0 {
 						activeExecution, activeErr := s.observeManagedCIActiveExecution(
 							ctx, *retainedExecution, checks,
 						)
-						if activeErr != nil {
-							result.Failure.Unknown = true
-						} else {
+						if activeErr == nil {
 							result.Failure.Repository = activeExecution.Repository
 							result.Failure.Replacement = activeExecution
+							retainedExecutionRefreshed = true
+						} else if refresher, ok := s.deps.githubClient.(github.ManagedCIExecutionRefresher); ok {
+							refreshed, refreshErr := refresher.RefreshManagedCIExecution(ctx, *retainedExecution)
+							if refreshErr != nil ||
+								!managedCIRefreshedExecutionMatches(*retainedExecution, refreshed) {
+								result.Failure.Unknown = true
+							} else {
+								result.Failure.Repository = refreshed.Repository
+								result.Failure.Replacement = &refreshed
+								retainedExecutionRefreshed = true
+								if strings.EqualFold(strings.TrimSpace(refreshed.Status), "completed") &&
+									!strings.EqualFold(strings.TrimSpace(refreshed.Conclusion), "success") {
+									if managedCIVisibleActiveRunDiffers(result.PR, retainedExecution) {
+										result.Failure.Unknown = true
+										retainedExecutionRefreshed = false
+									} else {
+										diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, refreshed)
+										if diagnosis.Unknown {
+											result.Failure.Unknown = true
+											retainedExecutionRefreshed = false
+										} else if diagnosis.Replacement != nil {
+											result.Failure.Replacement = diagnosis.Replacement
+											result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
+											result.Failure.IndependentFailure = diagnosis.IndependentFailure
+											if diagnosis.IndependentFailure {
+												result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+													result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
+												)
+											}
+										}
+									}
+								}
+							}
+						} else {
+							result.Failure.Unknown = true
 						}
 					} else if refresher, ok := s.deps.githubClient.(github.ManagedCIExecutionRefresher); ok {
 						refreshed, refreshErr := refresher.RefreshManagedCIExecution(ctx, *retainedExecution)
@@ -158,37 +190,48 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 						} else {
 							result.Failure.Repository = refreshed.Repository
 							result.Failure.Replacement = &refreshed
+							retainedExecutionRefreshed = true
 							if strings.EqualFold(strings.TrimSpace(refreshed.Status), "completed") &&
 								!strings.EqualFold(strings.TrimSpace(refreshed.Conclusion), "success") {
-								diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, refreshed)
-								if diagnosis.Unknown {
+								if managedCIVisibleActiveRunDiffers(result.PR, retainedExecution) {
 									result.Failure.Unknown = true
-								} else if diagnosis.Replacement != nil {
-									result.Failure.Replacement = diagnosis.Replacement
-									result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-									result.Failure.IndependentFailure = diagnosis.IndependentFailure
-									if diagnosis.IndependentFailure {
-										result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
-											result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
-										)
+									retainedExecutionRefreshed = false
+								} else {
+									diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, refreshed)
+									if diagnosis.Unknown {
+										result.Failure.Unknown = true
+										retainedExecutionRefreshed = false
+									} else if diagnosis.Replacement != nil {
+										result.Failure.Replacement = diagnosis.Replacement
+										result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
+										result.Failure.IndependentFailure = diagnosis.IndependentFailure
+										if diagnosis.IndependentFailure {
+											result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+												result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
+											)
+										}
 									}
 								}
 							}
 						}
 					} else if strings.EqualFold(strings.TrimSpace(retainedExecution.Status), "completed") &&
 						!strings.EqualFold(strings.TrimSpace(retainedExecution.Conclusion), "success") {
-						diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
-						if diagnosis.Unknown {
+						if managedCIVisibleActiveRunDiffers(result.PR, retainedExecution) {
 							result.Failure.Unknown = true
-						} else if diagnosis.Replacement != nil {
-							result.Failure.Repository = diagnosis.Repository
-							result.Failure.Replacement = diagnosis.Replacement
-							result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-							result.Failure.IndependentFailure = diagnosis.IndependentFailure
-							if diagnosis.IndependentFailure {
-								result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
-									result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
-								)
+						} else {
+							diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
+							if diagnosis.Unknown {
+								result.Failure.Unknown = true
+							} else if diagnosis.Replacement != nil {
+								result.Failure.Repository = diagnosis.Repository
+								result.Failure.Replacement = diagnosis.Replacement
+								result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
+								result.Failure.IndependentFailure = diagnosis.IndependentFailure
+								if diagnosis.IndependentFailure {
+									result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+										result.PR, diagnosis.Replacement, diagnosis.ReplacementFailures,
+									)
+								}
 							}
 						}
 					} else {
@@ -200,7 +243,8 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 			}
 		}
 	}
-	if result.Failure.Unknown && !result.Failure.IndependentFailure && ctx.Err() == nil {
+	if result.Failure.Unknown && !result.Failure.IndependentFailure &&
+		!retainedExecutionRefreshed && ctx.Err() == nil {
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 		if !established || !managedCIWaitIncludesExecution(retained, result.Failure.Source) {
 			result.Error = errors.New("managed CI observation is inconclusive")
@@ -454,6 +498,9 @@ func classifyManagedCIFailureObservation(
 	confirmedSourceFailures := managedCIConfirmedIndependentSourceFailures(observation, request)
 	independentFailure, verifiedShortage, dependentClassification :=
 		managedCISourceFailureKinds(observation.Failures)
+	if independentFailure && len(confirmedSourceFailures) == 0 {
+		return managedCIUncertainFailureObservation(repository, request, observation)
+	}
 	if (verifiedShortage || dependentClassification) &&
 		!managedCISourceFailureClaimsMatchJobs(observation.Failures, observation.SourceJobs) {
 		return managedCIUncertainFailureObservation(repository, request, observation)
@@ -480,15 +527,16 @@ func classifyManagedCIFailureObservation(
 	}
 	if !verifiedShortage || !replacementFollows {
 		return managedCIFailureObservation{
-			Repository: repository, Source: &source, IndependentFailure: independentFailure,
+			Repository: repository, Source: &source, IndependentFailure: len(confirmedSourceFailures) > 0,
 			SourceFailures: confirmedSourceFailures,
 		}
 	}
+	currentSourceFailures := managedCIUnsupersededSourceFailures(
+		confirmedSourceFailures, observation.Replacement, observation.ReplacementJobs,
+	)
 	replacementFailed := strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") &&
 		!strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success")
-	sourceFailureIsCurrent := independentFailure &&
-		!(strings.EqualFold(strings.TrimSpace(source.Status), "completed") &&
-			!strings.EqualFold(strings.TrimSpace(source.Conclusion), "success"))
+	sourceFailureIsCurrent := len(currentSourceFailures) > 0
 	if replacementFailed && !replacementHasConfirmedFailure {
 		// A terminal replacement with diagnosed non-code outcomes has a
 		// verified execution state even though it does not authorize code
@@ -499,19 +547,19 @@ func classifyManagedCIFailureObservation(
 			return managedCIFailureObservation{
 				Repository: repository, Source: &source, Replacement: &replacement,
 				IndependentFailure: sourceFailureIsCurrent,
-				SourceFailures:     confirmedSourceFailures,
+				SourceFailures:     currentSourceFailures,
 			}
 		}
 		return managedCIFailureObservation{
-			Repository: repository, Source: &source, Unknown: true,
-			SourceFailures: confirmedSourceFailures,
+			Repository: repository, Source: &source, IndependentFailure: sourceFailureIsCurrent,
+			Unknown: true, SourceFailures: currentSourceFailures,
 		}
 	}
 	replacement := *observation.Replacement
 	return managedCIFailureObservation{
 		Repository: repository, Source: &source, Replacement: &replacement,
 		IndependentFailure:  sourceFailureIsCurrent,
-		ReplacementFailures: confirmedReplacementFailures, SourceFailures: confirmedSourceFailures,
+		ReplacementFailures: confirmedReplacementFailures, SourceFailures: currentSourceFailures,
 	}
 }
 
@@ -832,6 +880,63 @@ func managedCIConfirmedIndependentSourceFailures(
 		}
 	}
 	return confirmed
+}
+
+func managedCIUnsupersededSourceFailures(
+	sourceFailures []github.ManagedCIFailureEvidence,
+	replacement *github.ManagedCIExecution,
+	replacementJobs []github.ManagedCIJobEvidence,
+) []github.ManagedCIFailureEvidence {
+	if len(sourceFailures) == 0 || replacement == nil ||
+		replacement.RunID <= 0 || replacement.Attempt <= 0 ||
+		!strings.EqualFold(strings.TrimSpace(replacement.Status), "completed") &&
+			!managedCIExecutionIsActive(*replacement) {
+		return sourceFailures
+	}
+	// A run-level replacement is not enough: only an exact logical check
+	// observed in the replacement attempt proves that this prior failure has
+	// been superseded. Missing or ambiguous job evidence keeps the old failure
+	// actionable.
+	jobsByName := make(map[string][]github.ManagedCIJobEvidence, len(replacementJobs))
+	jobsByID := make(map[int64]struct{}, len(replacementJobs))
+	sourceFailuresByName := make(map[string]int, len(sourceFailures))
+	for _, failure := range sourceFailures {
+		sourceFailuresByName[strings.ToLower(strings.TrimSpace(failure.CheckName))]++
+	}
+	for _, job := range replacementJobs {
+		if job.JobID <= 0 || job.RunID != replacement.RunID ||
+			job.Attempt != replacement.Attempt || strings.TrimSpace(job.Name) == "" {
+			return sourceFailures
+		}
+		if _, duplicate := jobsByID[job.JobID]; duplicate {
+			return sourceFailures
+		}
+		jobsByID[job.JobID] = struct{}{}
+		status := strings.ToLower(strings.TrimSpace(job.Status))
+		switch status {
+		case "queued", "in_progress":
+			if strings.TrimSpace(job.Conclusion) != "" {
+				return sourceFailures
+			}
+		case "completed":
+			if _, valid := managedCIJobConclusion(job.Conclusion); !valid {
+				return sourceFailures
+			}
+		default:
+			return sourceFailures
+		}
+		name := strings.ToLower(strings.TrimSpace(job.Name))
+		jobsByName[name] = append(jobsByName[name], job)
+	}
+	remaining := make([]github.ManagedCIFailureEvidence, 0, len(sourceFailures))
+	for _, failure := range sourceFailures {
+		name := strings.ToLower(strings.TrimSpace(failure.CheckName))
+		matches := jobsByName[name]
+		if sourceFailuresByName[name] != 1 || len(matches) != 1 {
+			remaining = append(remaining, failure)
+		}
+	}
+	return remaining
 }
 
 func managedCIConfirmedIndependentSourceFailureClaimsMatchJobs(

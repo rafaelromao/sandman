@@ -521,6 +521,11 @@ func (c *CLIClient) observeManagedCIReplacement(
 		return observation, err
 	}
 	observation.Replacement = replacement
+	if replacement != nil && managedCISourceHasIndependentFailures(observation.Failures) {
+		if jobs, jobsErr := c.listManagedWorkflowJobs(ctx, scope.owner, scope.repo, replacement.RunID); jobsErr == nil {
+			observation.ReplacementJobs = managedCIJobsForAttempt(jobs, replacement.Attempt)
+		}
+	}
 	if replacement != nil && replacement.Status == "completed" && replacement.Conclusion != "success" {
 		failures, err := c.diagnoseManagedCIExecutionFailure(ctx, scope.owner, scope.repo, request, *replacement)
 		if err != nil {
@@ -531,6 +536,15 @@ func (c *CLIClient) observeManagedCIReplacement(
 		observation.ReplacementFailures = failures
 	}
 	return observation, nil
+}
+
+func managedCISourceHasIndependentFailures(failures []ManagedCIFailureEvidence) bool {
+	for _, failure := range failures {
+		if failure.Classification == ManagedCIConfirmedCodeTestFailure {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *CLIClient) fetchManagedWorkflowRunAttempt(ctx context.Context, owner, repo string, runID int64, attempt int) (actionsWorkflowRun, error) {

@@ -381,10 +381,14 @@ type ManagedCIJobEvidence struct {
 // ManagedCIObservation contains read-only evidence for the observed workflow
 // and any verified newer execution.
 type ManagedCIObservation struct {
-	Source              ManagedCIExecution
-	SourceJobs          []ManagedCIJobEvidence
-	Failures            []ManagedCIFailureEvidence
-	Replacement         *ManagedCIExecution
+	Source      ManagedCIExecution
+	SourceJobs  []ManagedCIJobEvidence
+	Failures    []ManagedCIFailureEvidence
+	Replacement *ManagedCIExecution
+	// ReplacementJobs contains complete job inventory for the selected
+	// replacement attempt when available; it determines whether that attempt
+	// has superseded an independently failed source check.
+	ReplacementJobs     []ManagedCIJobEvidence
 	ReplacementFailures []ManagedCIFailureEvidence
 }
 
