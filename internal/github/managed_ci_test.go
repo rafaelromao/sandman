@@ -109,18 +109,14 @@ func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testi
 	}
 }
 
-func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *testing.T) {
+func TestCLIClient_ManagedCIIncidentWithoutRunPRBaseIdentityIsInconclusive(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
-		{output: `[{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}]`},
 		{output: fixtureAt(t, "incident-replay", "jobs.json")},
 		{output: fixtureAt(t, "incident-replay", "source-run.json")},
-		{output: fixtureAt(t, "incident-replay", "shortage-annotations.json")},
-		{output: fixtureAt(t, "incident-replay", "aggregate-annotations.json")},
-		{output: fixtureAt(t, "incident-replay", "workflow-runs.json")},
 	}}
-	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
 		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
 		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{
@@ -134,30 +130,16 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 			},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if observation.Source.BaseSHA != "ef8b1df0b2b836334477ef0a53812645311e9814" {
-		t.Fatalf("source base SHA = %q, want provider-backed current PR base", observation.Source.BaseSHA)
-	}
-	if len(observation.Failures) != 2 ||
-		observation.Failures[0].Classification != ManagedCIRunnerShortage ||
-		observation.Failures[1].Classification != ManagedCIDependentFailure ||
-		len(observation.Failures[1].CausedByChecks) != 1 ||
-		observation.Failures[1].CausedByChecks[0] != "build-macos" ||
-		len(observation.Failures[1].CausedByResults) != 1 ||
-		observation.Failures[1].CausedByResults[0] != "abandoned" ||
-		len(observation.SourceJobs) != 2 {
-		t.Fatalf("incident failures = %+v, want shortage plus its explicitly dependent quality gate", observation.Failures)
-	}
-	if observation.Replacement == nil || observation.Replacement.RunID != 45276896986 ||
-		observation.Replacement.RunNumber != 5289 || observation.Replacement.Conclusion != "success" {
-		t.Fatalf("replacement = %+v, want verified same-PR/head/workflow run 45276896986", observation.Replacement)
+	if err == nil || !strings.Contains(err.Error(), "source workflow identity") {
+		t.Fatalf("incident with unlinked Actions source was attributed to the current PR/base: %v", err)
 	}
 	for _, call := range runner.calls {
 		if strings.Contains(strings.ToUpper(strings.Join(call.args, " ")), "POST") {
 			t.Fatalf("managed CI observation attempted a mutation: %v", call.args)
 		}
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("source shortage annotations or replacements were queried without PR/base-bound source identity: %+v", runner.calls)
 	}
 }
 
@@ -226,28 +208,55 @@ func TestCLIClient_ManagedCIRequiresAProviderBackedPullRequestBaseWhenGHOmitsIt(
 	}
 }
 
-func TestCLIClient_ManagedCIRejectsAmbiguousPRHeadAssociation(t *testing.T) {
+func TestCLIClient_ManagedCIRejectsSameHeadRunFromRetargetedBase(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}`},
-		{output: `[{"number":3029,"base":{"ref":"main","sha":"ef8b1df0b2b836334477ef0a53812645311e9814","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}][{"number":3030,"base":{"ref":"release","sha":"other-base","repo":{"full_name":"rafaelromao/sandman"}},"head":{"sha":"f454c9077c0c41046fe8429e57777795b66e46a7"}}]`},
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: `{"number":17,"base":{"ref":"main","sha":"new-base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
 	}}
 	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
-		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+		HeadSHA: "incident-source-head", FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
-			Name:       "build (macos-latest)",
-			DetailsURL: "https://github.com/rafaelromao/sandman/actions/runs/45270155099/job/138027527159",
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
 		}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "head association is ambiguous") {
-		t.Fatalf("managed CI accepted a head shared by multiple PRs: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source workflow identity") {
+		t.Fatalf("same-head source run from the former PR base was accepted: %v", err)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("Actions queried without a unique PR/head association: %+v", runner.calls)
+	if len(runner.calls) != 4 {
+		t.Fatalf("annotations were read after the source base identity conflicted: %+v", runner.calls)
 	}
-	if !strings.Contains(strings.Join(runner.calls[2].args, " "), "--paginate") {
-		t.Fatalf("association lookup did not paginate before asserting uniqueness: %v", runner.calls[2].args)
+}
+
+func TestCLIClient_ManagedCIRejectsReplacementWithoutItsOwnPRBaseIdentity(t *testing.T) {
+	var workflowRuns map[string]any
+	if err := json.Unmarshal([]byte(fixtureAt(t, "new-run", "workflow-runs.json")), &workflowRuns); err != nil {
+		t.Fatal(err)
+	}
+	candidate := workflowRuns["workflow_runs"].([]any)[1].(map[string]any)
+	delete(candidate, "pull_requests")
+	unlinkedRuns, err := json.Marshal(workflowRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: fixtureText(t, "jobs.json")},
+		{output: fixtureText(t, "workflow-run.json")},
+		{output: fixtureText(t, "annotations.json")},
+		{output: string(unlinkedRuns)},
+	}}
+	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+		BaseSHA: "base-sha", HeadSHA: "incident-source-head", FailedWorkflowRunID: "45270155099",
+		FailedChecks: []CIFailedCheck{{
+			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "newer workflow run has no pull request identity") {
+		t.Fatalf("managed CI accepted an unlinked replacement by copying the source's current base: %v", err)
 	}
 }
 
@@ -895,6 +904,7 @@ func TestCLIClient_ManagedCIUsesFailedJobAttemptWhenRunHasReplacement(t *testing
 func TestCLIClient_ObserveManagedCIActiveExecutionIdentifiesSameRunHigherAttempt(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
+		{output: `{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
 		{output: fixtureAt(t, "same-run-attempt", "active-jobs.json")},
 		{output: fixtureAt(t, "same-run-attempt", "active-attempt.json")},
 	}}
@@ -927,7 +937,6 @@ func TestCLIClient_RefreshManagedCIExecutionWithoutPRRollupLinks(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
 		{output: `{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
-		{output: `[{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}]`},
 		{output: `{"id":45270155099,"run_number":5288,"run_attempt":2,"workflow_id":273743359,"event":"pull_request","status":"in_progress","conclusion":null,"head_sha":"incident-source-head","pull_requests":[]}`},
 	}}
 	execution, err := (&CLIClient{runner: runner}).RefreshManagedCIExecution(context.Background(),
@@ -943,8 +952,8 @@ func TestCLIClient_RefreshManagedCIExecutionWithoutPRRollupLinks(t *testing.T) {
 		execution.Status != "in_progress" || execution.Conclusion != "" {
 		t.Fatalf("refreshed execution = %+v, want the current higher attempt without PR links", execution)
 	}
-	if len(runner.calls) != 4 ||
-		strings.Join(runner.calls[3].args, " ") != "api repos/owner/repo/actions/runs/45270155099" {
+	if len(runner.calls) != 3 ||
+		strings.Join(runner.calls[2].args, " ") != "api repos/owner/repo/actions/runs/45270155099" {
 		t.Fatalf("refresh did not read the exact retained workflow run: %+v", runner.calls)
 	}
 	for _, call := range runner.calls {
@@ -958,7 +967,6 @@ func TestCLIClient_RefreshManagedCIExecutionFailsClosedWhenPRBaseChanges(t *test
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
 		{output: `{"number":17,"base":{"ref":"main","sha":"new-base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
-		{output: `[{"number":17,"base":{"ref":"main","sha":"new-base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}]`},
 	}}
 	_, err := (&CLIClient{runner: runner}).RefreshManagedCIExecution(context.Background(),
 		ManagedCIExecution{
@@ -969,7 +977,7 @@ func TestCLIClient_RefreshManagedCIExecutionFailsClosedWhenPRBaseChanges(t *test
 	if err == nil || !strings.Contains(err.Error(), "pull request identity changed") {
 		t.Fatalf("refresh accepted a changed PR base identity: %v", err)
 	}
-	if len(runner.calls) != 3 {
+	if len(runner.calls) != 2 {
 		t.Fatalf("Actions run was queried after PR identity changed: %+v", runner.calls)
 	}
 }
@@ -1006,6 +1014,7 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 		{output: fixtureText(t, "workflow-run.json")},
 		{output: fixtureText(t, "annotations.json")},
 		{output: fixtureAt(t, "new-run", "completed-failure-runs.json")},
+		{output: `{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
 		{output: fixtureAt(t, "new-run", "completed-failure-attempt.json")},
 		{output: fixtureAt(t, "new-run", "completed-failure-jobs.json")},
 		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
@@ -1037,9 +1046,19 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 }
 
 func TestCLIClient_DiagnosesRetainedCompletedExecutionFailure(t *testing.T) {
+	var attemptPayload map[string]any
+	if err := json.Unmarshal([]byte(fixtureAt(t, "new-run", "completed-failure-attempt.json")), &attemptPayload); err != nil {
+		t.Fatal(err)
+	}
+	delete(attemptPayload, "pull_requests")
+	unlinkedAttempt, err := json.Marshal(attemptPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
-		{output: fixtureAt(t, "new-run", "completed-failure-attempt.json")},
+		{output: `{"number":17,"base":{"ref":"main","sha":"base-sha","repo":{"full_name":"owner/repo"}},"head":{"sha":"incident-source-head"}}`},
+		{output: string(unlinkedAttempt)},
 		{output: fixtureAt(t, "new-run", "completed-failure-jobs.json")},
 		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
 	}}
