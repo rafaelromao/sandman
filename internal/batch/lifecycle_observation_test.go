@@ -43,7 +43,8 @@ type retainedManagedCIFailureClient struct {
 }
 
 type observedRetainedManagedCIFailureClient struct {
-	jobs []github.ManagedCIJobEvidence
+	jobs    []github.ManagedCIJobEvidence
+	jobsErr error
 	*managedCILifecycleClient
 	refreshed    *github.ManagedCIExecution
 	refreshErr   error
@@ -55,7 +56,7 @@ type observedRetainedManagedCIFailureClient struct {
 func (c *observedRetainedManagedCIFailureClient) ReadManagedCIExecutionJobs(
 	_ context.Context, _ github.ManagedCIExecution,
 ) ([]github.ManagedCIJobEvidence, error) {
-	return c.jobs, nil
+	return c.jobs, c.jobsErr
 }
 
 type managedCIActiveLifecycleClient struct {
@@ -2490,6 +2491,8 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 		refreshedConclusion string
 		failures            []github.ManagedCIFailureEvidence
 		wantRepair          bool
+		retainedSuccess     bool
+		newAttempt          bool
 	}{
 		{
 			name:                "listing still reports retained execution queued but exact read passes",
@@ -2502,6 +2505,20 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 			refreshedConclusion: "failure",
 			failures: []github.ManagedCIFailureEvidence{{
 				JobID: 238, RunID: 102, Attempt: 1, CheckName: "unit-tests",
+				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/238",
+				Classification: github.ManagedCIConfirmedCodeTestFailure,
+			}},
+			wantRepair: true,
+		},
+		{
+			name:            "contradictory same-attempt failure is inconclusive",
+			retainedSuccess: true, refreshedStatus: "completed", refreshedConclusion: "failure",
+		},
+		{
+			name:            "verified higher attempt may fail after retained success",
+			retainedSuccess: true, newAttempt: true, refreshedStatus: "completed", refreshedConclusion: "failure",
+			failures: []github.ManagedCIFailureEvidence{{
+				JobID: 238, RunID: 102, Attempt: 2, CheckName: "unit-tests",
 				DetailsURL:     "https://github.com/owner/repo/actions/runs/102/job/238",
 				Classification: github.ManagedCIConfirmedCodeTestFailure,
 			}},
@@ -2534,6 +2551,10 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 				WorkflowID: 273743359, Event: "pull_request", RunID: 102, RunNumber: 5289, Attempt: 1,
 				Status: "queued",
 			}
+			listed := retained
+			if test.retainedSuccess {
+				retained.Status, retained.Conclusion = "completed", "success"
+			}
 			seed := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
 			waitEvidence, err := seed.ciWaitEvidence(t.Context(), workDir, pr, "current-sha", &retained)
 			if err != nil {
@@ -2554,11 +2575,14 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 					DetailsURL:     "https://github.com/owner/repo/actions/runs/101/job/11",
 					Classification: github.ManagedCIRunnerShortage,
 				}},
-				Replacement: &retained,
+				Replacement: &listed,
 			}
 			refreshed := retained
 			refreshed.Status = test.refreshedStatus
 			refreshed.Conclusion = test.refreshedConclusion
+			if test.newAttempt {
+				refreshed.Attempt++
+			}
 			client := &observedRetainedManagedCIFailureClient{
 				managedCILifecycleClient: &managedCILifecycleClient{
 					fakeGitHubClient: &fakeGitHubClient{
@@ -2597,6 +2621,13 @@ func TestLifecycleObservation_ReconcilesRetainedReplacementAgainstStaleListingAn
 				}
 				return
 			}
+			if test.retainedSuccess {
+				if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable ||
+					verdict.ciRepairRequired || len(client.diagnoses) != 0 {
+					t.Fatalf("contradictory attempt authorized repair: verdict=%+v diagnoses=%+v", verdict, client.diagnoses)
+				}
+				return
+			}
 			if verdict.Action != lifecycleAwait || verdict.Kind == lifecycleVerdictGitHubUnavailable {
 				t.Fatalf("exact retained success did not remain on the bounded wait: %+v", verdict)
 			}
@@ -2619,8 +2650,10 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 		replacementJobs []github.ManagedCIJobEvidence
 		omitListing     bool
 		wantRepair      bool
+		jobsErr         error
 	}{
 		{name: "queued replacement without failed check", wantRepair: true},
+		{name: "missing exact jobs evidence is inconclusive", omitListing: true, jobsErr: errors.New("job read unavailable")},
 		{
 			name: "skipped matching job does not replace the failed check", wantRepair: true,
 			replacementJobs: []github.ManagedCIJobEvidence{{
@@ -2700,7 +2733,7 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 					},
 					observation: observation,
 				},
-				refreshed: &replacement, jobs: test.replacementJobs,
+				refreshed: &replacement, jobs: test.replacementJobs, jobsErr: test.jobsErr,
 			}
 			session := &runSession{
 				issueNumber: 42, deps: runDeps{
@@ -2716,6 +2749,12 @@ func TestLifecycleObservation_RetainedWaitDoesNotSupersedeUnrerunConfirmedFailur
 				WorkDir: workDir, Branch: gateTestBranch, RunID: runID,
 				HostPathsReady: true, AttemptStatus: "success",
 			})
+			if test.jobsErr != nil {
+				if verdict.Action != lifecycleAwait || verdict.Kind != lifecycleVerdictGitHubUnavailable || verdict.ciRepairRequired {
+					t.Fatalf("jobs lookup failure authorized repair: %+v", verdict)
+				}
+				return
+			}
 			if test.wantRepair {
 				if verdict.Action != lifecycleResume || verdict.Evidence["reason"] != "CI_FAILURE" ||
 					!verdict.ciRepairRequired {

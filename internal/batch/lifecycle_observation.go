@@ -248,9 +248,13 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 		if reader, ok := s.deps.githubClient.(github.ManagedCIExecutionJobsReader); ok {
 			if len(sourceFailures) > 0 {
 				readJobs, err := reader.ReadManagedCIExecutionJobs(ctx, *result.Failure.Replacement)
-				if err == nil {
-					jobs = readJobs
+				if err != nil {
+					result.Failure.Unknown = true
+					result.Failure.IndependentFailure = result.ReplacementFailure != nil
+					result.Error = fmt.Errorf("read retained managed CI jobs: %w", err)
+					return result
 				}
+				jobs = readJobs
 			}
 		}
 		result.Failure.SourceFailures = managedCIUnsupersededSourceFailures(sourceFailures, result.Failure.Replacement, jobs)
