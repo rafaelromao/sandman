@@ -13,7 +13,7 @@
       "pull_requests": [
         {
           "number": 3029,
-          "base": {"ref": "main"},
+          "base": {"ref": "main", "sha": "base-sha"},
           "head": {"sha": "f454c9077c0c41046fe8429e57777795b66e46a7"}
         }
       ]
@@ -30,7 +30,7 @@
       "pull_requests": [
         {
           "number": 3029,
-          "base": {"ref": "main"},
+          "base": {"ref": "main", "sha": "base-sha"},
           "head": {"sha": "f454c9077c0c41046fe8429e57777795b66e46a7"}
         }
       ]

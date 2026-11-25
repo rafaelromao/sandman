@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -56,12 +57,12 @@ func TestCIWaitEvidenceKeepsVerifiedActionsGenerationMonotonicAcrossRestart(t *t
 	now := time.Unix(20_000, 0).UTC()
 	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
 	pr := &github.PR{
-		Number: 17, HeadRefOid: "current-head", BaseRefName: "main",
+		Number: 17, HeadRefOid: "current-head", BaseRefName: "main", BaseRefOid: "base-sha",
 		StatusCheckRollup: "failure", CIExecutionID: "stale-rollup-identity",
 	}
 	execution := func(runID, runNumber int64, attempt int, status, conclusion string) *github.ManagedCIExecution {
 		return &github.ManagedCIExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "current-head",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "current-head",
 			WorkflowID: 273743359, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: attempt,
 			Status: status, Conclusion: conclusion,
 		}
@@ -122,6 +123,7 @@ func TestCIWaitEvidenceKeepsVerifiedActionsGenerationMonotonicAcrossRestart(t *t
 	}
 	if registration.ActionsExecution == nil || registration.ActionsExecution.Repository != "owner/repo" ||
 		registration.ActionsExecution.PullRequest != 17 || registration.ActionsExecution.BaseRefName != "main" ||
+		registration.ActionsExecution.BaseSHA != "base-sha" ||
 		registration.ActionsExecution.HeadSHA != "current-head" || registration.ActionsExecution.WorkflowID != 273743359 ||
 		registration.ActionsExecution.Event != "pull_request" ||
 		registration.ActionsExecution.RunID != 101 || registration.ActionsExecution.RunNumber != 5289 ||
@@ -130,17 +132,82 @@ func TestCIWaitEvidenceKeepsVerifiedActionsGenerationMonotonicAcrossRestart(t *t
 	}
 }
 
+func TestCIWaitEvidenceRetainsReplacementCheckLinksWithoutRenewingDeadline(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Unix(21_000, 0).UTC()
+	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
+	pr := &github.PR{
+		Number: 17, HeadRefOid: "head", BaseRefName: "main", BaseRefOid: "base-sha",
+		StatusCheckRollup: "failure",
+	}
+	execution := &github.ManagedCIExecution{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
+		WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
+		Status: "queued",
+	}
+	initial, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialWait := initial["ci_wait"].(map[string]any)
+	deadline := initialWait["deadline_unix_seconds"]
+	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head"); err != nil {
+		t.Fatal(err)
+	}
+
+	pr.CIActiveWorkflowChecks = []github.CIWorkflowCheck{{
+		Name: "build-linux", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/33",
+		Repository: "owner/repo", RunID: 101,
+	}}
+	now = now.Add(4 * time.Minute)
+	linked, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedWait := linked["ci_wait"].(map[string]any)
+	if linkedWait["deadline_unix_seconds"] != deadline {
+		t.Fatalf("link appearance renewed the replacement wait: %#v", linkedWait)
+	}
+	executionEvidence, ok := linkedWait["actions_execution"].(map[string]any)
+	if !ok {
+		t.Fatalf("replacement execution evidence = %#v", linkedWait["actions_execution"])
+	}
+	links, ok := executionEvidence["check_links"].([]any)
+	if !ok || len(links) != 1 {
+		t.Fatalf("replacement check links = %#v, want its visible job execution link", executionEvidence["check_links"])
+	}
+	link, ok := links[0].(map[string]any)
+	if !ok || link["name"] != "build-linux" ||
+		link["details_url"] != "https://github.com/owner/repo/actions/runs/101/job/33" ||
+		link["repository"] != "owner/repo" || link["run_id"] != int64(101) {
+		t.Fatalf("retained replacement check link = %#v", links[0])
+	}
+
+	pr.CIActiveWorkflowChecks = nil
+	restarted := &runSession{opts: runSessionOptions{now: func() time.Time { return now.Add(time.Minute) }}}
+	afterRestart, err := restarted.ciWaitEvidence(context.Background(), workDir, pr, "head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedWait := afterRestart["ci_wait"].(map[string]any)
+	restartedExecution := restartedWait["actions_execution"].(map[string]any)
+	if restartedWait["deadline_unix_seconds"] != deadline ||
+		!reflect.DeepEqual(restartedExecution["check_links"], executionEvidence["check_links"]) {
+		t.Fatalf("restart lost the replacement's bound or observed links: %#v", restartedWait)
+	}
+}
+
 func TestCIWaitEvidenceLinksStaleAncestorAfterTwoVerifiedReplacementsAndRestart(t *testing.T) {
 	workDir := t.TempDir()
 	now := time.Unix(25_000, 0).UTC()
 	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
 	pr := &github.PR{
-		Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+		Number: 17, HeadRefOid: "head", BaseRefName: "main", BaseRefOid: "base-sha", StatusCheckRollup: "failure",
 		CIExecutionID: "rollup-a", CIFailedWorkflow: &github.CIFailedWorkflow{RunID: "100"},
 	}
 	execution := func(runID, runNumber int64) *github.ManagedCIExecution {
 		return &github.ManagedCIExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 			WorkflowID: 9, Event: "pull_request", RunID: runID, RunNumber: runNumber, Attempt: 1,
 			Status: "queued",
 		}
@@ -182,11 +249,11 @@ func TestCIWaitEvidenceDoesNotUseReplacementForDifferentUnverifiedRollup(t *test
 	now := time.Unix(30_000, 0).UTC()
 	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
 	pr := &github.PR{
-		Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+		Number: 17, HeadRefOid: "head", BaseRefName: "main", BaseRefOid: "base-sha", StatusCheckRollup: "failure",
 		CIExecutionID: "source-rollup-1",
 	}
 	execution := &github.ManagedCIExecution{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 		WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1, Status: "queued",
 	}
 	if _, err := session.ciWaitEvidence(context.Background(), workDir, pr, "head", execution); err != nil {
@@ -218,10 +285,10 @@ func TestCIWaitEvidenceDoesNotRegressCompletedExecutionOnStaleRead(t *testing.T)
 	workDir := t.TempDir()
 	now := time.Unix(40_000, 0).UTC()
 	session := &runSession{opts: runSessionOptions{now: func() time.Time { return now }}}
-	pr := &github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main"}
+	pr := &github.PR{Number: 17, HeadRefOid: "head", BaseRefName: "main", BaseRefOid: "base-sha"}
 	execution := func(status, conclusion string) *github.ManagedCIExecution {
 		return &github.ManagedCIExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
 			Status: status, Conclusion: conclusion,
 		}
@@ -256,7 +323,7 @@ func TestCIWaitEvidenceRejectsContradictoryPersistedActionsStatus(t *testing.T) 
 		Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: "head",
 		ExecutionID: "actions:9:101:1",
 		ActionsExecution: &ciWaitActionsExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
 			Status: "queued", Conclusion: "success", Replacement: true,
 		},
@@ -291,7 +358,7 @@ func TestCIWaitEvidenceRejectsPersistedNonReplacementActionsExecution(t *testing
 		Protocol: ciWaitProtocol, PullRequest: 17, HeadSHA: "head",
 		ExecutionID: "actions:9:101:1",
 		ActionsExecution: &ciWaitActionsExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 			WorkflowID: 9, Event: "pull_request", RunID: 101, RunNumber: 51, Attempt: 1,
 			Status: "queued", Replacement: false,
 		},
@@ -363,7 +430,7 @@ func TestManagedCIReplacementStillResolvesRequiresReplacementAndActiveStatus(t *
 				failedRunID = "101"
 			}
 			pr := &github.PR{
-				Number: 17, HeadRefOid: "head", BaseRefName: "main", StatusCheckRollup: "failure",
+				Number: 17, HeadRefOid: "head", BaseRefName: "main", BaseRefOid: "base-sha", StatusCheckRollup: "failure",
 				CIExecutionID:     "source-rollup",
 				CIHasActiveChecks: test.pendingChecks,
 				CIFailedWorkflow:  &github.CIFailedWorkflow{RunID: failedRunID},
@@ -374,6 +441,7 @@ func TestManagedCIReplacementStillResolvesRequiresReplacementAndActiveStatus(t *
 					"source_execution_id": "source-rollup", "source_workflow_run_id": int64(100),
 					"actions_execution": map[string]any{
 						"repository": "owner/repo", "pull_request": 17, "base_ref_name": "main",
+						"base_sha": "base-sha",
 						"head_sha": "head", "workflow_id": 9, "event": "pull_request",
 						"run_id": 101, "run_number": 51, "attempt": 1, "status": test.status,
 						"conclusion": test.conclusion, "replacement": test.replacement,

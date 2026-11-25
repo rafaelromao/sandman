@@ -36,7 +36,7 @@ var managedCICompilerStepName = regexp.MustCompile(
 )
 var managedCITestDiagnostic = regexp.MustCompile(
 	`(?i)(?:^|\b)---\s*fail:\s*test\w*\b|` +
-		`\btest[A-Z]\w*\b.{0,160}\b(?:fail|error|panic)\w*\b|` +
+		`(?-i:\bTest[A-Z]\w*)\b.{0,160}\b(?:fail|error|panic)\w*\b|` +
 		`\bassert(?:ion)?\s+(?:failed|error)\b|` +
 		`\b(?:undefined:|cannot use|syntax error|declared and not used|imported and not used|` +
 		`not enough arguments|too many arguments|cannot find module|failed to compile|compilation failed)\b`,
@@ -65,6 +65,7 @@ type actionsWorkflowRun struct {
 		Number int `json:"number"`
 		Base   struct {
 			Ref string `json:"ref"`
+			SHA string `json:"sha"`
 		} `json:"base"`
 		Head struct {
 			SHA string `json:"sha"`
@@ -153,8 +154,10 @@ func (c *CLIClient) ObserveManagedCIActiveExecution(
 ) (ManagedCIExecution, error) {
 	request.Repository = strings.TrimSpace(request.Repository)
 	request.BaseRefName = strings.TrimSpace(request.BaseRefName)
+	request.BaseSHA = strings.TrimSpace(request.BaseSHA)
 	request.HeadSHA = strings.TrimSpace(request.HeadSHA)
 	if request.Repository == "" || request.PullRequest <= 0 || request.BaseRefName == "" ||
+		request.BaseSHA == "" ||
 		request.HeadSHA == "" || request.WorkflowID <= 0 || request.RunID <= 0 ||
 		len(request.Checks) == 0 {
 		return ManagedCIExecution{}, fmt.Errorf("managed CI active execution: incomplete request identity")
@@ -214,7 +217,7 @@ func (c *CLIClient) ObserveManagedCIActiveExecution(
 	}
 	execution, ok := managedCIExecution(attempt, repository, ManagedCIRequest{
 		Repository: request.Repository, PullRequest: request.PullRequest,
-		BaseRefName: request.BaseRefName, HeadSHA: request.HeadSHA,
+		BaseRefName: request.BaseRefName, BaseSHA: request.BaseSHA, HeadSHA: request.HeadSHA,
 	})
 	if !ok || execution.RunID != request.RunID || execution.WorkflowID != request.WorkflowID ||
 		execution.Attempt != activeAttempt ||
@@ -250,9 +253,11 @@ func (c *CLIClient) prepareManagedCIObservation(
 ) (ManagedCIRequest, managedCIObservationScope, error) {
 	request.Repository = strings.TrimSpace(request.Repository)
 	request.BaseRefName = strings.TrimSpace(request.BaseRefName)
+	request.BaseSHA = strings.TrimSpace(request.BaseSHA)
 	request.HeadSHA = strings.TrimSpace(request.HeadSHA)
 	request.FailedWorkflowRunID = strings.TrimSpace(request.FailedWorkflowRunID)
 	if request.PullRequest <= 0 || request.Repository == "" || request.BaseRefName == "" ||
+		request.BaseSHA == "" ||
 		request.HeadSHA == "" || len(request.FailedChecks) == 0 {
 		return ManagedCIRequest{}, managedCIObservationScope{},
 			fmt.Errorf("managed CI observation: incomplete pull request or failed-check identity")
@@ -517,6 +522,7 @@ func (c *CLIClient) DiagnoseManagedCIExecutionFailure(
 	execution ManagedCIExecution,
 ) ([]ManagedCIFailureEvidence, error) {
 	if execution.PullRequest <= 0 || strings.TrimSpace(execution.BaseRefName) == "" ||
+		strings.TrimSpace(execution.BaseSHA) == "" ||
 		strings.TrimSpace(execution.HeadSHA) == "" || execution.WorkflowID <= 0 ||
 		execution.RunID <= 0 || execution.RunNumber <= 0 || execution.Attempt <= 0 ||
 		!strings.EqualFold(strings.TrimSpace(execution.Event), "pull_request") ||
@@ -534,7 +540,7 @@ func (c *CLIClient) DiagnoseManagedCIExecutionFailure(
 	}
 	request := ManagedCIRequest{
 		Repository: execution.Repository, PullRequest: execution.PullRequest,
-		BaseRefName: execution.BaseRefName, HeadSHA: execution.HeadSHA,
+		BaseRefName: execution.BaseRefName, BaseSHA: execution.BaseSHA, HeadSHA: execution.HeadSHA,
 	}
 	return c.diagnoseManagedCIExecutionFailure(ctx, owner, repo, request, execution)
 }
@@ -553,7 +559,8 @@ func managedCIExecutionIsActive(execution ManagedCIExecution) bool {
 
 func managedCIExecution(run actionsWorkflowRun, repository string, request ManagedCIRequest) (ManagedCIExecution, bool) {
 	if run.ID <= 0 || run.RunNumber <= 0 || run.RunAttempt <= 0 || run.WorkflowID <= 0 ||
-		strings.TrimSpace(run.HeadSHA) == "" || !ValidManagedCIExecutionStatus(run.Status, run.Conclusion) {
+		strings.TrimSpace(request.BaseSHA) == "" || strings.TrimSpace(run.HeadSHA) == "" ||
+		!ValidManagedCIExecutionStatus(run.Status, run.Conclusion) {
 		return ManagedCIExecution{}, false
 	}
 	if !strings.EqualFold(strings.TrimSpace(run.HeadSHA), request.HeadSHA) {
@@ -563,6 +570,7 @@ func managedCIExecution(run actionsWorkflowRun, repository string, request Manag
 	for _, pr := range run.PullRequests {
 		if pr.Number == request.PullRequest &&
 			strings.TrimSpace(pr.Base.Ref) == strings.TrimSpace(request.BaseRefName) &&
+			strings.EqualFold(strings.TrimSpace(pr.Base.SHA), strings.TrimSpace(request.BaseSHA)) &&
 			strings.EqualFold(strings.TrimSpace(pr.Head.SHA), request.HeadSHA) {
 			matches++
 			continue
@@ -576,7 +584,7 @@ func managedCIExecution(run actionsWorkflowRun, repository string, request Manag
 	}
 	return ManagedCIExecution{
 		Repository: repository, PullRequest: request.PullRequest, BaseRefName: request.BaseRefName,
-		HeadSHA: request.HeadSHA, WorkflowID: run.WorkflowID,
+		BaseSHA: request.BaseSHA, HeadSHA: request.HeadSHA, WorkflowID: run.WorkflowID,
 		Event: strings.ToLower(strings.TrimSpace(run.Event)), RunID: run.ID, RunNumber: run.RunNumber,
 		Attempt: run.RunAttempt, Status: strings.ToLower(strings.TrimSpace(run.Status)),
 		Conclusion: strings.ToLower(strings.TrimSpace(run.Conclusion)),
@@ -894,7 +902,7 @@ func validateManagedCIWorkflowRunList(runs []actionsWorkflowRun, source ManagedC
 		if run.ID == source.RunID {
 			sourceExecution, ok := managedCIExecution(run, source.Repository, ManagedCIRequest{
 				Repository: source.Repository, PullRequest: source.PullRequest,
-				BaseRefName: source.BaseRefName, HeadSHA: source.HeadSHA,
+				BaseRefName: source.BaseRefName, BaseSHA: source.BaseSHA, HeadSHA: source.HeadSHA,
 			})
 			if !ok || sourceExecution.Attempt < source.Attempt {
 				return false, fmt.Errorf("workflow-run list does not confirm the source pull request execution")
@@ -958,7 +966,8 @@ func managedCIReplacementCandidates(runs []actionsWorkflowRun, source ManagedCIE
 			return nil, fmt.Errorf("newer workflow run has no pull request identity")
 		}
 		candidate, ok := managedCIExecution(run, source.Repository, ManagedCIRequest{
-			Repository: source.Repository, PullRequest: source.PullRequest, BaseRefName: source.BaseRefName, HeadSHA: source.HeadSHA,
+			Repository: source.Repository, PullRequest: source.PullRequest, BaseRefName: source.BaseRefName,
+			BaseSHA: source.BaseSHA, HeadSHA: source.HeadSHA,
 		})
 		if !ok {
 			return nil, fmt.Errorf("newer workflow run has a conflicting pull request identity")

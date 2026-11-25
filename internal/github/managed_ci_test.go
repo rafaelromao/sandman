@@ -37,6 +37,26 @@ func TestValidManagedCIExecutionStatusRequiresKnownConsistentPair(t *testing.T) 
 	}
 }
 
+func TestManagedCIExecutionRequiresTheCurrentBaseCommit(t *testing.T) {
+	var run actionsWorkflowRun
+	if err := json.Unmarshal([]byte(`{
+		"id":101,"run_number":51,"run_attempt":1,"workflow_id":9,
+		"event":"pull_request","status":"queued","head_sha":"head",
+		"pull_requests":[{"number":17,"base":{"ref":"main","sha":"old-base"},
+			"head":{"sha":"head"}}]
+	}`), &run); err != nil {
+		t.Fatal(err)
+	}
+	request := ManagedCIRequest{
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+		BaseSHA: "current-base", HeadSHA: "head",
+	}
+
+	if _, ok := managedCIExecution(run, "owner/repo", request); ok {
+		t.Fatal("workflow run bound to an old base commit was accepted")
+	}
+}
+
 func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testing.T) {
 	fixture := func(name string) string {
 		t.Helper()
@@ -58,6 +78,7 @@ func TestCLIClient_ManagedCIRequiresHostedRunnerTypeEvidenceForIncident(t *testi
 		Repository:          "owner/repo",
 		PullRequest:         17,
 		BaseRefName:         "main",
+		BaseSHA:             "base-sha",
 		HeadSHA:             "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
@@ -98,7 +119,7 @@ func TestCLIClient_ManagedCIReplaysIncidentAndFindsReplacementOutsideRollup(t *t
 		{output: fixtureAt(t, "incident-replay", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main",
+		Repository: "rafaelromao/sandman", PullRequest: 3029, BaseRefName: "main", BaseSHA: "base-sha",
 		HeadSHA: "f454c9077c0c41046fe8429e57777795b66e46a7", FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{
 			{
@@ -143,7 +164,7 @@ func TestCLIClient_ManagedCILeavesUnrelatedAnnotatedActionFailureUnexplained(t *
 		{output: fixtureAt(t, "unrelated-annotation", "annotations.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527160",
@@ -173,7 +194,7 @@ func TestCLIClient_ManagedCIReplacementLookupErrorPreservesSourceEvidence(t *tes
 		{err: errors.New("workflow run listing unavailable")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -203,7 +224,7 @@ func TestCLIClient_ManagedCIDoesNotInferShortageFromCapacityNotice(t *testing.T)
 		{output: string(fixture)},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -459,6 +480,17 @@ func TestClassifyManagedCIFailureRequiresCorroboratedRunnerAcquisitionEvidence(t
 			want: ManagedCIUnexplainedFailure,
 		},
 		{
+			name: "testing environment infrastructure diagnostic is not a test failure",
+			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
+				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
+			}},
+			annotations: []checkRunAnnotation{{
+				Level: "failure", Path: "internal/example_test.go", StartLine: 42,
+				Message: "Testing environment failed to mount an ephemeral disk.",
+			}},
+			want: ManagedCIUnexplainedFailure,
+		},
+		{
 			name: "generic expected got annotation is not a confirmed test failure",
 			job: CIWorkflowJob{Status: "completed", Conclusion: "failure", RunnerID: 42, Steps: []CIWorkflowStep{
 				{Name: "go test ./...", Status: "completed", Conclusion: "failure"},
@@ -601,7 +633,7 @@ func TestCLIClient_ManagedCIFollowsSameRunHigherAttempt(t *testing.T) {
 		{output: fixtureAt(t, "same-run-attempt", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -634,7 +666,7 @@ func TestCLIClient_ManagedCIRejectsContradictorySameRunNumber(t *testing.T) {
 		{output: runs},
 	}}
 	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -656,7 +688,7 @@ func TestCLIClient_ManagedCIRejectsContradictorySameAttemptConclusion(t *testing
 		{output: runs},
 	}}
 	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -730,7 +762,7 @@ func TestCLIClient_ManagedCIRejectsRegressedSameAttemptStatus(t *testing.T) {
 		{output: string(runsJSON)},
 	}}
 	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -750,7 +782,7 @@ func TestCLIClient_ManagedCIUsesFailedJobAttemptWhenRunHasReplacement(t *testing
 		{output: fixtureAt(t, "same-run-attempt", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -773,7 +805,7 @@ func TestCLIClient_ObserveManagedCIActiveExecutionIdentifiesSameRunHigherAttempt
 	}}
 	execution, err := (&CLIClient{runner: runner}).ObserveManagedCIActiveExecution(context.Background(),
 		ManagedCIActiveExecutionRequest{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha",
 			HeadSHA: "incident-source-head", WorkflowID: 273743359,
 			RunID: 45270155099,
 			Checks: []CIWorkflowCheck{{
@@ -805,7 +837,7 @@ func TestCLIClient_ManagedCIFollowsHigherNumberedWorkflowRun(t *testing.T) {
 		{output: fixtureAt(t, "new-run", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -833,7 +865,7 @@ func TestCLIClient_ManagedCIDiagnosesCompletedReplacementFailure(t *testing.T) {
 		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -868,7 +900,7 @@ func TestCLIClient_DiagnosesRetainedCompletedExecutionFailure(t *testing.T) {
 	failures, err := (&CLIClient{runner: runner}).DiagnoseManagedCIExecutionFailure(
 		context.Background(),
 		ManagedCIExecution{
-			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main",
+			Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha",
 			HeadSHA: "incident-source-head", WorkflowID: 273743359, Event: "pull_request",
 			RunID: 45276896986, RunNumber: 5289, Attempt: 1, Status: "completed", Conclusion: "failure",
 		},
@@ -901,7 +933,7 @@ func TestCLIClient_ManagedCIRejectsContradictoryReplacementAttemptConclusion(t *
 		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
 	}}
 	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -926,7 +958,7 @@ func TestCLIClient_ManagedCIRejectsContradictoryReplacementAttemptEvent(t *testi
 		{output: fixtureAt(t, "new-run", "completed-failure-annotations.json")},
 	}}
 	_, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -957,7 +989,7 @@ func TestCLIClient_ManagedCIRejectsContradictorySourceAttemptStatus(t *testing.T
 		{output: string(contradictoryRuns)},
 	}}
 	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -987,7 +1019,7 @@ func TestCLIClient_ManagedCIAcceptsSourceAttemptProgression(t *testing.T) {
 		{output: fixtureAt(t, "incident", "workflow-runs.json")},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -1072,7 +1104,7 @@ func TestCLIClient_ManagedCIRequiresEveryReplacementIdentityField(t *testing.T) 
 				{output: string(encoded)},
 			}}
 			observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 				FailedWorkflowRunID: "45270155099",
 				FailedChecks: []CIFailedCheck{{
 					Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -1098,11 +1130,11 @@ func TestCLIClient_ManagedCIConfirmsFailedJobInActiveWorkflow(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"repo","owner":{"login":"owner"}}`},
 		{output: `{"total_count":1,"jobs":[{"id":11,"run_id":101,"run_attempt":1,"name":"unit-tests","status":"completed","conclusion":"failure","runner_id":42,"runner_name":"GitHub Actions 42","steps":[{"name":"go test ./...","status":"completed","conclusion":"failure","number":5}],"check_run_url":"https://api.github.com/repos/owner/repo/check-runs/201"}]}`},
-		{output: `{"id":101,"run_number":5288,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"in_progress","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main"},"head":{"sha":"head"}}]}`},
+		{output: `{"id":101,"run_number":5288,"run_attempt":1,"workflow_id":9,"event":"pull_request","status":"in_progress","head_sha":"head","pull_requests":[{"number":17,"base":{"ref":"main","sha":"base-sha"},"head":{"sha":"head"}}]}`},
 		{output: `[{"annotation_level":"failure","message":"TestExample failed.","path":"internal/example_test.go","start_line":42}]`},
 	}}
 	observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "head",
 		FailedWorkflowRunID: "101",
 		FailedChecks: []CIFailedCheck{{
 			Name: "unit-tests", DetailsURL: "https://github.com/owner/repo/actions/runs/101/job/11",
@@ -1143,7 +1175,7 @@ func TestCLIClient_ManagedCIReportsIncompleteReplacementLookup(t *testing.T) {
 				{output: test.runs},
 			}}
 			observation, err := (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+				Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 				FailedWorkflowRunID: "45270155099",
 				FailedChecks: []CIFailedCheck{{
 					Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",
@@ -1180,7 +1212,7 @@ func TestCLIClient_ManagedCIReportsUnlinkedNewerRunAsUnknown(t *testing.T) {
 		{output: string(encoded)},
 	}}
 	_, err = (&CLIClient{runner: runner}).ObserveManagedCI(context.Background(), ManagedCIRequest{
-		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", HeadSHA: "incident-source-head",
+		Repository: "owner/repo", PullRequest: 17, BaseRefName: "main", BaseSHA: "base-sha", HeadSHA: "incident-source-head",
 		FailedWorkflowRunID: "45270155099",
 		FailedChecks: []CIFailedCheck{{
 			Name: "build-macos", DetailsURL: "https://github.com/owner/repo/actions/runs/45270155099/job/138027527159",

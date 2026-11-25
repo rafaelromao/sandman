@@ -98,7 +98,9 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 		ciActive(pr, headSHA) {
 		retained, established := s.priorOperationEvidence(runID, branch, worktreeHeadSHA)
 		if established {
-			retainedExecution := managedCICompletedReplacementForDiagnosis(retained, pr, result.Failure.Repository)
+			retainedExecution := managedCIReplacementExecutionForObservation(
+				retained, pr, result.Failure.Repository,
+			)
 			if retainedExecution != nil {
 				if result.Failure.Repository == "" {
 					name, repoErr := s.deps.githubClient.RepoName(ctx)
@@ -122,18 +124,21 @@ func (s *lifecycleObserver) observeManagedCIFailureForAttempt(
 							result.Failure.Repository = activeExecution.Repository
 							result.Failure.Replacement = activeExecution
 						}
-					} else {
+					} else if strings.EqualFold(strings.TrimSpace(retainedExecution.Status), "completed") &&
+						!strings.EqualFold(strings.TrimSpace(retainedExecution.Conclusion), "success") {
 						diagnosis := s.observeRetainedManagedCIExecutionFailure(ctx, *retainedExecution)
 						if diagnosis.Unknown {
 							result.Failure.Unknown = true
-						} else if diagnosis.IndependentFailure {
+						} else if diagnosis.Replacement != nil {
 							result.Failure.Repository = diagnosis.Repository
 							result.Failure.Replacement = diagnosis.Replacement
 							result.Failure.ReplacementFailures = diagnosis.ReplacementFailures
-							result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
-								pr, diagnosis.Replacement, diagnosis.ReplacementFailures,
-							)
-							result.Failure.IndependentFailure = true
+							result.Failure.IndependentFailure = diagnosis.IndependentFailure
+							if diagnosis.IndependentFailure {
+								result.PR, result.ReplacementFailure = managedCIReplacementFailurePR(
+									pr, diagnosis.Replacement, diagnosis.ReplacementFailures,
+								)
+							}
 						}
 					}
 				} else if !result.Failure.Unknown {
@@ -162,18 +167,20 @@ func (s *lifecycleObserver) observeManagedCIActiveExecution(
 	}
 	execution, err := observer.ObserveManagedCIActiveExecution(ctx, github.ManagedCIActiveExecutionRequest{
 		Repository: retained.Repository, PullRequest: retained.PullRequest,
-		BaseRefName: retained.BaseRefName, HeadSHA: retained.HeadSHA,
+		BaseRefName: retained.BaseRefName, BaseSHA: retained.BaseSHA, HeadSHA: retained.HeadSHA,
 		WorkflowID: retained.WorkflowID, RunID: retained.RunID,
 		Checks: append([]github.CIWorkflowCheck(nil), checks...),
 	})
 	if err != nil {
 		return nil, err
 	}
+	sameAttempt := execution.RunID == retained.RunID && execution.RunNumber == retained.RunNumber &&
+		execution.Attempt == retained.Attempt && managedCIExecutionIdentityMatches(retained, execution) &&
+		managedCIExecutionIsActive(retained)
 	if execution.RunID != retained.RunID || execution.RunNumber != retained.RunNumber ||
-		execution.Attempt <= retained.Attempt ||
-		!managedCIReplacementFollows(retained, execution) ||
+		!sameAttempt && !managedCIReplacementFollows(retained, execution) ||
 		!managedCIExecutionIsActive(execution) {
-		return nil, errors.New("managed CI active execution does not prove a newer same-run attempt")
+		return nil, errors.New("managed CI active execution does not match the retained or a newer same-run attempt")
 	}
 	return &execution, nil
 }
@@ -255,7 +262,58 @@ func (s *runSession) observeRetainedManagedCIExecutionFailure(
 	}
 	return managedCIFailureObservation{
 		Repository: execution.Repository, Replacement: &execution,
-		IndependentFailure: true, ReplacementFailures: confirmed,
+		IndependentFailure: hasConfirmedFailure, ReplacementFailures: confirmed,
+	}
+}
+
+func managedCIExecutionIdentityMatches(left, right github.ManagedCIExecution) bool {
+	return strings.EqualFold(strings.TrimSpace(left.Repository), strings.TrimSpace(right.Repository)) &&
+		left.PullRequest == right.PullRequest &&
+		strings.TrimSpace(left.BaseRefName) == strings.TrimSpace(right.BaseRefName) &&
+		strings.EqualFold(strings.TrimSpace(left.BaseSHA), strings.TrimSpace(right.BaseSHA)) &&
+		strings.EqualFold(strings.TrimSpace(left.HeadSHA), strings.TrimSpace(right.HeadSHA)) &&
+		left.WorkflowID == right.WorkflowID &&
+		strings.EqualFold(strings.TrimSpace(left.Event), strings.TrimSpace(right.Event)) &&
+		left.RunID == right.RunID && left.RunNumber == right.RunNumber && left.Attempt == right.Attempt
+}
+
+func managedCIReplacementExecutionForObservation(
+	evidence map[string]any,
+	pr *github.PR,
+	repository string,
+) *github.ManagedCIExecution {
+	if pr == nil || pr.Number <= 0 || strings.TrimSpace(pr.BaseRefName) == "" ||
+		strings.TrimSpace(pr.BaseRefOid) == "" || strings.TrimSpace(pr.HeadRefOid) == "" {
+		return nil
+	}
+	wait, ok := evidence["ci_wait"].(map[string]any)
+	if !ok || wait["protocol"] != ciWaitProtocol ||
+		!strings.EqualFold(stringEvidence(wait, "head_sha"), strings.TrimSpace(pr.HeadRefOid)) {
+		return nil
+	}
+	actionsEvidence, ok := wait["actions_execution"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	actions, ok := ciWaitActionsExecutionFromEvidence(actionsEvidence)
+	if !ok || actions.PullRequest != pr.Number ||
+		(strings.TrimSpace(repository) != "" &&
+			!strings.EqualFold(actions.Repository, strings.TrimSpace(repository))) ||
+		actions.BaseRefName != strings.TrimSpace(pr.BaseRefName) ||
+		!strings.EqualFold(actions.BaseSHA, strings.TrimSpace(pr.BaseRefOid)) ||
+		!strings.EqualFold(actions.HeadSHA, strings.TrimSpace(pr.HeadRefOid)) ||
+		!strings.EqualFold(actions.Event, "pull_request") ||
+		actions.WorkflowID <= 0 || actions.RunID <= 0 || actions.RunNumber <= 0 || actions.Attempt <= 0 ||
+		stringEvidence(wait, "execution_id") != managedCIExecutionID(actions) ||
+		!github.ValidManagedCIExecutionStatus(actions.Status, actions.Conclusion) {
+		return nil
+	}
+	return &github.ManagedCIExecution{
+		Repository: actions.Repository, PullRequest: actions.PullRequest,
+		BaseRefName: actions.BaseRefName, BaseSHA: actions.BaseSHA, HeadSHA: actions.HeadSHA,
+		WorkflowID: actions.WorkflowID, Event: actions.Event, RunID: actions.RunID,
+		RunNumber: actions.RunNumber, Attempt: actions.Attempt,
+		Status: actions.Status, Conclusion: actions.Conclusion,
 	}
 }
 
@@ -299,12 +357,13 @@ func managedCIRequestForPR(pr *github.PR, headSHA, repository string) (github.Ma
 		!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") ||
 		strings.TrimSpace(headSHA) == "" ||
 		!strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) ||
-		strings.TrimSpace(pr.BaseRefName) == "" || pr.CIFailedWorkflow == nil ||
+		strings.TrimSpace(pr.BaseRefName) == "" || strings.TrimSpace(pr.BaseRefOid) == "" ||
+		pr.CIFailedWorkflow == nil ||
 		strings.TrimSpace(pr.CIFailedWorkflow.RunID) == "" || len(pr.CIFailedWorkflow.FailedChecks) == 0 {
 		return github.ManagedCIRequest{}, false
 	}
 	return github.ManagedCIRequest{
-		Repository: repository, PullRequest: pr.Number, BaseRefName: pr.BaseRefName,
+		Repository: repository, PullRequest: pr.Number, BaseRefName: pr.BaseRefName, BaseSHA: pr.BaseRefOid,
 		HeadSHA: headSHA, FailedWorkflowRunID: pr.CIFailedWorkflow.RunID,
 		FailedChecks: append([]github.CIFailedCheck(nil), pr.CIFailedWorkflow.FailedChecks...),
 	}, true
@@ -324,7 +383,7 @@ func classifyManagedCIFailureObservation(
 	}
 	source := observation.Source
 	confirmedSourceFailures := managedCIConfirmedIndependentSourceFailures(observation, request)
-	independentFailure, verifiedShortage, dependentClassification, unexplainedClassification :=
+	independentFailure, verifiedShortage, dependentClassification :=
 		managedCISourceFailureKinds(observation.Failures)
 	if (verifiedShortage || dependentClassification) &&
 		!managedCISourceFailureClaimsMatchJobs(observation.Failures, observation.SourceJobs) {
@@ -340,9 +399,6 @@ func classifyManagedCIFailureObservation(
 	}
 	replacementFollows := observation.Replacement != nil &&
 		managedCIReplacementFollows(observation.Source, *observation.Replacement)
-	if unexplainedClassification {
-		return managedCIUncertainFailureObservation(repository, request, observation)
-	}
 	sourceFailureEvidenceComplete := managedCISourceFailureEvidenceComplete(
 		observation.Failures, observation.SourceJobs,
 	)
@@ -362,8 +418,17 @@ func classifyManagedCIFailureObservation(
 	replacementFailed := strings.EqualFold(strings.TrimSpace(observation.Replacement.Status), "completed") &&
 		!strings.EqualFold(strings.TrimSpace(observation.Replacement.Conclusion), "success")
 	if replacementFailed && !replacementHasConfirmedFailure {
-		// A terminal but unexplained replacement cannot authorize repair from
-		// the source workflow's stale failed-check rollup.
+		// A terminal replacement with diagnosed non-code outcomes has a
+		// verified execution state even though it does not authorize code
+		// repair. Preserve that state so the wait cannot remain queued. Missing
+		// diagnostics, by contrast, are an inconclusive lookup.
+		if len(observation.ReplacementFailures) > 0 {
+			replacement := *observation.Replacement
+			return managedCIFailureObservation{
+				Repository: repository, Source: &source, Replacement: &replacement,
+				SourceFailures: confirmedSourceFailures,
+			}
+		}
 		return managedCIFailureObservation{
 			Repository: repository, Source: &source, Unknown: true,
 			SourceFailures: confirmedSourceFailures,
@@ -395,7 +460,7 @@ func managedCIUncertainFailureObservation(
 
 func managedCISourceFailureKinds(
 	failures []github.ManagedCIFailureEvidence,
-) (independent, shortage, dependent, unexplained bool) {
+) (independent, shortage, dependent bool) {
 	for _, failure := range failures {
 		switch failure.Classification {
 		case github.ManagedCIRunnerShortage:
@@ -405,12 +470,16 @@ func managedCISourceFailureKinds(
 		case github.ManagedCIDependentFailure:
 			dependent = true
 		case github.ManagedCIUnexplainedFailure:
-			unexplained = true
+			// A complete, identity-valid read can have an unexplained
+			// failure cause. That is not a lookup failure: it must not
+			// block a separately verified replacement or replace ordinary
+			// handling of the PR's failed rollup.
 		default:
-			unexplained = true
+			// Unknown classifications fail closed through the validation
+			// of failure claims and cannot establish a shortage.
 		}
 	}
-	return independent, shortage, dependent, unexplained
+	return independent, shortage, dependent
 }
 
 func managedCIConfirmedReplacementFailures(
@@ -737,6 +806,7 @@ func managedCISourceFailuresMatchRequest(observation github.ManagedCIObservation
 		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(request.Repository)) ||
 		source.PullRequest != request.PullRequest ||
 		strings.TrimSpace(source.BaseRefName) != strings.TrimSpace(request.BaseRefName) ||
+		!strings.EqualFold(strings.TrimSpace(source.BaseSHA), strings.TrimSpace(request.BaseSHA)) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(request.HeadSHA)) ||
 		!github.ValidManagedCIExecutionStatus(source.Status, source.Conclusion) ||
 		len(observation.Failures) != len(request.FailedChecks) {
@@ -795,7 +865,7 @@ func managedCIReplacementFailurePR(
 	}
 	return &copy, map[string]any{
 		"repository": execution.Repository, "pull_request": execution.PullRequest,
-		"base_ref_name": execution.BaseRefName, "head_sha": execution.HeadSHA,
+		"base_ref_name": execution.BaseRefName, "base_sha": execution.BaseSHA, "head_sha": execution.HeadSHA,
 		"workflow_id": execution.WorkflowID, "run_id": execution.RunID,
 		"run_number": execution.RunNumber, "attempt": execution.Attempt,
 		"status": execution.Status, "conclusion": execution.Conclusion,
@@ -821,7 +891,7 @@ func managedCISourceFailureEvidence(
 	}
 	return map[string]any{
 		"repository": execution.Repository, "pull_request": execution.PullRequest,
-		"base_ref_name": execution.BaseRefName, "head_sha": execution.HeadSHA,
+		"base_ref_name": execution.BaseRefName, "base_sha": execution.BaseSHA, "head_sha": execution.HeadSHA,
 		"workflow_id": execution.WorkflowID, "run_id": execution.RunID,
 		"run_number": execution.RunNumber, "attempt": execution.Attempt,
 		"status": execution.Status, "conclusion": execution.Conclusion,
@@ -834,6 +904,7 @@ func managedCIReplacementFollows(source, replacement github.ManagedCIExecution) 
 		!strings.EqualFold(strings.TrimSpace(source.Repository), strings.TrimSpace(replacement.Repository)) ||
 		source.PullRequest <= 0 || source.PullRequest != replacement.PullRequest ||
 		strings.TrimSpace(source.BaseRefName) != strings.TrimSpace(replacement.BaseRefName) ||
+		!strings.EqualFold(strings.TrimSpace(source.BaseSHA), strings.TrimSpace(replacement.BaseSHA)) ||
 		!strings.EqualFold(strings.TrimSpace(source.HeadSHA), strings.TrimSpace(replacement.HeadSHA)) ||
 		source.WorkflowID <= 0 || source.WorkflowID != replacement.WorkflowID ||
 		!strings.EqualFold(strings.TrimSpace(source.Event), "pull_request") ||

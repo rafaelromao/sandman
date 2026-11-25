@@ -620,7 +620,7 @@ func activeWaitAuthorized(gate lifecycleGate, pr *github.PR, headSHA string, rev
 
 func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, repository string) bool {
 	if pr == nil || pr.Number <= 0 || pr.CIMultipleFailedWorkflows ||
-		strings.TrimSpace(pr.BaseRefName) == "" ||
+		strings.TrimSpace(pr.BaseRefName) == "" || strings.TrimSpace(pr.BaseRefOid) == "" ||
 		strings.TrimSpace(pr.HeadRefOid) == "" {
 		return false
 	}
@@ -649,6 +649,7 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "event")), "pull_request") ||
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "head_sha")), strings.TrimSpace(pr.HeadRefOid)) ||
 		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) != strings.TrimSpace(pr.BaseRefName) ||
+		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "base_sha")), strings.TrimSpace(pr.BaseRefOid)) ||
 		stringEvidence(wait, "execution_id") != expectedExecutionID ||
 		!validCIWaitActionsStatus(stringEvidence(execution, "status"), stringEvidence(execution, "conclusion")) {
 		return false
@@ -693,56 +694,6 @@ func managedCIReplacementStillResolves(evidence map[string]any, pr *github.PR, r
 	}
 }
 
-func managedCICompletedReplacementForDiagnosis(
-	evidence map[string]any,
-	pr *github.PR,
-	repository string,
-) *github.ManagedCIExecution {
-	if pr == nil || pr.Number <= 0 ||
-		!strings.EqualFold(strings.TrimSpace(pr.State), "open") ||
-		strings.TrimSpace(pr.BaseRefName) == "" ||
-		strings.TrimSpace(pr.HeadRefOid) == "" {
-		return nil
-	}
-	wait, ok := evidence["ci_wait"].(map[string]any)
-	if !ok || wait["protocol"] != ciWaitProtocol ||
-		!strings.EqualFold(stringEvidence(wait, "head_sha"), strings.TrimSpace(pr.HeadRefOid)) {
-		return nil
-	}
-	execution, ok := wait["actions_execution"].(map[string]any)
-	if !ok || !managedCIWaitExecutionIsReplacement(execution) {
-		return nil
-	}
-	pullRequest, prOK := lifecycleDeadlineSeconds(execution["pull_request"])
-	workflowID, workflowOK := lifecycleDeadlineSeconds(execution["workflow_id"])
-	runID, runOK := lifecycleDeadlineSeconds(execution["run_id"])
-	runNumber, runNumberOK := lifecycleDeadlineSeconds(execution["run_number"])
-	attempt, attemptOK := lifecycleDeadlineSeconds(execution["attempt"])
-	executionRepository := strings.TrimSpace(stringEvidence(execution, "repository"))
-	status := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "status")))
-	conclusion := strings.ToLower(strings.TrimSpace(stringEvidence(execution, "conclusion")))
-	if !prOK || pullRequest != int64(pr.Number) || !workflowOK || !runOK ||
-		!runNumberOK || !attemptOK || workflowID <= 0 || runID <= 0 ||
-		runNumber <= 0 || attempt <= 0 || executionRepository == "" ||
-		strings.TrimSpace(repository) != "" &&
-			!strings.EqualFold(executionRepository, strings.TrimSpace(repository)) ||
-		!strings.EqualFold(stringEvidence(execution, "event"), "pull_request") ||
-		!strings.EqualFold(stringEvidence(execution, "head_sha"), strings.TrimSpace(pr.HeadRefOid)) ||
-		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) != strings.TrimSpace(pr.BaseRefName) ||
-		stringEvidence(wait, "execution_id") != fmt.Sprintf("actions:%d:%d:%d", workflowID, runID, attempt) ||
-		status != "completed" || conclusion == "" || conclusion == "success" ||
-		!validCIWaitActionsStatus(status, conclusion) {
-		return nil
-	}
-	return &github.ManagedCIExecution{
-		Repository: executionRepository, PullRequest: int(pullRequest),
-		BaseRefName: strings.TrimSpace(stringEvidence(execution, "base_ref_name")),
-		HeadSHA:     strings.TrimSpace(stringEvidence(execution, "head_sha")),
-		WorkflowID:  workflowID, Event: "pull_request", RunID: runID,
-		RunNumber: runNumber, Attempt: int(attempt), Status: status, Conclusion: conclusion,
-	}
-}
-
 func managedCIFailedRunID(pr *github.PR) string {
 	if pr == nil {
 		return ""
@@ -760,7 +711,7 @@ func managedCIReplacementRollupIsStale(
 	source *github.ManagedCIExecution,
 ) bool {
 	if pr == nil || !strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") ||
-		pr.Number <= 0 || strings.TrimSpace(pr.BaseRefName) == "" ||
+		pr.Number <= 0 || strings.TrimSpace(pr.BaseRefName) == "" || strings.TrimSpace(pr.BaseRefOid) == "" ||
 		strings.TrimSpace(pr.HeadRefOid) == "" || strings.TrimSpace(repository) == "" {
 		return false
 	}
@@ -785,6 +736,7 @@ func managedCIReplacementRollupIsStale(
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "event")), "pull_request") ||
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "head_sha")), strings.TrimSpace(pr.HeadRefOid)) ||
 		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) != strings.TrimSpace(pr.BaseRefName) ||
+		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "base_sha")), strings.TrimSpace(pr.BaseRefOid)) ||
 		stringEvidence(wait, "execution_id") != fmt.Sprintf("actions:%d:%d:%d", workflowID, runID, attempt) ||
 		!strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "status")), "completed") ||
 		strings.EqualFold(strings.TrimSpace(stringEvidence(execution, "conclusion")), "success") {
@@ -885,10 +837,14 @@ func ciWaitActionsExecutionFromEvidence(evidence map[string]any) (*ciWaitActions
 	if !prOK || !workflowOK || !runOK || !runNumberOK || !attemptOK {
 		return nil, false
 	}
+	baseSHA := strings.TrimSpace(stringEvidence(evidence, "base_sha"))
+	if baseSHA == "" {
+		return nil, false
+	}
 	return &ciWaitActionsExecution{
 		Repository:  strings.TrimSpace(stringEvidence(evidence, "repository")),
 		PullRequest: int(pullRequest), BaseRefName: strings.TrimSpace(stringEvidence(evidence, "base_ref_name")),
-		HeadSHA:    strings.TrimSpace(stringEvidence(evidence, "head_sha")),
+		BaseSHA: baseSHA, HeadSHA: strings.TrimSpace(stringEvidence(evidence, "head_sha")),
 		WorkflowID: workflowID, Event: strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "event"))),
 		RunID: runID, RunNumber: runNumber, Attempt: int(attempt),
 		Status:      strings.ToLower(strings.TrimSpace(stringEvidence(evidence, "status"))),
@@ -916,6 +872,7 @@ func managedCIWaitExecutionIdentityMatches(execution map[string]any, candidate *
 		runID == candidate.RunID && runNumber == candidate.RunNumber && attempt == int64(candidate.Attempt) &&
 		strings.EqualFold(stringEvidence(execution, "repository"), strings.TrimSpace(candidate.Repository)) &&
 		strings.TrimSpace(stringEvidence(execution, "base_ref_name")) == strings.TrimSpace(candidate.BaseRefName) &&
+		strings.EqualFold(stringEvidence(execution, "base_sha"), strings.TrimSpace(candidate.BaseSHA)) &&
 		strings.EqualFold(stringEvidence(execution, "head_sha"), strings.TrimSpace(candidate.HeadSHA)) &&
 		strings.EqualFold(stringEvidence(execution, "event"), strings.TrimSpace(candidate.Event))
 }

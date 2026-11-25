@@ -32,6 +32,7 @@ type PR struct {
 	HeadRefName string
 	HeadRefOid  string
 	BaseRefName string
+	BaseRefOid  string
 	UpdatedAt   time.Time
 	// ClosedAt is when the pull request was closed; zero when it is open or
 	// the lookup did not report it. Later comments or branch deletion move
@@ -289,6 +290,7 @@ type ManagedCIRequest struct {
 	Repository          string
 	PullRequest         int
 	BaseRefName         string
+	BaseSHA             string
 	HeadSHA             string
 	FailedWorkflowRunID string
 	FailedChecks        []CIFailedCheck
@@ -300,6 +302,7 @@ type ManagedCIActiveExecutionRequest struct {
 	Repository  string
 	PullRequest int
 	BaseRefName string
+	BaseSHA     string
 	HeadSHA     string
 	WorkflowID  int64
 	RunID       int64
@@ -322,6 +325,7 @@ type ManagedCIExecution struct {
 	Repository  string
 	PullRequest int
 	BaseRefName string
+	BaseSHA     string
 	HeadSHA     string
 	WorkflowID  int64
 	Event       string

@@ -10,7 +10,7 @@
   "pull_requests": [
     {
       "number": 17,
-      "base": {"ref": "main"},
+      "base": {"ref": "main", "sha": "base-sha"},
       "head": {"sha": "incident-source-head"}
     }
   ]

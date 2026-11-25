@@ -215,6 +215,7 @@ type prPayload struct {
 	HeadRefName             string          `json:"headRefName"`
 	HeadRefOid              string          `json:"headRefOid"`
 	BaseRefName             string          `json:"baseRefName"`
+	BaseRefOid              string          `json:"baseRefOid"`
 	UpdatedAt               string          `json:"updatedAt"`
 	ClosedAt                string          `json:"closedAt"`
 	ReviewDecision          string          `json:"reviewDecision"`
@@ -751,7 +752,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		return nil, err
 	}
 
-	out, err := c.readCommand(ctx, "gh pr view", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,closingIssuesReferences")
+	out, err := c.readCommand(ctx, "gh pr view", "pr", "view", fmt.Sprintf("%d", number), "--json", "number,title,body,state,mergedAt,headRefName,headRefOid,baseRefName,baseRefOid,closingIssuesReferences")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -777,6 +778,7 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		HeadRefName:        payload.HeadRefName,
 		HeadRefOid:         payload.HeadRefOid,
 		BaseRefName:        payload.BaseRefName,
+		BaseRefOid:         payload.BaseRefOid,
 		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers: linkedIssueNumbers,
 	}, nil
@@ -841,7 +843,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 
 // FindPRByBranch finds the most recent pull request for a branch via gh CLI.
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
-	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,baseRefName,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
+	out, err := c.readCommand(ctx, "gh pr list", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,baseRefName,baseRefOid,updatedAt,closedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -882,6 +884,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		HeadRefName:                 payload.HeadRefName,
 		HeadRefOid:                  payload.HeadRefOid,
 		BaseRefName:                 payload.BaseRefName,
+		BaseRefOid:                  payload.BaseRefOid,
 		linkedIssueNumber:           firstLinkedIssueNumber(linkedIssueNumbers),
 		linkedIssueNumbers:          linkedIssueNumbers,
 		UpdatedAt:                   parseGitHubTime(payload.UpdatedAt),
