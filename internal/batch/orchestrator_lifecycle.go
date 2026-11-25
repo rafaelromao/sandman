@@ -1333,11 +1333,7 @@ func lifecycleReviewRequestDeadline(extras map[string]any) (time.Time, bool) {
 	if resolved {
 		return time.Time{}, false
 	}
-	seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"])
-	if !ok {
-		return time.Time{}, false
-	}
-	return time.Unix(seconds, 0), true
+	return reviewRequestOperationDeadline(request)
 }
 
 func lifecycleCIWaitDeadline(extras map[string]any) (time.Time, bool) {

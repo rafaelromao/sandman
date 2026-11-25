@@ -301,6 +301,14 @@ configured.
 _Avoid_: daemon review (the reviewer need not be the daemon).
 _See_: Blind review, Review run.
 
+**Managed review response budget**:
+The time a confirmed delegated review request can spend awaiting a response.
+Recorded quota pauses of the daemon responsible for the request do not consume
+its remaining budget, even across restarts. Recovery resumes the same budget;
+only a new request gets a fresh one. Implementation quota and CI use separate
+clocks.
+_See_: Delegated review, Review run.
+
 **Blind review**:
 The default pull-request review when no review command is configured: the
 implementor spawns a fresh subagent with no conversation context and gives it

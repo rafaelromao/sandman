@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -148,7 +149,7 @@ func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, bra
 // retainedLifecycleEvidence decodes the latest retained review record without
 // deciding what the live pull request means. Retained records enrich a
 // lifecycle decision; they never outrank the live merged or closed state.
-func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir string, pr *github.PR, currentHead string) retainedReviewEvidence {
+func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir string, pr *github.PR, currentHead string) (result retainedReviewEvidence) {
 	if s.blindReviewMode() {
 		// Blind evidence is fetched once by the lifecycle adapter so lookup
 		// errors enter GitHub recovery rather than masquerading as no review.
@@ -167,6 +168,11 @@ func (s *runSession) retainedLifecycleEvidence(ctx context.Context, workDir stri
 	}
 	registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead)
 	if err == nil {
+		defer func() {
+			if registration != nil && !result.stateError {
+				result = s.applyManagedReviewClock(registration, result)
+			}
+		}()
 		evidence := retainedReviewEvidence{
 			present: true,
 		}
@@ -268,9 +274,10 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 	if err != nil || strings.TrimSpace(repository) == "" {
 		return false
 	}
-	now := s.reviewNow().Unix()
 	if registration, err := s.loadCanonicalReviewRegistration(ctx, workDir, repository, pr, currentHead); err == nil && registration != nil {
-		if registration.State.State != "pending" || int64(registration.Request.DeadlineUnixSeconds) <= now {
+		now := s.reviewNow()
+		deadline, paused := s.managedReviewClock(registration.Request, now)
+		if registration.State.State != "pending" || (!paused && !now.Before(deadline)) {
 			return false
 		}
 		if registration.State.ObservedState == "timed_out" {
@@ -283,7 +290,8 @@ func (s *runSession) confirmedReviewRequestActive(ctx context.Context, workDir s
 			if handoffErr != nil || handoff == nil {
 				return false
 			}
-			if handoff.Outcome != retainedReviewPending || handoff.hasActionableFeedback() {
+			quotaAdjusted := paused || !deadline.Equal(time.Unix(int64(registration.Request.DeadlineUnixSeconds), 0))
+			if (handoff.Outcome != retainedReviewPending && !(quotaAdjusted && handoff.Outcome == retainedReviewTimeout)) || handoff.hasActionableFeedback() {
 				return false
 			}
 			return handoff.Classification == nil || len(handoff.Classification.informalFeedbackEvidenceFor(handoff.Request, handoff.Classification.WindowEnd)) == 0

@@ -423,7 +423,7 @@ remains terminal even when local commits have not been pushed.
 | Managed CI | **30 minutes** per identified current-head check execution, durable hard deadline | New head or verified same-head CI rerun |
 | Standalone CI | **60 minutes** and at most **three fixes** per current head within an invocation | New head or fresh invocation |
 | Managed observation cadence | **30 seconds from the first poll** between observations of an ordinary external wait, in the batch and foreground paths; excludes API-call duration and execution-capacity admission delay; never renews a deadline or resets retry/relaunch accounting | Not a budget: polling never renews a deadline or resets retry/relaunch accounting |
-| Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; applies only when a review command is configured | New confirmed request |
+| Delegated review | Configured `review_timeout`; default 1,800 seconds, minimum 240 seconds; managed daemon-backed requests exclude recorded reviewer quota pauses | New confirmed request |
 | Blind review round | Synchronous implementor round; no `review_timeout`, trigger envelope, or polling window | New head or fresh cycle/relaunch round |
 | Implementation provider quota | **Five hours of accumulated completed scheduled waits**, at a trustworthy provider reset when available or ten-minute fallback intervals, then final boundary probe and configured ordinary retries | Verified recovery followed by a new quota episode; re-entry/restart preserves consumed polling |
 | Implementation lifecycle relaunch | Default **three in-session relaunches**, entry excluded; a feedback relaunch that changes nothing ends the allowance; exhaustion ends the Run for owned work (merge, CI repair, blind round, feedback) and waits for merge-conflict repair and the expired CI wait | Fresh executor session with a new resume signature |
@@ -450,7 +450,9 @@ returns immediately, without redundant verification or agent-side polling, and
 reports live or timestamped observations rather than stale CI/review statements.
 See [ADR-0060](../adr/0060-managed-handoff-boundary-and-thirty-second-observation.md).
 
-CI and review retain independent hard deadlines. At expiry, the runtime
+CI and review retain independent bounds. CI keeps its hard deadline; a managed
+daemon-backed review consumes its response budget only outside recorded reviewer
+quota pauses. At expiry, the runtime
 revalidates current-head operations: an expired review request cannot override
 CI that is still resolving. The request also stays waiting while its matching
 review Run is nonterminal and the daemon is live, or while a quota pause is
@@ -508,7 +510,15 @@ implementation provider reset evidence does not affect reviewer scheduling.
 Reviewer launch failures retain the existing 10/20/40/60-second capped backoff,
 request/head advisory artifact claims, and durable single-publication recovery,
 without a cumulative three-launch gate or a new reviewer request-age cutoff.
-The waiting parent's configured request deadline remains unchanged.
+The daemon records the start of a quota pause and closes it atomically on a
+successful probe, before another review launch. An overlapping managed request
+keeps the remaining budget across repeated pauses and restart; it cannot regain
+time after expiry. A pause without a trustworthy start supplies no time credit.
+The canonical request and response identity stay unchanged. The managed
+daemon-backed wait uses normal ownerless recovery grace rather than a fixed
+review deadline as its ownership cutoff, so a pause between observations cannot
+strand the Run. Any independent current-head CI cutoff is unchanged. Standalone
+review, blind review, and requests for external reviewers do not use this clock.
 Durable decision-publication recovery does not require a duplicate
 reviewer launch. Stopping the reviewer daemon preserves recoverable requests and
 publications. Implementation abort ends its own lifecycle without rewriting the

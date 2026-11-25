@@ -205,7 +205,7 @@ func awaitIdentitySignature(extras map[string]any, operation string) (string, bo
 	if !ok {
 		return "", false
 	}
-	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds"}
+	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds", reviewQuotaPausedKey, reviewEffectiveDeadlineKey}
 	signature := make(map[string]any, len(fields))
 	for _, key := range fields {
 		if field, present := value[key]; present {

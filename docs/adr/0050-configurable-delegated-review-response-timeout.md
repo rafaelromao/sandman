@@ -43,6 +43,13 @@ sleep that lands exactly on the configured deadline.
 > from the first poll for default and new waits; retained explicit plans stay
 > valid. See [ADR-0060](0060-managed-handoff-boundary-and-thirty-second-observation.md).
 
+> **Later change:** Managed requests serviced by the Sandman review daemon
+> retain their unused budget during recorded reviewer quota pauses. The daemon
+> records the completed interval in the same write that clears its pause, so a
+> parent observing before the next reviewer launch or after a restart can
+> compute the same remaining time. The original request and response identity
+> stay unchanged. Standalone review retains the wall-clock policy above.
+
 ## Consequences
 
 ### Positive

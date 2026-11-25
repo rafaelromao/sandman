@@ -3,22 +3,9 @@ package review
 import (
 	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/reviewtrigger"
 )
-
-// triggerPattern matches "/sandman review" anywhere in a comment body,
-// case-insensitive, allowing common whitespace between "sandman" and
-// "review". The whole match is also used to extract the text after it as the
-// review focus: callers strip the match from the original body and trim
-// leading whitespace and bot mentions.
-var triggerPattern = regexp.MustCompile(`(?i)/sandman\s+review\b`)
-
-// commandPattern matches a comment that starts with the /sandman command,
-// optionally after one leading mention: "/sandman", "/sandman check ...",
-// "@bot /sandman review ...". The command token must be exactly /sandman, so
-// "/sandmanreview" and "/sandman-check" do not match. A repository may set any
-// /sandman command as its review_command, and `sandman run` requires this
-// daemon for every such command, so the daemon answers all of them.
-var commandPattern = regexp.MustCompile(`(?i)^\s*(?:@\S+\s+)?/sandman(?:\s+|$)`)
 
 // leadingReviewWord strips the "review" subcommand from the text after a
 // /sandman command so "/sandman review x" and "/sandman x" share a focus.
@@ -50,27 +37,23 @@ var botReviewBodyMarker = regexp.MustCompile(`(?im)^\s*##\s*previous\s+review\s+
 //	"Thanks!"                    -> ("",     false)
 //	"@bot /sandman review x y"   -> ("x y",  true)
 func ParseTrigger(body string) (string, bool) {
-	if match := commandPattern.FindStringIndex(body); match != nil {
-		tail := body[match[1]:]
+	end, atStart := reviewtrigger.Match(body)
+	if end < 0 {
+		return "", false
+	}
+	tail := body[end:]
+	if atStart {
 		if review := leadingReviewWord.FindStringIndex(tail); review != nil {
 			tail = tail[review[1]:]
 		}
-		return stripLeadingBotMention(strings.TrimSpace(tail)), true
 	}
-	match := triggerPattern.FindStringIndex(body)
-	if match == nil {
-		return "", false
-	}
-	tail := body[match[1]:]
-	focus := strings.TrimSpace(tail)
-	focus = stripLeadingBotMention(focus)
-	return focus, true
+	return stripLeadingBotMention(strings.TrimSpace(tail)), true
 }
 
 // startsWithSandmanCommand reports whether body starts with the /sandman
 // command, optionally after one leading mention.
 func startsWithSandmanCommand(body string) bool {
-	return commandPattern.MatchString(body)
+	return reviewtrigger.StartsCommand(body)
 }
 
 // LooksLikeBotReviewBody is the structural defence-in-depth sniff (issue
@@ -106,7 +89,7 @@ func LooksLikeBotReviewBody(body string) bool {
 	if !botReviewBodyMarker.MatchString(body) {
 		return false
 	}
-	return triggerPattern.MatchString(body)
+	return reviewtrigger.ContainsReview(body)
 }
 
 // stripLeadingBotMention removes a leading "@something" mention from focus

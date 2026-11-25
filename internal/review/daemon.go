@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewlaunch"
 	"github.com/rafaelromao/sandman/internal/reviewpub"
+	"github.com/rafaelromao/sandman/internal/reviewquota"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/socketpath"
@@ -288,9 +289,7 @@ type Daemon struct {
 	// back to 10m. Issue #2699.
 	quotaProbeInterval time.Duration
 	quotaMu            sync.Mutex
-	quotaPaused        bool
-	quotaPausedUntil   time.Time
-	quotaLastProbe     time.Time
+	quota              reviewquota.State
 	// Guarded by the health-state advisory lock; reused for restart lifecycle
 	// observation rather than opening a new event-log descriptor every tick.
 	healthEvents *events.JSONLLogger
@@ -312,12 +311,6 @@ func (d *Daemon) effectiveLaunchBackoff(attempts int) time.Duration {
 
 const quotaProbeIntervalDefault = 10 * time.Minute
 
-type quotaPauseState struct {
-	Paused      bool      `json:"paused"`
-	PausedUntil time.Time `json:"paused_until,omitempty"`
-	LastProbeAt time.Time `json:"last_probe_at,omitempty"`
-}
-
 func (d *Daemon) effectiveQuotaProbeInterval() time.Duration {
 	if d.quotaProbeInterval > 0 {
 		return d.quotaProbeInterval
@@ -334,15 +327,11 @@ func (d *Daemon) reviewsDir() string {
 }
 
 func (d *Daemon) quotaPauseStatePath() string {
-	return filepath.Join(d.reviewsDir(), "quota-pause.json")
+	return reviewquota.Path(d.reviewsDir())
 }
 
 func (d *Daemon) saveQuotaPauseLocked() error {
-	return atomicfs.WriteAtomicJSON(d.quotaPauseStatePath(), quotaPauseState{
-		Paused:      d.quotaPaused,
-		PausedUntil: d.quotaPausedUntil,
-		LastProbeAt: d.quotaLastProbe,
-	}, 0644)
+	return atomicfs.WriteAtomicJSON(d.quotaPauseStatePath(), d.quota, 0644)
 }
 
 func (d *Daemon) loadQuotaPause() error {
@@ -353,23 +342,16 @@ func (d *Daemon) loadQuotaPause() error {
 		}
 		return fmt.Errorf("read quota pause: %w", err)
 	}
-	var persisted quotaPauseState
+	var persisted reviewquota.State
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		// A damaged quota record must not reopen provider-wide review retries.
 		d.quotaMu.Lock()
-		d.quotaPaused = true
-		d.quotaPausedUntil = d.now()
-		d.quotaLastProbe = time.Time{}
+		d.quota = reviewquota.State{Paused: true, PausedUntil: d.now()}
 		d.quotaMu.Unlock()
 		return fmt.Errorf("decode quota pause: %w", err)
 	}
-	if !persisted.Paused {
-		return nil
-	}
 	d.quotaMu.Lock()
-	d.quotaPaused = true
-	d.quotaPausedUntil = persisted.PausedUntil
-	d.quotaLastProbe = persisted.LastProbeAt
+	d.quota = persisted
 	d.quotaMu.Unlock()
 	return nil
 }
@@ -377,19 +359,19 @@ func (d *Daemon) loadQuotaPause() error {
 func (d *Daemon) isQuotaPaused() bool {
 	d.quotaMu.Lock()
 	defer d.quotaMu.Unlock()
-	return d.quotaPaused
+	return d.quota.Paused
 }
 
 func (d *Daemon) isQuotaProbeDue() bool {
 	d.quotaMu.Lock()
 	defer d.quotaMu.Unlock()
-	if !d.quotaPaused {
+	if !d.quota.Paused {
 		return false
 	}
-	if d.quotaLastProbe.IsZero() {
+	if d.quota.LastProbeAt.IsZero() {
 		return true
 	}
-	return !d.now().Before(d.quotaLastProbe.Add(d.effectiveQuotaProbeInterval()))
+	return !d.now().Before(d.quota.LastProbeAt.Add(d.effectiveQuotaProbeInterval()))
 }
 
 // IsQuotaPaused reports whether the daemon is currently pausing review launches due to a review agent's usage-limit (quota) exhaustion. Exposed for tests. Issue #2699.
@@ -399,16 +381,19 @@ func (d *Daemon) IsQuotaPaused() bool { return d.isQuotaPaused() }
 func (d *Daemon) QuotaPausedUntil() time.Time {
 	d.quotaMu.Lock()
 	defer d.quotaMu.Unlock()
-	return d.quotaPausedUntil
+	return d.quota.PausedUntil
 }
 
 func (d *Daemon) enterQuotaPause(prNumber int, commentID string, state *ReviewStateStore) {
 	now := d.now()
 	until := now.Add(d.effectiveQuotaProbeInterval())
 	d.quotaMu.Lock()
-	d.quotaPaused = true
-	d.quotaPausedUntil = until
-	d.quotaLastProbe = now
+	if !d.quota.Paused {
+		d.quota.StartedAt = now
+	}
+	d.quota.Paused = true
+	d.quota.PausedUntil = until
+	d.quota.LastProbeAt = now
 	if err := d.saveQuotaPauseLocked(); err != nil {
 		d.logf("persist quota pause: %v", err)
 	}
@@ -422,13 +407,13 @@ func (d *Daemon) enterQuotaPause(prNumber int, commentID string, state *ReviewSt
 
 func (d *Daemon) clearQuotaPause() {
 	d.quotaMu.Lock()
-	prevUntil := d.quotaPausedUntil
-	d.quotaPaused = false
-	d.quotaPausedUntil = time.Time{}
-	d.quotaLastProbe = time.Time{}
+	previous := d.quota
+	d.quota = reviewquota.State{CompletedPauses: previous.CompletedPauses}
+	if recoveredAt := d.now(); !previous.StartedAt.IsZero() && previous.StartedAt.Before(recoveredAt) {
+		d.quota.CompletedPauses = append(d.quota.CompletedPauses, reviewquota.Pause{StartedAt: previous.StartedAt, RecoveredAt: recoveredAt})
+	}
 	if err := d.saveQuotaPauseLocked(); err != nil {
-		d.quotaPaused = true
-		d.quotaPausedUntil = prevUntil
+		d.quota = previous
 		d.logf("persist cleared quota pause: %v", err)
 		d.quotaMu.Unlock()
 		return
@@ -440,7 +425,7 @@ func (d *Daemon) clearQuotaPause() {
 	d.nextAttemptMu.Lock()
 	for pr, m := range d.nextAttempt {
 		for key, stamp := range m {
-			if !stamp.IsZero() && stamp.Equal(prevUntil) {
+			if !stamp.IsZero() && stamp.Equal(previous.PausedUntil) {
 				delete(m, key)
 			}
 		}
@@ -454,9 +439,9 @@ func (d *Daemon) clearQuotaPause() {
 func (d *Daemon) extendQuotaPauseForProbeFailure() {
 	now := d.now()
 	d.quotaMu.Lock()
-	d.quotaPaused = true
-	d.quotaPausedUntil = now.Add(d.effectiveQuotaProbeInterval())
-	d.quotaLastProbe = now
+	d.quota.Paused = true
+	d.quota.PausedUntil = now.Add(d.effectiveQuotaProbeInterval())
+	d.quota.LastProbeAt = now
 	if err := d.saveQuotaPauseLocked(); err != nil {
 		d.logf("persist quota probe pause: %v", err)
 	}

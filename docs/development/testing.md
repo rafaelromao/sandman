@@ -297,14 +297,16 @@ Lifecycle regression coverage follows the canonical
 CI → review → approval → occupied slot → merge; quota → recovery → CI/review;
 deferred admission → explicit abort; and ownerless wait → different-batch
 rehydration inside fixed grace. Assert emitted events and their CLI/Portal folds,
-managed CI/review hard deadlines, session-local relaunch and invocation-local
+managed CI deadlines and review budgets, session-local relaunch and invocation-local
 standalone CI bounds, reset-aware and fallback quota schedules, variable
 completed-wait accounting, restart reconstruction, cancellation, cumulative
 RunID duration, exclusive claims, held dependencies, terminal preservation, and
 launch-boundary quota revalidation. Strategy tests cover authoritative reset
 sources, timezone/date interpretation, malformed and conflicting evidence, and
 the seven-day bound. Verify that reviewer quota recovery retains its separate
-daemon-wide fixed ten-minute cadence.
+daemon-wide fixed ten-minute cadence and that a managed parent observing between a
+successful probe and the next reviewer launch keeps the same request and its
+remaining budget. Check both restart during the pause and expiry after recovery.
 
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
@@ -353,7 +355,8 @@ Quota coverage must include completed-poll accounting across executor/scheduler
 reconstruction, downtime/capacity clock jumps, the final boundary probe, zero and
 positive configured ordinary retries, invalid-accounting fallback, independent
 sibling outcomes, and cancellation. Quota estimate normalization must preserve
-existing recovery grace; CI/review hard deadlines remain enforced. Terminal
+existing recovery grace; CI deadlines and the remaining review budget remain
+enforced. Terminal
 failure payloads carry no active `await`, `await_reason`, or `gate` markers.
 
 ```bash

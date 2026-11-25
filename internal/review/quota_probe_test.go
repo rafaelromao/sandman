@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/reviewquota"
 )
 
 type quotaProbeRunner struct {
@@ -277,6 +278,36 @@ func TestReviewQuotaPauseSurvivesRestart(t *testing.T) {
 	}
 	if probeRunner.reviewCalls != 0 {
 		t.Fatalf("review calls = %d, want 0 before quota recovery", probeRunner.reviewCalls)
+	}
+	active, err := reviewquota.Read(restarted.reviewsDir())
+	if err != nil || !active.Paused || !active.StartedAt.Equal(now) || len(active.CompletedPauses) != 0 {
+		t.Fatalf("failed probe after restart did not retain the original pause: %+v, %v", active, err)
+	}
+
+	probeRunner.probeResult = &batch.Result{Runs: []batch.AgentRunResult{{Status: "success"}}}
+	recoveredAt := now.Add(25 * time.Minute)
+	restarted.Clock = func() time.Time { return recoveredAt }
+	tickAndWait(t, restarted, context.Background())
+	cleared, err := reviewquota.Read(restarted.reviewsDir())
+	if err != nil || cleared.Paused || len(cleared.CompletedPauses) != 1 ||
+		!cleared.CompletedPauses[0].StartedAt.Equal(now) || !cleared.CompletedPauses[0].RecoveredAt.Equal(recoveredAt) {
+		t.Fatalf("clean probe did not atomically close the original pause: %+v, %v", cleared, err)
+	}
+	if probeRunner.reviewCalls != 0 {
+		t.Fatal("expected the recovered pause to be readable before the next review launch")
+	}
+
+	restartedAgain := New(baseDir, gh, &prompt.Engine{}, probeRunner, cfg, &lockedBuffer{}, 0, false, nil)
+	if err := restartedAgain.loadQuotaPause(); err != nil {
+		t.Fatal(err)
+	}
+	nextPause := recoveredAt.Add(time.Minute)
+	restartedAgain.Clock = func() time.Time { return nextPause }
+	restartedAgain.enterQuotaPause(42, "c1", nil)
+	next, err := reviewquota.Read(restartedAgain.reviewsDir())
+	if err != nil || !next.Paused || !next.StartedAt.Equal(nextPause) || len(next.CompletedPauses) != 1 ||
+		!next.CompletedPauses[0].RecoveredAt.Equal(recoveredAt) {
+		t.Fatalf("new pause overwrote prior recovery evidence: %+v, %v", next, err)
 	}
 }
 

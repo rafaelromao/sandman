@@ -84,7 +84,7 @@ func (s *lifecycleObserver) priorOperationEvidence(runID, branch, head string) (
 			valid = true
 		}
 	}
-	if _, _, bounded := lifecycleDeadline(evidence); !valid || !bounded {
+	if _, _, established := lifecycleOwnershipOperation(evidence, runID); !valid || !established {
 		return map[string]any{}, false
 	}
 	return evidence, true

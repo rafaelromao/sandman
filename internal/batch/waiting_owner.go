@@ -2,7 +2,6 @@ package batch
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -137,9 +136,8 @@ func (o *waitOwner) checkpoint(row RowSpec, ready bool, nextPoll time.Duration) 
 	record.NextPollAt = o.now().Add(nextPoll)
 	record.OperationID, record.OperationDeadline = "admission", time.Time{}
 	if state.IsAwaiting() && !state.IsCapacityQueued() && state.AwaitEvent != nil {
-		if deadline, gate, ok := lifecycleDeadline(state.AwaitEvent.Payload); ok {
-			record.OperationDeadline = deadline
-			record.OperationID = fmt.Sprintf("%s:%d", gate, deadline.Unix())
+		if id, deadline, ok := lifecycleOwnershipOperation(state.AwaitEvent.Payload, row.RunID); ok {
+			record.OperationID, record.OperationDeadline = id, deadline
 		}
 		if id, deadline, ok := githubRecoveryOperation(state.AwaitEvent.Payload); ok {
 			// A GitHub recovery wait is bounded by its 24-hour window; retained
