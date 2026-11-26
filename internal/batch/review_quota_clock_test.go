@@ -92,6 +92,61 @@ func TestManagedReviewQuotaRecoveryKeepsRemainingBudget(t *testing.T) {
 	}
 }
 
+func TestManagedReviewObservationUsesOneQuotaSnapshot(t *testing.T) {
+	start := time.Date(2026, 11, 25, 11, 5, 0, 0, time.UTC)
+	now := start
+	deadline := start.Add(30 * time.Minute)
+	pr := continuityProbePR()
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{continuityBranch: pr}},
+		comments: []github.PRComment{{
+			ID: "trigger-1001", Body: "/sandman review", CreatedAt: start.Add(-time.Minute),
+		}},
+	}
+	root := t.TempDir()
+	layout := paths.NewLayout(nil, root)
+	if err := os.MkdirAll(layout.ReviewsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pauseCommitted := false
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, layout: layout},
+		renderCfg:   prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) { return pr.HeadRefOid, nil },
+			now: func() time.Time {
+				// Finish recording a pause that started just before expiry
+				// as the managed observer samples its clock. The request
+				// registration's separate evidence clock doesn't trigger it.
+				if now.After(deadline) && !pauseCommitted {
+					pause := reviewquota.State{Paused: true, StartedAt: deadline.Add(-time.Millisecond)}
+					if err := atomicfs.WriteAtomicJSON(reviewquota.Path(layout.ReviewsDir()), pause, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					pauseCommitted = true
+				}
+				return now
+			},
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: start.Add(-2 * time.Minute),
+	}
+	if err := session.registerReviewRequest(t.Context(), root, pr, pr.HeadRefOid); err != nil {
+		t.Fatal(err)
+	}
+	now = deadline.Add(time.Millisecond)
+	observer := newLifecycleObserver(session)
+	verdict := observer.decideLifecycleForAttempt(t.Context(), root, continuityBranch, "run", true, "success", false, false, nil)
+	request, _ := verdict.Evidence["review_request"].(map[string]any)
+	if !pauseCommitted || !payloadBoolValue(request, reviewQuotaPausedKey) {
+		t.Fatalf("observation did not see the committed pause: %+v", verdict)
+	}
+	if verdict.Action != lifecycleAwait || request["trigger_id"] != "trigger-1001" {
+		t.Fatalf("paused request did not keep waiting on its original trigger: %s (%s)", verdict.status(), verdict.Evidence["reason"])
+	}
+}
+
 func TestDaemonReviewWaitRemainsRecoverableAcrossQuotaBoundary(t *testing.T) {
 	start := time.Unix(1000, 0)
 	deadline := start.Add(time.Minute)
@@ -251,8 +306,8 @@ func TestManagedReviewClockIgnoresUnrelatedDaemonQuota(t *testing.T) {
 		request := reviewRequestEnvelope{
 			TriggerPrefix: prefix, StartedUnixSeconds: int(started.Unix()), DeadlineUnixSeconds: int(deadline.Unix()),
 		}
-		if got, paused := session.managedReviewClock(request, now); paused || !got.Equal(deadline) {
-			t.Fatalf("unrelated review command %q used the daemon quota clock: %v, paused=%t", prefix, got, paused)
+		if clock := session.managedReviewClock(request, now); clock.daemonPaused || clock.paused || !clock.deadline.Equal(deadline) {
+			t.Fatalf("unrelated review command %q used the daemon quota clock: %+v", prefix, clock)
 		}
 	}
 }

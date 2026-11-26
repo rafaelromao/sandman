@@ -514,6 +514,8 @@ The daemon records the start of a quota pause and closes it atomically on a
 successful probe, before another review launch. An overlapping managed request
 keeps the remaining budget across repeated pauses and restart; it cannot regain
 time after expiry. A pause without a trustworthy start supplies no time credit.
+Each observation uses the same validated request and quota snapshot for
+wait authorization, expiry, and retained evidence.
 After a backward clock correction, only time beyond the previous recorded
 recovery can be credited; the probe schedule itself does not change.
 The canonical request and response identity stay unchanged. The managed

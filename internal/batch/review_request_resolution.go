@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
-	"github.com/rafaelromao/sandman/internal/reviewquota"
 )
 
 type expiredReviewResolution struct {
@@ -17,9 +16,13 @@ type expiredReviewResolution struct {
 	reviewResolverLive bool
 }
 
-func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumber int, headSHA string, evidence map[string]any) expiredReviewResolution {
+func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumber int, headSHA string, evidence map[string]any, clock managedReviewDeadline) expiredReviewResolution {
 	request, ok := evidence["review_request"].(map[string]any)
-	if !ok || !reviewRequestHasExpired(request, prNumber, headSHA, s.runtimeNow()) {
+	now := clock.observedAt
+	if now.IsZero() {
+		now = s.runtimeNow()
+	}
+	if !ok || !reviewRequestHasExpired(request, prNumber, headSHA, now) {
 		return expiredReviewResolution{}
 	}
 
@@ -51,7 +54,7 @@ func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumbe
 		resolution.reviewResolverLive = false
 		return resolution
 	}
-	if daemonReviewRequest(stringEvidence(request, "trigger_prefix")) && reviewQuotaPaused(s.deps.layout.ReviewsDir()) {
+	if clock.daemonPaused {
 		resolution.reviewResolverLive = true
 	}
 	return resolution
@@ -120,9 +123,4 @@ func reviewDaemonAccepting(socketPath string) bool {
 	}
 	_ = connection.Close()
 	return true
-}
-
-func reviewQuotaPaused(reviewsDir string) bool {
-	pause, _ := reviewquota.Read(reviewsDir)
-	return pause.Paused
 }

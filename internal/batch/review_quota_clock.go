@@ -19,27 +19,37 @@ func daemonReviewRequest(prefix string) bool {
 	return end >= 0
 }
 
+type managedReviewDeadline struct {
+	observedAt, original, deadline time.Time
+	paused, daemonPaused           bool
+}
+
+func (c managedReviewDeadline) active() bool { return c.paused || c.observedAt.Before(c.deadline) }
+
+func (c managedReviewDeadline) adjusted() bool { return c.paused || !c.deadline.Equal(c.original) }
+
 // The canonical envelope (including its original wall-clock deadline) is a
 // request identity and response-validation boundary. Quota changes the managed
 // wait deadline, not that envelope or standalone response validation.
-func (s *runSession) managedReviewClock(request reviewRequestEnvelope, now time.Time) (time.Time, bool) {
+func (s *runSession) managedReviewClock(request reviewRequestEnvelope, now time.Time) managedReviewDeadline {
 	deadline := time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()
+	clock := managedReviewDeadline{observedAt: now, original: deadline, deadline: deadline}
 	if s.deps.layout.SandmanDir == "" || !daemonReviewRequest(request.TriggerPrefix) {
-		return deadline, false
+		return clock
 	}
 	state, err := reviewquota.Read(s.deps.layout.ReviewsDir())
 	if err != nil {
-		return deadline, false
+		return clock
 	}
 	started := time.Unix(int64(request.StartedUnixSeconds), 0).UTC()
-	return state.Clock(started, deadline, now)
+	clock.deadline, clock.paused = state.Clock(started, deadline, now)
+	clock.daemonPaused = state.Paused
+	return clock
 }
 
-func (s *runSession) applyManagedReviewClock(registration *reviewRequestRegistration, evidence retainedReviewEvidence) retainedReviewEvidence {
-	now := s.runtimeNow()
-	deadline, paused := s.managedReviewClock(registration.Request, now)
-	original := time.Unix(int64(registration.Request.DeadlineUnixSeconds), 0)
-	if !paused && deadline.Equal(original) {
+func applyManagedReviewClock(registration *reviewRequestRegistration, evidence retainedReviewEvidence) retainedReviewEvidence {
+	clock := evidence.clock
+	if !clock.adjusted() {
 		return evidence
 	}
 	// Overlay only the managed clock, while retaining the canonical request
@@ -48,11 +58,11 @@ func (s *runSession) applyManagedReviewClock(registration *reviewRequestRegistra
 		"review_request": reviewRegistrationDiagnostic(registration)["review_request"],
 	})
 	request := evidence.payload["review_request"].(map[string]any)
-	request[reviewEffectiveDeadlineKey] = deadline.Format(time.RFC3339Nano)
-	if paused {
+	request[reviewEffectiveDeadlineKey] = clock.deadline.Format(time.RFC3339Nano)
+	if clock.paused {
 		request[reviewQuotaPausedKey] = true
 	}
-	if evidence.outcome == retainedReviewTimeout && (paused || now.Before(deadline)) {
+	if evidence.outcome == retainedReviewTimeout && clock.active() {
 		evidence.outcome = retainedReviewPending
 		delete(evidence.payload, "gate")
 		delete(evidence.payload, "reason")
@@ -71,6 +81,13 @@ func reviewRequestOperationDeadline(request map[string]any) (time.Time, bool) {
 		return adjusted, true
 	}
 	return deadline, true
+}
+
+func (s *runSession) deadlineObservationTime(gate string, clock managedReviewDeadline) time.Time {
+	if gate == gateReviewTimeout && !clock.observedAt.IsZero() {
+		return clock.observedAt
+	}
+	return s.runtimeNow()
 }
 
 // A daemon-backed review can lose its wall-clock cutoff between observations.

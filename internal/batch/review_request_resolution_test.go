@@ -41,13 +41,13 @@ func TestExpiredReviewRequestResolutionUsesConfirmedTriggerWithoutClassification
 		opts: runSessionOptions{now: func() time.Time { return time.Unix(3000, 0) }},
 	}
 	evidence := map[string]any{"review_request": confirmedExpiryProbeRequest()}
-	active := session.expiredReviewRequestResolution(t.Context(), 17, "current-sha", evidence)
+	active := session.expiredReviewRequestResolution(t.Context(), 17, "current-sha", evidence, managedReviewDeadline{})
 	if !active.expired || !active.reviewRunObserved || !active.reviewResolverLive {
 		t.Fatalf("active review resolution = %+v, want matching live review without a response classification", active)
 	}
 
 	session.deps.eventLog = unreadableEventLog{}
-	uncertain := session.expiredReviewRequestResolution(t.Context(), 17, "current-sha", evidence)
+	uncertain := session.expiredReviewRequestResolution(t.Context(), 17, "current-sha", evidence, managedReviewDeadline{})
 	if !uncertain.expired || uncertain.reviewRunObserved || !uncertain.reviewResolverLive {
 		t.Fatalf("unreadable review resolution = %+v, want to preserve the wait without claiming to have seen a review Run", uncertain)
 	}
