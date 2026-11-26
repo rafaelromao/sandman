@@ -1097,13 +1097,22 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	}
 	if deferredDeadlineGate != "" {
 		diagnostic := map[string]any{"gate": deferredDeadlineGate}
-		if refreshed, ok := extras["review_request"]; ok {
-			diagnostic["evidence"] = refreshed
+		if request, ok := extras["review_request"].(map[string]any); ok {
+			retained := cloneLifecycleExtras(request)
+			for key, value := range deferredDeadlineEvidence {
+				retained[key] = value
+			}
+			diagnostic["evidence"] = retained
 			delete(extras, "review_request")
 		} else if deferredDeadlineEvidence != nil {
 			diagnostic["evidence"] = cloneLifecycleExtras(deferredDeadlineEvidence)
 		}
-		extras["expired_operation_diagnostic"] = diagnostic
+		// The live resolver authorizes observation, not another response
+		// budget. Keep it with the expired identity, outside deadline selection.
+		if reviewResolution.reviewResolverLive {
+			diagnostic[liveReviewResolverKey] = true
+		}
+		extras[expiredOperationKey] = diagnostic
 	}
 	if decision.action == lifecycleResume {
 		// Live typed remediation outranks retained review labels.

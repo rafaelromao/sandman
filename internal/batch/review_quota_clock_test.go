@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/reviewquota"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestManagedReviewQuotaRecoveryKeepsRemainingBudget(t *testing.T) {
@@ -194,6 +196,17 @@ func TestDaemonReviewWaitRemainsRecoverableAcrossQuotaBoundary(t *testing.T) {
 }
 
 func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		name := "remaining review budget"
+		if expired {
+			name = "expired review with live resolver"
+		}
+		t.Run(name, func(t *testing.T) { testReviewQuotaWaitRecoversAfterCICompletes(t, expired) })
+	}
+}
+
+func testReviewQuotaWaitRecoversAfterCICompletes(t *testing.T, expired bool) {
+	t.Helper()
 	for _, checkpoint := range []bool{true, false} {
 		name := "after new checkpoint"
 		if !checkpoint {
@@ -202,7 +215,7 @@ func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			start := time.Date(2026, 11, 25, 11, 5, 0, 0, time.UTC)
 			now := start
-			root := t.TempDir()
+			root := testenv.MkdirShort(t, "sm-review-ci-")
 			layout := paths.NewLayout(nil, root)
 			location := layout.LocateBatch("batch", "")
 			if err := (&batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
@@ -221,6 +234,9 @@ func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
 			row := RowSpec{RunID: "run", BatchID: location.ID, IssueNumber: 42, BaseBranch: "main",
 				Branches:  map[int]string{42: continuityBranch},
 				RenderCfg: prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+			}
+			if expired {
+				row.RenderCfg.ReviewTimeout = 240
 			}
 			log := &spyEventLog{events: []events.Event{{
 				Type: "run.started", RunID: row.RunID, Issue: row.IssueNumber, Timestamp: start,
@@ -269,8 +285,39 @@ func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
 			if err != nil || !active.OperationDeadline.Equal(ciDeadline) || active.RecoverableAt(ciDeadline) {
 				t.Fatalf("active CI still needs its independent cutoff: %+v, %v", active, err)
 			}
+			var listener net.Listener
+			if expired {
+				// The first pause adds two minutes; the later pause starts
+				// after the adjusted deadline and grants no more time.
+				quota := reviewquota.State{
+					Paused: true, StartedAt: start.Add(10 * time.Minute),
+					CompletedPauses: []reviewquota.Pause{{StartedAt: start.Add(time.Minute), RecoveredAt: start.Add(3 * time.Minute)}},
+				}
+				if err := atomicfs.WriteAtomicJSON(reviewquota.Path(layout.ReviewsDir()), quota, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				listener, err = net.Listen("unix", layout.ReviewSocketPath())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer listener.Close()
+				observe() // Expired review with CI and a live daemon still resolving.
+			}
 			pr.StatusCheckRollup, pr.CIHasActiveChecks = "success", false
 			observe()
+			if expired {
+				history := log.snapshot()
+				evidence := history[len(history)-1].Payload
+				if _, _, bounded := lifecycleDeadline(evidence); bounded {
+					t.Fatalf("completed CI or expired review still caps the wait: %v", evidence)
+				}
+				diagnostic, _ := evidence["expired_operation_diagnostic"].(map[string]any)
+				request, _ := diagnostic["evidence"].(map[string]any)
+				if deadline, ok := reviewRequestOperationDeadline(request); !ok || !deadline.Equal(start.Add(6*time.Minute)) ||
+					request["trigger_id"] != "trigger-1001" {
+					t.Fatalf("expired review lost its trigger or was given fresh time: %v", diagnostic)
+				}
+			}
 			if checkpoint {
 				if err := owner.checkpoint(row, false, 30*time.Second); err != nil {
 					t.Fatal(err)
@@ -283,6 +330,16 @@ func TestManagedReviewQuotaWaitRecoversAfterCICompletes(t *testing.T) {
 			}
 			if ready := FindReadyContinuationsAt(log.snapshot(), layout, now.Add(daemon.RunRecoveryGrace)); len(ready) != 0 {
 				t.Fatalf("discovery renewed expired ownerless grace: %+v", ready)
+			}
+			if expired {
+				if err := listener.Close(); err != nil {
+					t.Fatal(err)
+				}
+				observer := newLifecycleObserver(newRunSession(executor, row))
+				verdict := observer.decideLifecycleForAttempt(t.Context(), root, continuityBranch, row.RunID, true, "success", false, true, nil)
+				if verdict.Action != lifecycleFailure || verdict.Evidence["reason"] != reviewRequestExpiredReason {
+					t.Fatalf("request did not expire after the live resolver stopped: %s (%s)", verdict.status(), verdict.Evidence["reason"])
+				}
 			}
 		})
 	}

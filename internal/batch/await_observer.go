@@ -139,6 +139,13 @@ func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]an
 			delete(payload, operation)
 			continue
 		}
+		if operation == "review_request" {
+			if _, expired := deferredReviewDiagnostic(observed); expired {
+				// An expired request is retained as diagnostics, never restored
+				// as an active deadline by partial evidence merging.
+				continue
+			}
+		}
 		if _, ok := awaitIdentitySignature(payload, operation); ok {
 			continue
 		}
@@ -168,6 +175,12 @@ func awaitOperationChanged(previous, observed map[string]any) bool {
 	}
 	if _, retainedCI := previous["ci_wait"]; retainedCI && payloadBoolValue(observed, daemon.CICompletedDuringReviewKey) {
 		return true
+	}
+	if diagnostic, expired := deferredReviewDiagnostic(observed); expired {
+		oldDiagnostic, wasExpired := deferredReviewDiagnostic(previous)
+		if !wasExpired || payloadBoolValue(oldDiagnostic, liveReviewResolverKey) != payloadBoolValue(diagnostic, liveReviewResolverKey) {
+			return true
+		}
 	}
 	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
 		previousValue, previousOK := previous[key]

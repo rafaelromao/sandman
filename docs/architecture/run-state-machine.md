@@ -524,6 +524,8 @@ review deadline as its ownership cutoff, so a pause between observations cannot
 strand the Run. Any independent current-head CI cutoff is unchanged. Standalone
 review, blind review, and requests for external reviewers do not use this clock.
 Once current-head CI is observed green, the review wait drops that CI cutoff.
+This also applies when a live resolver keeps an expired request waiting; its
+expired deadline stays diagnostic-only.
 If the process stops before checkpointing the change, the observation anchors
 the ordinary ownerless grace without renewing it on discovery.
 Durable decision-publication recovery does not require a duplicate

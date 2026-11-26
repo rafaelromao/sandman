@@ -12,6 +12,8 @@ import (
 const (
 	reviewQuotaPausedKey       = "review_quota_paused"
 	reviewEffectiveDeadlineKey = "review_effective_deadline_at"
+	expiredOperationKey        = "expired_operation_diagnostic"
+	liveReviewResolverKey      = "live_review_resolver"
 )
 
 func daemonReviewRequest(prefix string) bool {
@@ -108,6 +110,18 @@ func lifecycleOwnershipOperation(extras map[string]any, runID string) (string, t
 
 func unresolvedDaemonReviewRequest(extras map[string]any) bool {
 	request, ok := extras["review_request"].(map[string]any)
-	return ok && confirmedReviewExpiryEvidence(request) && daemonReviewRequest(stringEvidence(request, "trigger_prefix")) &&
+	if !ok {
+		diagnostic, expired := deferredReviewDiagnostic(extras)
+		if !expired || !payloadBoolValue(diagnostic, liveReviewResolverKey) {
+			return false
+		}
+		request, _ = diagnostic["evidence"].(map[string]any)
+	}
+	return confirmedReviewExpiryEvidence(request) && daemonReviewRequest(stringEvidence(request, "trigger_prefix")) &&
 		!payloadBoolValue(request, "operation_resolved")
+}
+
+func deferredReviewDiagnostic(extras map[string]any) (map[string]any, bool) {
+	diagnostic, ok := extras[expiredOperationKey].(map[string]any)
+	return diagnostic, ok && stringEvidence(diagnostic, "gate") == gateReviewTimeout
 }
