@@ -26,15 +26,47 @@ const (
 // work item: a review, the quota probe or another prompt-only run.
 func customCommandLaunch(t *testing.T, preset string, issue *github.Issue, output string, code int) AgentRunResult {
 	t.Helper()
+	return customCommandScript(t, preset, issue, output+"\n", fmt.Sprintf("cat output.jsonl; exit %d", code))
+}
+
+// customCommandScript runs script, which can print output from output.jsonl.
+func customCommandScript(t *testing.T, preset string, issue *github.Issue, output, script string) AgentRunResult {
+	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "output.jsonl"), []byte(output+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "output.jsonl"), []byte(output), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := NewAgentRunWithLayout(issue, "test", &fakeV2CLISandbox{fakeSandbox{workDir: root}}, paths.NewLayout(&config.Config{}, root))
 	run.preset = preset
 	run.runFolder, run.outputWriter = filepath.Join(root, "run"), &bytes.Buffer{}
 
-	return run.Run(context.Background(), &spyRenderer{}, fmt.Sprintf("cat output.jsonl; exit %d", code), prompt.RenderConfig{TaskPrompt: "a prompt"})
+	return run.Run(context.Background(), &spyRenderer{}, script, prompt.RenderConfig{TaskPrompt: "a prompt"})
+}
+
+// Neither stream's last line needs a newline, so each is framed on its own: a
+// diagnostic on the other stream must not be joined to it.
+func TestUsageLimit_UnterminatedLastLineSurvivesOutputOnTheOtherStream(t *testing.T) {
+	errorLine := "Error: The usage limit has been reached"
+	for _, tc := range []struct {
+		name, output, script string
+		code                 int
+	}{
+		{"record on stdout, exit 1", rawV2UsageLimitRecord, "cat output.jsonl; printf diagnostic >&2", 1},
+		{"record on stdout, exit 0", rawV2UsageLimitRecord, "cat output.jsonl; printf diagnostic >&2", 0},
+		{"record on stderr", rawV2UsageLimitRecord, "printf progress; cat output.jsonl >&2", 1},
+		{"error line on stderr", errorLine, "printf progress; cat output.jsonl >&2", 1},
+		{"error line on stdout", errorLine, "cat output.jsonl; printf diagnostic >&2", 1},
+		// A container's terminal merges both streams before they are read.
+		{"record followed by merged output", rawV2UsageLimitRecord, "cat output.jsonl; printf diagnostic", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := customCommandScript(t, "opencode-v2", nil, tc.output, fmt.Sprintf("%s; exit %d", tc.script, tc.code))
+
+			if !result.UsageLimitReached || result.Status != "failure" {
+				t.Fatalf("usage limit reached = %t, status = %q", result.UsageLimitReached, result.Status)
+			}
+		})
+	}
 }
 
 func TestCustomOpenCodeCommandRecognisesRawUsageLimitRecord(t *testing.T) {

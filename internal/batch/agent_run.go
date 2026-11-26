@@ -298,34 +298,26 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			cancelAttempt()
 		}
 	})
-	var usageDetector, recordDetector *usageLimitDetector
-	if rule := strategy.UsageLimitRule(); rule != nil {
-		usageDetector = newUsageLimitDetector(rule)
-		usageDetector.setTrigger(r.usageLimit)
-	}
+	usageLines := newUsageLimitStreams(strategy.UsageLimitRule(), r.usageLimit)
 	// Unparsed records are classified only for a launch that serves no work
 	// item (a review, the quota probe or another prompt-only run): a
 	// recognised limit would change an implementation Run's admission and
 	// lifecycle selection.
-	if rule := strategy.UsageLimitRecordRule(); rule != nil && r.issue == nil {
-		recordDetector = newUsageLimitDetector(rule)
-		recordDetector.setTrigger(r.usageLimit)
+	var usageRecords usageLimitStreams
+	if r.issue == nil {
+		usageRecords = newUsageLimitStreams(strategy.UsageLimitRecordRule(), r.usageLimit)
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)
-	var observers []io.Writer
 	if detector != nil {
-		observers = append(observers, detector)
+		stdout = io.MultiWriter(stdout, detector)
+		stderr = io.MultiWriter(stderr, detector)
 	}
-	if usageDetector != nil {
-		observers = append(observers, usageDetector)
-	}
-	if recordDetector != nil {
-		observers = append(observers, recordDetector)
-	}
-	if len(observers) > 0 {
-		stdout = io.MultiWriter(append([]io.Writer{stdout}, observers...)...)
-		stderr = io.MultiWriter(append([]io.Writer{stderr}, observers...)...)
+	for _, streams := range []usageLimitStreams{usageLines, usageRecords} {
+		if streams.stdout != nil {
+			stdout = io.MultiWriter(stdout, streams.stdout)
+			stderr = io.MultiWriter(stderr, streams.stderr)
+		}
 	}
 	parsedStdout, parsedStderr := strategy.NewOutputParsers(r.warningWriter())
 	persistSessionsAsObserved(strategy, r, parsedStdout, parsedStderr)
@@ -356,12 +348,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if detector != nil {
 		detector.Flush()
 	}
-	if usageDetector != nil {
-		usageDetector.Flush()
-	}
-	if recordDetector != nil {
-		recordDetector.Flush()
-	}
+	usageLines.Flush()
+	usageRecords.Flush()
 	if detector != nil && detector.Triggered() {
 		r.contextExhausted = true
 		r.status = "failure"
@@ -422,7 +410,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			return r.Result()
 		}
 	}
-	if recordDetector != nil && recordDetector.Triggered() && ctx.Err() == nil {
+	if usageRecords.Triggered() && ctx.Err() == nil {
 		// A wrapper around the agent can exit zero after the provider
 		// refused the launch, so the record counts whatever the status.
 		r.usageLimitReached = true
@@ -431,7 +419,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil &&
-			((usageDetector != nil && usageDetector.Triggered()) || parsersReachedUsageLimit(parsedStdout, parsedStderr))
+			(usageLines.Triggered() || parsersReachedUsageLimit(parsedStdout, parsedStderr))
 		r.usageLimitResetAt = strategy.UsageLimitResetAt(parsedStdout, parsedStderr, r.runtimeNow())
 		r.status = "failure"
 		return r.Result()

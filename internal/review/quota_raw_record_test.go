@@ -23,13 +23,21 @@ import (
 // unparsed record. The daemon must pause on it instead of relaunching on every
 // poll, and keep pausing while its probes meet the same record.
 func TestDaemon_CustomReviewCommandUsageLimitPausesReviews(t *testing.T) {
-	// A wrapper that pipes the agent exits zero after the refusal.
+	// A wrapper that pipes the agent exits zero after the refusal, and it may
+	// add its own diagnostic while neither stream ends in a newline.
 	for _, code := range []int{1, 0} {
-		t.Run(fmt.Sprintf("exit %d", code), func(t *testing.T) { testCustomReviewCommandUsageLimit(t, code) })
+		for name, format := range map[string]string{
+			"terminated record":                  "printf '%%s\\n' '%s'",
+			"unterminated record and diagnostic": "printf '%%s' '%s'; printf diagnostic >&2",
+		} {
+			t.Run(fmt.Sprintf("%s, exit %d", name, code), func(t *testing.T) { testCustomReviewCommandUsageLimit(t, format, code) })
+		}
 	}
 }
 
-func testCustomReviewCommandUsageLimit(t *testing.T, code int) {
+// testCustomReviewCommandUsageLimit prints the record with printRecord, a
+// shell snippet taking it as %s, and exits with code.
+func testCustomReviewCommandUsageLimit(t *testing.T, printRecord string, code int) {
 	const prNumber = 3043
 	dir := testenv.MkdirShort(t, "sm-quota-raw-")
 	t.Chdir(dir)
@@ -48,7 +56,7 @@ func testCustomReviewCommandUsageLimit(t *testing.T, code int) {
 	// The command runs this script, so the provider can recover mid-test.
 	agentScript := filepath.Join(dir, "agent.sh")
 	record := `{"type":"error","sessionID":"ses_x","error":{"type":"provider.quota","message":"The usage limit has been reached"}}`
-	if err := os.WriteFile(agentScript, []byte(fmt.Sprintf("printf '%%s\\n' '%s'\nexit %d\n", record, code)), 0o644); err != nil {
+	if err := os.WriteFile(agentScript, []byte(fmt.Sprintf(printRecord, record)+fmt.Sprintf("\nexit %d\n", code)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(base, "config.yaml")
