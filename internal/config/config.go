@@ -112,11 +112,15 @@ type AgentPreset struct {
 	// flag and the agent CLI's own default applies.
 	DefaultModelWhenUnset bool
 	Command               string
-	Env                   map[string]string
-	ConfigDirs            []string
-	ConfigFiles           []string
-	SnapshotExcludes      []string
-	LiveMounts            []string
+	// FormerCommands are the command templates this preset ran before. A
+	// config that spells one out still means the built-in command; see
+	// replacesCommand.
+	FormerCommands   []string
+	Env              map[string]string
+	ConfigDirs       []string
+	ConfigFiles      []string
+	SnapshotExcludes []string
+	LiveMounts       []string
 	// LiveMountDirs are host directories that are live-mounted like
 	// LiveMounts and created on the host first when missing, so the agent
 	// never falls back to writing them into the throwaway snapshot.
@@ -158,12 +162,23 @@ type AgentPreset struct {
 // subagent permission.asked hang observed in Sandman containers.
 const OpencodePermissionExternalDirectoryAllow = `{"external_directory":"allow"}`
 
+// The built-in commands while they passed the prompt as one argument, which
+// Linux limits to 128 KiB. They are pinned as written: operators copied them
+// into config.yaml, and changing a preset's command must not turn such a copy
+// into a custom command.
+const (
+	argumentOpenCodeCommand   = `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	argumentOpenCodeV2Command = `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	argumentClaudeCommand     = `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
+)
+
 // BuiltInAgentPresets lists the provider presets Sandman knows about without repo-specific config.
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
-		DisplayName:  "OpenCode",
-		DefaultModel: DefaultModel,
-		Command:      `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} < "{{.PromptFile}}"`,
+		DisplayName:    "OpenCode",
+		DefaultModel:   DefaultModel,
+		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} < "{{.PromptFile}}"`,
+		FormerCommands: []string{argumentOpenCodeCommand},
 		Env: map[string]string{
 			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
@@ -206,6 +221,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		DisplayName:    "OpenCode v2",
 		DefaultModel:   DefaultModel,
 		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} < "{{.PromptFile}}"`,
+		FormerCommands: []string{argumentOpenCodeV2Command},
 		PermissionHint: "configure permissions in OpenCode v2 config instead",
 		ConfigDirs:     []string{"~/.config/opencode", "~/.claude", "~/.agents"},
 		// V2 credentials and sessions live in SQLite. Mount the entire data
@@ -228,6 +244,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// quota, so a minimal config still runs on the preset default.
 		DefaultModelWhenUnset: true,
 		Command:               `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} < "{{.PromptFile}}"`,
+		FormerCommands:        []string{argumentClaudeCommand},
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -526,7 +543,7 @@ func validatePermissionModes(agents map[string]Agent) error {
 			}
 			return errors.New(msg)
 		}
-		if agent.Command != "" && agent.Command != preset.Command {
+		if preset.replacesCommand(agent.Command) {
 			return fmt.Errorf("%s: a custom command receives no permission mode from Sandman; add --permission-mode to the command instead", key)
 		}
 		if slices.Contains(preset.ReadOnlyPermissionModes, mode) {
@@ -651,6 +668,14 @@ func (p AgentPreset) Agent(preset string) Agent {
 	return agent
 }
 
+// replacesCommand reports whether a configured command is a custom command.
+// An unset command, the preset's built-in command and a former built-in
+// command all keep the built-in one.
+func (p AgentPreset) replacesCommand(command string) bool {
+	configured := strings.TrimSpace(command)
+	return configured != "" && configured != p.Command && !slices.Contains(p.FormerCommands, configured)
+}
+
 func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	agent := p.Agent(preset)
 	if override.Name != "" {
@@ -659,7 +684,7 @@ func (p AgentPreset) AgentWithOverrides(preset string, override Agent) Agent {
 	if override.Preset != "" {
 		agent.Preset = override.Preset
 	}
-	if override.Command != "" {
+	if p.replacesCommand(override.Command) {
 		agent.Command = override.Command
 	}
 	if override.Model != "" {

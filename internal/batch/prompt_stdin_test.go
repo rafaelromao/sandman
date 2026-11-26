@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,5 +82,40 @@ func TestBuiltInCommands_DeliverLargePromptOnStdin(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestFormerBuiltInCommandKeepsBuiltInLaunchBehaviour covers a config that
+// still spells out the claude command which passed the prompt as an argument.
+func TestFormerBuiltInCommandKeepsBuiltInLaunchBehaviour(t *testing.T) {
+	preset := config.BuiltInAgentPresets["claude"]
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "agents:\n  claude:\n    command: >-\n      " + preset.FormerCommands[0] + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := cfg.ResolveAgentProvider("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	startOpts, err := buildStartOptions(agent, lookupEnvFrom(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sentinel"}))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(startOpts.PassEnv, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("PassEnv = %v, want the preset's credential", startOpts.PassEnv)
+	}
+	if len(credentialFiles(agent)) == 0 {
+		t.Fatal("credential files are not reconciled")
+	}
+	strategy := strategyFor(agent.Preset, agent.Command)
+	if !strategy.AwaitsUsageLimit() || strategy.ModelFlag("sonnet", "") == "" {
+		t.Fatalf("launch strategy treats the former command as custom: %#v", strategy)
 	}
 }
