@@ -163,7 +163,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
 		DisplayName:  "OpenCode",
 		DefaultModel: DefaultModel,
-		Command:      `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:      `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} < "{{.PromptFile}}"`,
 		Env: map[string]string{
 			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
@@ -205,7 +205,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode-v2": {
 		DisplayName:    "OpenCode v2",
 		DefaultModel:   DefaultModel,
-		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:        `opencode run --format json{{if .ContinueFlag}} --continue{{end}}{{if .SessionFlag}} --session {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --auto{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} < "{{.PromptFile}}"`,
 		PermissionHint: "configure permissions in OpenCode v2 config instead",
 		ConfigDirs:     []string{"~/.config/opencode", "~/.claude", "~/.agents"},
 		// V2 credentials and sessions live in SQLite. Mount the entire data
@@ -227,7 +227,7 @@ var BuiltInAgentPresets = map[string]AgentPreset{
 		// often the most expensive model; parallel AFK runs spend subscription
 		// quota, so a minimal config still runs on the preset default.
 		DefaultModelWhenUnset: true,
-		Command:               `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:               `claude -p --output-format stream-json --verbose{{if .SessionFlag}} --resume {{.SessionFlag}}{{end}}{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .PermissionFlag}} {{.PermissionFlag}}{{end}}{{if .SessionName}} --name '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} < "{{.PromptFile}}"`,
 		Env: map[string]string{
 			"DISABLE_AUTOUPDATER":                      "1",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",

@@ -44,7 +44,7 @@ func (r productionHealthRunner) RunBatch(context.Context, batch.Request) (*batch
 func TestDaemonHealthRepairStrandedFailureLaunchesRealIndependentAdapter(t *testing.T) {
 	dir := testenv.MkdirShort(t, "health-host-")
 	t.Chdir(dir) // No git repository: repair must not require ordinary preparation.
-	if err := os.WriteFile("opencode", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > repaired-launch.txt\n"), 0755); err != nil {
+	if err := os.WriteFile("opencode", []byte("#!/bin/sh\n{ printf '%s\\n' \"$@\"; cat; } > repaired-launch.txt\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

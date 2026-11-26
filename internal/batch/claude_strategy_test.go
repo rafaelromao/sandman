@@ -338,7 +338,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.model = "sonnet"
 				r.dangerouslySkipPermissions = &skip
 			},
-			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' < ".sandman/task.md"`,
 		},
 		{
 			name: "await re-entry without a recorded session starts fresh",
@@ -349,14 +349,14 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.previousBatchID = "batch-0"
 				r.previousRunID = "run-0"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' --model 'sonnet' < ".sandman/task.md"`,
 		},
 		{
 			name: "worktree launch keeps permission prompts",
 			configure: func(r *AgentRun) {
 				r.dangerouslySkipPermissions = &noSkip
 			},
-			want: env + `claude -p --output-format stream-json --verbose --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --name 'Sandman run-1: ' < ".sandman/task.md"`,
 		},
 		{
 			name: "repair launch may edit only .sandman",
@@ -364,7 +364,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.dangerouslySkipPermissions = &noSkip
 				r.editScope = ".sandman"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' < ".sandman/task.md"`,
 		},
 		{
 			name: "skipped permissions need no edit scope",
@@ -372,7 +372,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.dangerouslySkipPermissions = &skip
 				r.editScope = ".sandman"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --name 'Sandman run-1: ' < ".sandman/task.md"`,
 		},
 		{
 			name: "configured permission mode replaces skipped permissions",
@@ -385,7 +385,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.previousBatchID = "batch-0"
 				r.previousRunID = "run-0"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'acceptEdits' --name 'Sandman run-1: ' --model 'sonnet' --effort 'high' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'acceptEdits' --name 'Sandman run-1: ' --model 'sonnet' --effort 'high' < ".sandman/task.md"`,
 		},
 		{
 			name: "configured permission mode applies to worktree launches",
@@ -393,7 +393,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.dangerouslySkipPermissions = &noSkip
 				r.permissionMode = "dontAsk"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'dontAsk' --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --permission-mode 'dontAsk' --name 'Sandman run-1: ' < ".sandman/task.md"`,
 		},
 		{
 			name: "repair edit scope wins over a configured permission mode",
@@ -402,7 +402,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.editScope = ".sandman"
 				r.permissionMode = "acceptEdits"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk --name 'Sandman run-1: ' < ".sandman/task.md"`,
 		},
 		{
 			name: "variant maps to effort",
@@ -410,7 +410,7 @@ func TestAgentRun_ClaudePresetRendersPrintModeCommand(t *testing.T) {
 				r.model = " opus "
 				r.variant = "high"
 			},
-			want: env + `claude -p --output-format stream-json --verbose --name 'Sandman run-1: ' --model 'opus' --effort 'high' "$(cat .sandman/task.md)"`,
+			want: env + `claude -p --output-format stream-json --verbose --name 'Sandman run-1: ' --model 'opus' --effort 'high' < ".sandman/task.md"`,
 		},
 	}
 	for _, tt := range tests {

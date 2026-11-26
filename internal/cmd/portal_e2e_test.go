@@ -458,7 +458,8 @@ fast_test_wait() {
     sleep "$_duration"
 }
 
-case "$*" in
+# The prompt arrives on standard input; direct callers may pass it as an argument.
+case "$* $(cat)" in
   *"Implement GitHub issue #1"*)
     case "$PWD" in
       */.sandman/worktrees/*) : > "$PWD/` + fakeAgentStartedMarker + `" ;;
