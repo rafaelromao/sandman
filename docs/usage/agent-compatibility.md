@@ -39,7 +39,9 @@ no work item (reviews, the review quota probe and other prompt-only runs),
 Sandman also matches OpenCode's raw `type: "error"` usage-limit record, whatever
 status the command exits with, so the review daemon pauses even when a wrapper
 exits zero. Implementation runs do not wait for usage limits on a custom
-command.
+command. The record must start its own line: in a container, whose terminal
+merges stdout and stderr, a custom command should end its own messages with a
+newline.
 
 ## Model variants
 

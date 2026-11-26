@@ -50,5 +50,12 @@ A request that keeps failing costs one launch every ten minutes. After a repair,
 the retry can wait that long. Deleting one Run's `review-state.json` no longer
 gives a request a fresh count; editing the request comment does.
 
+Usage limits are matched per line. A container's terminal merges stdout and
+stderr before Sandman reads them, so output left unterminated immediately before
+a usage-limit line hides it, for built-in and custom commands alike; the launch
+then follows the ordinary path for its exit status. Recognising it would take
+searching inside lines, which quoted output could trigger, or a different
+container execution model.
+
 An agent that ends without writing a decision is not a recorded launch failure
 and is outside this decision.
