@@ -203,6 +203,31 @@ func (w RunWait) RecoverableAt(now time.Time) bool {
 		(w.OperationDeadline.IsZero() || now.Before(w.OperationDeadline))
 }
 
+const CICompletedDuringReviewKey = "ci_completed_during_review"
+
+func DaemonReviewWaitID(runID string) string {
+	return "daemon-review:" + runID
+}
+
+// ReconcileReviewAfterCI handles owner loss between a completed-CI observation
+// and its checkpoint. The observation proves the owner was live at that time,
+// not at discovery. Grace is anchored there and can never renew on reread.
+func ReconcileReviewAfterCI(record RunWait, state events.RunState) RunWait {
+	event := state.AwaitEvent
+	if state.IsTerminal() || !state.IsAwaiting() || state.IsCapacityQueued() || event == nil || event.Timestamp.IsZero() ||
+		record.RunID != state.RunID || record.BatchID != state.BatchID() ||
+		record.Issue != state.IssueNumber() || record.Branch != state.Branch() ||
+		record.OperationDeadline.IsZero() || record.OperationID != fmt.Sprintf("ci-wait-timeout:%d", record.OperationDeadline.Unix()) ||
+		event.Payload[CICompletedDuringReviewKey] != true || event.Payload["ci_wait"] != nil {
+		return record
+	}
+	record.OperationID, record.OperationDeadline = DaemonReviewWaitID(record.RunID), time.Time{}
+	if grace := event.Timestamp.Add(RunRecoveryGrace); grace.After(record.LeaseExpiresAt) {
+		record.LeaseExpiresAt = grace
+	}
+	return record
+}
+
 func safeWaitID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, `/\`)
 }
@@ -357,7 +382,7 @@ func waitRecoveryScheduleAt(layout paths.Layout, batch paths.BatchLocation, run 
 	}
 	record, err := ReadRunWaitAt(layout, batch, run.RunID)
 	if err == nil {
-		return record.RecoverableAt(now), true
+		return ReconcileReviewAfterCI(record, run).RecoverableAt(now), true
 	}
 	if !os.IsNotExist(err) {
 		return false, true

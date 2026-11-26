@@ -124,6 +124,9 @@ current AgentRun Task and is independent of the review daemon's reviewer
 AgentRun lifetime and lifecycle re-evaluation. Use
 `sandman config set review_timeout <seconds>` for repository policy or
 `sandman run --review-timeout <seconds>` for one run or continuation.
+For requests handled by the Sandman review daemon, a recorded reviewer quota
+pause stops the managed response clock. A successful probe resumes the same
+request with its remaining time, not a fresh timeout.
 
 While this request is active, the implementation AgentRun retains logical row
 ownership but releases the execution slot and container lease between

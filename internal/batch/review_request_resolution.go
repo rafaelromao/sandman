@@ -2,11 +2,8 @@ package batch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,9 +16,13 @@ type expiredReviewResolution struct {
 	reviewResolverLive bool
 }
 
-func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumber int, headSHA string, evidence map[string]any) expiredReviewResolution {
+func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumber int, headSHA string, evidence map[string]any, clock managedReviewDeadline) expiredReviewResolution {
 	request, ok := evidence["review_request"].(map[string]any)
-	if !ok || !reviewRequestHasExpired(request, prNumber, headSHA, s.runtimeNow()) {
+	now := clock.observedAt
+	if now.IsZero() {
+		now = s.runtimeNow()
+	}
+	if !ok || !reviewRequestHasExpired(request, prNumber, headSHA, now) {
 		return expiredReviewResolution{}
 	}
 
@@ -53,7 +54,7 @@ func (s *runSession) expiredReviewRequestResolution(ctx context.Context, prNumbe
 		resolution.reviewResolverLive = false
 		return resolution
 	}
-	if reviewQuotaPaused(s.deps.layout.ReviewsDir()) {
+	if clock.daemonPaused {
 		resolution.reviewResolverLive = true
 	}
 	return resolution
@@ -96,8 +97,8 @@ func reviewRequestHasExpired(request map[string]any, prNumber int, headSHA strin
 	if requestHead == "" || headSHA == "" || !strings.EqualFold(requestHead, strings.TrimSpace(headSHA)) {
 		return false
 	}
-	deadline, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"])
-	return ok && !now.Before(time.Unix(deadline, 0))
+	deadline, ok := reviewRequestOperationDeadline(request)
+	return ok && !now.Before(deadline)
 }
 
 func matchingReviewRun(run events.RunState, prNumber int, reviewBranch string) bool {
@@ -122,18 +123,4 @@ func reviewDaemonAccepting(socketPath string) bool {
 	}
 	_ = connection.Close()
 	return true
-}
-
-func reviewQuotaPaused(reviewsDir string) bool {
-	if strings.TrimSpace(reviewsDir) == "" {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(reviewsDir, "quota-pause.json"))
-	if err != nil {
-		return false
-	}
-	var pause struct {
-		Paused bool `json:"paused"`
-	}
-	return json.Unmarshal(data, &pause) == nil && pause.Paused
 }

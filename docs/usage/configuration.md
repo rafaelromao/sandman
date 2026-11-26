@@ -267,9 +267,9 @@ to delegated review. See [Reviews](reviews.md#blind-review-default).
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `review_timeout` | `1800` | Absolute wall-clock seconds allowed for one confirmed delegated PR review request. Values below `240` are rejected |
+| `review_timeout` | `1800` | Response budget in seconds for one confirmed delegated PR review request. Values below `240` are rejected |
 
-`review_timeout` governs only the implementor-side delegated review response budget. The deadline starts after a trigger is posted and confirmed; every later command, API call, sleep, and scheduling delay consumes that one absolute budget. A later confirmed trigger receives a fresh full budget, while retries and continuations of the same trigger reuse its original deadline. It does not change the review daemon's reviewer AgentRun lifetime, lifecycle re-evaluation, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads. Blind review has no timeout or polling window; a blind round is synchronous implementor-owned work.
+`review_timeout` governs only the implementor-side delegated review response budget. The budget starts when the trigger is confirmed. For a managed request serviced by the Sandman review daemon, recorded reviewer quota pauses do not count; standalone and other delegated reviewers keep a wall-clock deadline. A later confirmed trigger receives a fresh budget, while retries and continuations of the same trigger keep the remaining time. The setting does not change reviewer execution time, CI deadlines, implementation quota, idle timeout, or the review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads. Blind review has no timeout or polling window; a blind round is synchronous implementor-owned work.
 
 Delegated review and current-head CI waits retain logical row ownership but
 release the execution slot between observations. Review uses its confirmed

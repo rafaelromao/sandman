@@ -2,16 +2,14 @@ package review
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/reviewquota"
 )
 
 // claudeReviewUsageLimitResult uses the real Claude Code result framing (see
@@ -135,13 +133,9 @@ func TestReviewClaudeQuotaPauseClearsAfterCleanProbe(t *testing.T) {
 
 func readQuotaPauseFlag(t *testing.T, d *Daemon) bool {
 	t.Helper()
-	data, err := os.ReadFile(d.quotaPauseStatePath())
+	state, err := reviewquota.Read(d.reviewsDir())
 	if err != nil {
 		t.Fatalf("read quota-pause.json: %v", err)
-	}
-	var state quotaPauseState
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatalf("decode quota-pause.json %q: %v", strings.TrimSpace(string(data)), err)
 	}
 	return state.Paused
 }

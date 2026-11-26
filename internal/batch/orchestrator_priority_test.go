@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -692,8 +693,27 @@ func testManagedApprovalAdmission(t *testing.T, initialCI bool) {
 		t.Fatalf("start order = %v, want initial, independent, resumed implementation, dependent", starts)
 	}
 	logs := log.snapshot()
-	if countEventsByType(logs, "run.await") != 1 {
-		t.Fatalf("run.await events = %d, want exactly the delegated-review await", countEventsByType(logs, "run.await"))
+	var awaits []events.Event
+	for _, event := range logs {
+		if event.Type == "run.await" {
+			awaits = append(awaits, event)
+		}
+	}
+	wantAwaits := 1
+	if initialCI {
+		wantAwaits = 2
+	}
+	if len(awaits) != wantAwaits {
+		t.Fatalf("run.await events = %d, want %d", len(awaits), wantAwaits)
+	}
+	if initialCI {
+		before, after := awaits[0], awaits[1]
+		oldReview, _ := before.Payload["review_request"].(map[string]any)
+		newReview, _ := after.Payload["review_request"].(map[string]any)
+		if after.RunID != before.RunID || !payloadBoolValue(after.Payload, daemon.CICompletedDuringReviewKey) ||
+			after.Payload["ci_wait"] != nil || oldReview["trigger_id"] == nil || oldReview["trigger_id"] != newReview["trigger_id"] {
+			t.Fatalf("CI completion did not persist the same request without the CI deadline: before=%+v after=%+v", before, after)
+		}
 	}
 	if countEventsByType(logs, "run.continued") != 1 {
 		t.Fatalf("run.continued events = %d, want one automatic review-completion continuation", countEventsByType(logs, "run.continued"))

@@ -86,6 +86,35 @@ func TestRunWait_LegacyQuotaEstimateCannotShortenExistingRecoveryGrace(t *testin
 	}
 }
 
+func TestRunWait_CompletedCIObservationProtectsOwnerlessReviewUntilGrace(t *testing.T) {
+	now := time.Unix(1000, 0)
+	layout := paths.NewLayout(nil, t.TempDir())
+	batch := layout.LocateBatch("batch", "")
+	ciDeadline := now.Add(time.Minute)
+	record := RunWait{Protocol: "run-wait/v1", RunID: "row", BatchID: batch.ID, Issue: 42,
+		Branch: "42-fix", BaseBranch: "main", OperationID: "ci-wait-timeout:1060", OperationDeadline: ciDeadline}
+	if err := RenewRunWait(layout, batch, record, now); err != nil {
+		t.Fatal(err)
+	}
+	completedAt := now.Add(time.Second)
+	history := []events.Event{
+		{Type: "run.started", RunID: record.RunID, Issue: 42, Timestamp: now, Payload: map[string]any{"batch_id": batch.ID, "branch": record.Branch}},
+		{Type: "run.await", RunID: record.RunID, Issue: 42, Timestamp: completedAt, Payload: map[string]any{CICompletedDuringReviewKey: true}},
+	}
+	state := events.ProjectRunStates(history)[0]
+	if protected, suspended := waitRecoveryScheduleAt(layout, batch, state, ciDeadline.Add(time.Second)); !protected || !suspended {
+		t.Fatal("stale-run recovery would abort the active review at the old CI cutoff")
+	}
+	if protected, _ := waitRecoveryScheduleAt(layout, batch, state, completedAt.Add(RunRecoveryGrace)); protected {
+		t.Fatal("stale-run recovery renewed ownerless grace")
+	}
+	history[len(history)-1].Payload = nil
+	state = events.ProjectRunStates(history)[0]
+	if protected, _ := waitRecoveryScheduleAt(layout, batch, state, ciDeadline); protected {
+		t.Fatal("missing CI evidence was mistaken for affirmative CI completion")
+	}
+}
+
 func TestRunWait_ReadResolvedLocationUsesPublicBatchIdentity(t *testing.T) {
 	root := t.TempDir()
 	batchDir := filepath.Join(root, "relocated", "physical-name")

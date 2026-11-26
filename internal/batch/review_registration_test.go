@@ -351,7 +351,7 @@ func TestReviewRegistration_ImportsValidatedLegacyObservationOnce(t *testing.T) 
 	if evidence.outcome != retainedReviewApproval || evidence.payload == nil {
 		t.Fatalf("canonical lifecycle evidence = %#v, want current-head approval", evidence)
 	}
-	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("responded canonical observation remained an active request")
 	}
 }
@@ -575,6 +575,7 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToApproval(t *testing.T) 
 	session := &runSession{
 		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
 		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		opts:                   runSessionOptions{now: func() time.Time { return currentNow }},
 		reviewRegistrationNow:  func() time.Time { return currentNow },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
@@ -586,7 +587,7 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToApproval(t *testing.T) 
 	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
 		t.Fatalf("persist acknowledgement: %v", err)
 	}
-	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if !session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("acknowledgement ended the active review request")
 	}
 
@@ -609,6 +610,7 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) 
 	session := &runSession{
 		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
 		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 1800},
+		opts:                   runSessionOptions{now: func() time.Time { return currentNow }},
 		reviewRegistrationNow:  func() time.Time { return currentNow },
 		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
 	}
@@ -620,7 +622,7 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) 
 	if err := session.registerReviewRequest(context.Background(), workDir, pr, pr.HeadRefOid); err != nil {
 		t.Fatalf("persist acknowledgement: %v", err)
 	}
-	if !session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if !session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("acknowledgement ended the active review request")
 	}
 
@@ -630,7 +632,7 @@ func TestReviewRegistration_AdvancesPastAcknowledgementToFeedback(t *testing.T) 
 	if len(evidence.informalFeedback) == 0 || evidence.payload == nil {
 		t.Fatalf("later feedback evidence = %#v, want retained feedback", evidence)
 	}
-	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("actionable feedback remained an active review request")
 	}
 }
@@ -811,7 +813,7 @@ func TestRetainedLifecycleEvidence_ImportsLegacyWhenCanonicalIsAbsent(t *testing
 	if _, err := readFileReviewRegistration(canonicalPath); err != nil {
 		t.Fatalf("legacy evidence was not imported canonically: %v", err)
 	}
-	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("responded imported observation remained an active request")
 	}
 }
@@ -859,7 +861,7 @@ func TestRetainedLifecycleEvidence_RejectsInvalidLegacyWithoutCanonicalAuthority
 	if _, err := os.Stat(canonicalPath); !os.IsNotExist(err) {
 		t.Fatalf("invalid legacy evidence created canonical record, stat error = %v", err)
 	}
-	if session.confirmedReviewRequestActive(context.Background(), workDir, pr, pr.HeadRefOid) {
+	if session.retainedLifecycleEvidence(context.Background(), workDir, pr, pr.HeadRefOid).requestActive {
 		t.Fatal("invalid legacy evidence authorized an active request")
 	}
 }

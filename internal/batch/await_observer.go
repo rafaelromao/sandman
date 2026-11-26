@@ -135,6 +135,17 @@ func (e *runExecutor) persistObservedAwait(ctx context.Context, row RowSpec, ext
 func mergeRetainedAwaitEvidence(previous, observed map[string]any) map[string]any {
 	payload := cloneLifecycleExtras(observed)
 	for _, operation := range []string{"ci_wait", "review_request"} {
+		if operation == "ci_wait" && payloadBoolValue(observed, daemon.CICompletedDuringReviewKey) {
+			delete(payload, operation)
+			continue
+		}
+		if operation == "review_request" {
+			if _, expired := deferredReviewDiagnostic(observed); expired {
+				// An expired request is retained as diagnostics, never restored
+				// as an active deadline by partial evidence merging.
+				continue
+			}
+		}
 		if _, ok := awaitIdentitySignature(payload, operation); ok {
 			continue
 		}
@@ -161,6 +172,15 @@ func awaitOperationChanged(previous, observed map[string]any) bool {
 	observedRecovery, observedRecovering := githubRecoverySignature(observed)
 	if previousRecovering || observedRecovering {
 		return previousRecovering != observedRecovering || previousRecovery != observedRecovery
+	}
+	if _, retainedCI := previous["ci_wait"]; retainedCI && payloadBoolValue(observed, daemon.CICompletedDuringReviewKey) {
+		return true
+	}
+	if diagnostic, expired := deferredReviewDiagnostic(observed); expired {
+		oldDiagnostic, wasExpired := deferredReviewDiagnostic(previous)
+		if !wasExpired || payloadBoolValue(oldDiagnostic, liveReviewResolverKey) != payloadBoolValue(diagnostic, liveReviewResolverKey) {
+			return true
+		}
 	}
 	for _, key := range []string{ciRerunPrerequisiteKey, ciRerunActionKey} {
 		previousValue, previousOK := previous[key]
@@ -205,7 +225,7 @@ func awaitIdentitySignature(extras map[string]any, operation string) (string, bo
 	if !ok {
 		return "", false
 	}
-	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds"}
+	fields := []string{"pull_request", "head_sha", "execution_id", "trigger_id", "deadline_unix_seconds", reviewQuotaPausedKey, reviewEffectiveDeadlineKey}
 	signature := make(map[string]any, len(fields))
 	for _, key := range fields {
 		if field, present := value[key]; present {

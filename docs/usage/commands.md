@@ -101,7 +101,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--agent` | `agent` from config (`opencode`) | Agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); on `--continue` uses the current CLI/config value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240`. Blind review has no timeout |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the per-confirmed-request delegated review budget in seconds; minimum `240`. Blind review has no timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
@@ -124,7 +124,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
 - Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh
-- `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; each confirmed review trigger receives one full absolute deadline, while retries and continuations of that trigger keep the original deadline. Blind review has no delegated deadline.
+- `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`. Each confirmed review trigger receives a full budget; retries and continuations of the same trigger keep its remaining time. Recorded reviewer quota pauses do not count for managed Sandman-daemon requests. Blind review has no delegated deadline.
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 - `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
 
@@ -166,7 +166,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 | `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240`. Blind review has no timeout |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the per-confirmed-request delegated review budget in seconds; minimum `240`. Blind review has no timeout |
 
 ## `sandman clean`
 

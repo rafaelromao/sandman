@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -56,6 +57,10 @@ type retainedReviewEvidence struct {
 	informalFeedback []informalFeedbackEvidence
 	payload          map[string]any
 	stateError       bool
+	requestActive    bool
+	clock            managedReviewDeadline
+	diagnostics      map[string]any
+	diagnosticErr    error
 }
 
 // mergedMergeFacts holds the merge-intent facts the adapter gathers from the
@@ -724,12 +729,11 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			// worth evaluating. This is admission filtering only: it does not
 			// select an action; the full decision below remains authoritative
 			// whenever an active operation or retained evidence is present.
-			reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 			evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
 			if s.blindReviewMode() {
 				evidence = blindEvidence
 			}
-			if !reviewRequested && !ciActive(pr, headSHA) &&
+			if !evidence.requestActive && !ciActive(pr, headSHA) &&
 				!strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") &&
 				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "DIRTY") &&
 				!strings.EqualFold(strings.TrimSpace(pr.MergeStateStatus), "CONFLICTING") &&
@@ -877,15 +881,18 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 	// external operation even before the review run starts. Gather it here,
 	// after verified outcomes have resolved, so idle gates cannot borrow a
 	// wait from it and verified completion never pays for the lookup.
-	reviewRequested := s.confirmedReviewRequestActive(ctx, workDir, pr, headSHA)
 	evidence := s.retainedLifecycleEvidence(ctx, workDir, pr, headSHA)
 	if s.blindReviewMode() {
 		evidence = blindEvidence
 	}
+	reviewDiagnostics := evidence.diagnostics
+	if evidence.diagnosticErr != nil {
+		reviewDiagnostics = s.invalidRetainedReviewDiagnostic(branch, evidence.diagnosticErr)
+	}
 	if evidence.payload == nil {
 		evidence.payload = map[string]any{}
 	}
-	reviewResolution := s.expiredReviewRequestResolution(ctx, pr.Number, headSHA, evidence.payload)
+	reviewResolution := s.expiredReviewRequestResolution(ctx, pr.Number, headSHA, evidence.payload, evidence.clock)
 	if reviewResolution.expired {
 		evidence.payload = cloneLifecycleExtras(evidence.payload)
 		evidence.payload["review_run_observed"] = reviewResolution.reviewRunObserved
@@ -953,7 +960,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		repository:         repository,
 		mergeFacts:         mergeFacts,
 		retainedEvidence:   evidence,
-		reviewRequested:    reviewRequested,
+		reviewRequested:    evidence.requestActive,
 		reviewResolverLive: reviewResolution.reviewResolverLive,
 		attemptStatus:      attemptStatus,
 		afterAgentAttempt:  afterAgentAttempt,
@@ -980,7 +987,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			// CI repair or merge-conflict action. Its wait bound is diagnostic.
 			delete(deadlines, "review_request")
 		}
-		if deadline, gate, bounded := lifecycleDeadline(deadlines); bounded && !s.runtimeNow().Before(deadline) {
+		if deadline, gate, bounded := lifecycleDeadline(deadlines); bounded && !s.deadlineObservationTime(gate, evidence.clock).Before(deadline) {
 			expiredGate := gate
 			deferExpiredOperation := false
 			switch gate {
@@ -1023,7 +1030,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 				deadlines["next_action"] = lifecycleDeadlineNextAction(gate)
 				deadlines["pull_request"] = pr.Number
 				deadlines["head_sha"] = headSHA
-				deadlines = mergeLifecycleDiagnostics(deadlines, s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA))
+				deadlines = mergeLifecycleDiagnostics(deadlines, reviewDiagnostics)
 				deadlineVerdict := lifecycleVerdict{Action: lifecycleResume, Evidence: deadlines}
 				if gate == gateReviewTimeout {
 					// Only the terminal outcome is decided here; on a hold,
@@ -1057,9 +1064,7 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 			// Terminal failures keep the retained diagnostics as evidence.
 			// They never carry "gate" or "await", so a finished event
 			// cannot look like a wait.
-			if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
-				failureExtras = mergeLifecycleDiagnostics(failureExtras, diagnostics)
-			}
+			failureExtras = mergeLifecycleDiagnostics(failureExtras, reviewDiagnostics)
 			if decision.cause == causeExpired && decision.gate == lifecycleGate(gateReviewTimeout) {
 				if reviewResolution.expired {
 					failureExtras["review_run_observed"] = reviewResolution.reviewRunObserved
@@ -1086,21 +1091,28 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		return lifecycleVerdict{}
 	}
 	extras := decision.extras
-	if diagnostics := s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA); len(diagnostics) > 0 {
-		extras = mergeLifecycleDiagnostics(extras, diagnostics)
-	}
+	extras = mergeLifecycleDiagnostics(extras, reviewDiagnostics)
 	if extras == nil {
 		extras = map[string]any{"gate": string(decision.gate), "await": true}
 	}
 	if deferredDeadlineGate != "" {
 		diagnostic := map[string]any{"gate": deferredDeadlineGate}
-		if refreshed, ok := extras["review_request"]; ok {
-			diagnostic["evidence"] = refreshed
+		if request, ok := extras["review_request"].(map[string]any); ok {
+			retained := cloneLifecycleExtras(request)
+			for key, value := range deferredDeadlineEvidence {
+				retained[key] = value
+			}
+			diagnostic["evidence"] = retained
 			delete(extras, "review_request")
 		} else if deferredDeadlineEvidence != nil {
 			diagnostic["evidence"] = cloneLifecycleExtras(deferredDeadlineEvidence)
 		}
-		extras["expired_operation_diagnostic"] = diagnostic
+		// The live resolver authorizes observation, not another response
+		// budget. Keep it with the expired identity, outside deadline selection.
+		if reviewResolution.reviewResolverLive {
+			diagnostic[liveReviewResolverKey] = true
+		}
+		extras[expiredOperationKey] = diagnostic
 	}
 	if decision.action == lifecycleResume {
 		// Live typed remediation outranks retained review labels.
@@ -1122,6 +1134,15 @@ func (s *lifecycleObserver) decideLifecycleForAttempt(ctx context.Context, workD
 		}
 		extras["next_action"] = nextAction
 		return lifecycleVerdict{Action: lifecycleResume, Evidence: extras}
+	}
+	if decision.action == lifecycleAwait && unresolvedDaemonReviewRequest(extras) &&
+		strings.EqualFold(strings.TrimSpace(pr.State), "open") && strings.TrimSpace(headSHA) != "" &&
+		strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(headSHA)) &&
+		strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "success") && !ciActive(pr, headSHA) {
+		// Distinguish a completed CI operation from an observation that
+		// could not refresh it. The durable await also retires its lease cap.
+		delete(extras, "ci_wait")
+		extras[daemon.CICompletedDuringReviewKey] = true
 	}
 	return lifecycleVerdict{
 		Action: decision.action, Evidence: extras,
@@ -1333,11 +1354,7 @@ func lifecycleReviewRequestDeadline(extras map[string]any) (time.Time, bool) {
 	if resolved {
 		return time.Time{}, false
 	}
-	seconds, ok := lifecycleDeadlineSeconds(request["deadline_unix_seconds"])
-	if !ok {
-		return time.Time{}, false
-	}
-	return time.Unix(seconds, 0), true
+	return reviewRequestOperationDeadline(request)
 }
 
 func lifecycleCIWaitDeadline(extras map[string]any) (time.Time, bool) {

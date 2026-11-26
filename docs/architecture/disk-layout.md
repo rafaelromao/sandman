@@ -37,7 +37,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── reviews/
 │   ├── review-prompt.md                # scaffold (init only)
 │   ├── quality-rules.md                # scaffold (init only)
-│   ├── quota-pause.json                # review quota recovery gate (atomic-rename)
+│   ├── quota-pause.json                # review quota gate and recorded pause intervals (atomic-rename)
 │   ├── health-repair.json              # health-repair episode evidence and budget (atomic-rename)
 │   ├── health-repair.json.lock         # serializes health-repair evidence updates
 │   ├── claims/                         # health-repair launch claim
@@ -157,7 +157,7 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | `sandman clean` (retained with Run) | per AgentRun |
 | `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
-| `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (usage-limit review failure / probe, for OpenCode and Claude Code review agents) | review daemon (startup / tick) | review daemon (cleared after a successful probe) | provider-wide quota recovery |
+| `reviews/quota-pause.json` | runtime, atomic-rename | review daemon (usage-limit review failure / probe, for OpenCode and Claude Code review agents) | review daemon (startup / tick), managed review observer | active pause closes on a successful probe; completed intervals are retained | provider-wide quota recovery |
 | `reviews/health-repair.json` (+ `.lock`) | runtime, atomic-rename under a permanent lock file | review daemon health recovery | review daemon (repair admission, budget, paused outcome) | review daemon (record resets once every failed operation succeeds) | per failure episode; each repair itself is a modifying prompt-only Run on the host under `batches/<repair-run-id>/`, unlike read-only reviewers |
 | `reviews/claims/` | runtime, launch claim | review daemon health recovery | review daemon (one health repair at a time) | released when repair supervision ends | per health repair |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
