@@ -1290,6 +1290,23 @@ func (d *Daemon) agentOverrideChangesPreset() bool {
 	return d.agentPreset(override) != d.agentPreset(d.Config.EffectiveReviewAgent())
 }
 
+// warnCustomCommand names what a review agent loses by replacing its built-in
+// preset's command: everything Sandman does to a launch beyond running it.
+func (d *Daemon) warnCustomCommand(name string, agent config.Agent) {
+	preset, ok := config.BuiltInAgentPresets[agent.Preset]
+	if !ok || agent.Command == preset.Command {
+		return
+	}
+	lost := "Sandman adds no model or variant flags, selects no session, does not parse its output, and implementation runs on it do not wait for usage limits"
+	if preset.CredentialEnv != "" {
+		lost += "; its credentials are neither passed through nor reconciled"
+	}
+	if len(preset.PermissionModes) > 0 {
+		lost += "; it takes no permission_mode"
+	}
+	d.logf("warning: review agent %q runs a custom command under the %s preset: %s. Keep the command's own model in step with review_model and review_variant, or remove `command` to use the built-in one", name, agent.Preset, lost)
+}
+
 func (d *Daemon) agentPreset(name string) string {
 	agent, err := d.Config.ResolveAgentProvider(strings.TrimSpace(name))
 	if err != nil {
@@ -1496,6 +1513,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.logf("review agent validation failed: %v", err)
 			return err
 		}
+		d.warnCustomCommand(effectiveAgent, agentCfg)
 	}
 
 	if d.Trigger == nil {

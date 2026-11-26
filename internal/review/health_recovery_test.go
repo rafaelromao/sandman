@@ -507,6 +507,7 @@ func TestDaemonHealthRepairPromptStatesScope(t *testing.T) {
 		"events.jsonl",
 		"If an action or verification step is not permitted, do not retry it",
 		"report the exact command or change for the operator",
+		"Do not add or change `command` for an agent on a built-in preset (claude, opencode, opencode-v2)",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
