@@ -67,19 +67,19 @@ const failureBackoffBase = 10 * time.Second
 
 // failureBackoffCap is the ceiling of the launch-failure backoff
 // schedule. Once an attempt's computed backoff exceeds the cap, the
-// cap is used for that attempt and every subsequent attempt. Issue
-// #2210.
-const failureBackoffCap = 60 * time.Second
+// cap is used for that attempt and every subsequent attempt. There is
+// no attempt limit, so the cap is what bounds the cost of a request
+// that keeps failing.
+const failureBackoffCap = 10 * time.Minute
 
-// nextFailureBackoff returns the backoff duration to sleep before
-// the next launch attempt for a commentID that has failed `attempts`
-// times in this daemon lifetime. Schedule:
+// nextFailureBackoff returns the backoff duration to wait before the
+// next launch attempt for a request revision that has failed
+// `attempts` times, across Runs and daemon restarts. Schedule:
 //
 //	attempt 1 → 10s
-//	attempt 2 → 20s
-//	attempt 3 → 40s
-//	attempt 4 → 60s (cap reached)
-//	attempt 5+ → 60s
+//	attempt 2 → 20s, doubling up to
+//	attempt 6 → 320s
+//	attempt 7+ → 10m (cap)
 //
 // attempts < 1 returns 0 so callers can pass raw counters without
 // pre-checking. The bit-shift overflow check (d <= 0) closes the
@@ -234,11 +234,16 @@ type Daemon struct {
 	// at construction by loadSeenCache alongside the seen cache;
 	// updated by recordLaunchFailure (write) and by MarkSeen
 	// "success" via the success-clears-stamp branch.
-	nextAttempt   map[int]map[string]time.Time
-	nextAttemptMu sync.RWMutex
-	slotTable     map[int]struct{}
-	slotPool      chan struct{}
-	slotMu        sync.Mutex
+	nextAttempt map[int]map[string]time.Time
+	// launchAttempts is the failed-launch count per (prNumber, commentID).
+	// Every launch writes its own review-state.json, so the count that
+	// drives the backoff is carried here, across Runs. nextAttemptMu
+	// guards both maps.
+	launchAttempts map[int]map[string]int
+	nextAttemptMu  sync.RWMutex
+	slotTable      map[int]struct{}
+	slotPool       chan struct{}
+	slotMu         sync.Mutex
 	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
 	// Outer key is PR number; inner key is the trigger comment ID.
 	// Each entry remembers the absolute directory containing the
@@ -407,8 +412,9 @@ func (d *Daemon) enterQuotaPause(prNumber int, commentID string, state *ReviewSt
 	}
 	d.quotaMu.Unlock()
 	if state != nil {
-		attempts := ReadFailureAttempts(state, commentID) + 1
-		_ = state.MarkSeenWithBudget(commentID, "failure", attempts, until)
+		// A usage limit is not a launch failure of this request: it has its
+		// own schedule and does not advance the backoff count.
+		_ = state.MarkSeenWithBudget(commentID, "failure", d.carriedLaunchAttempts(commentID, state), until)
 	}
 	d.SetNextAttemptAt(prNumber, commentID, until)
 }
@@ -790,6 +796,53 @@ func (d *Daemon) SetNextAttemptAt(prNumber int, commentID string, stamp time.Tim
 	d.nextAttempt[prNumber][commentID] = stamp
 }
 
+// hydrateRetryLocked folds one persisted record into the retry state of its
+// request revision, which has a record in every Run that launched it. The
+// record with the highest attempt count supplies the count and the
+// next-attempt time, and equal counts keep the later time, so a record without
+// a count (such as "pending") never resets either. Callers hold nextAttemptMu.
+func (d *Daemon) hydrateRetryLocked(prNumber int, sc batchindex.SeenComment) {
+	var stamp time.Time
+	if sc.NextAttemptAt != nil {
+		stamp = *sc.NextAttemptAt
+	}
+	carried := d.launchAttempts[prNumber][sc.CommentID]
+	switch {
+	case sc.Attempts < carried:
+		return
+	case sc.Attempts > carried:
+		d.setLaunchAttemptsLocked(prNumber, sc.CommentID, sc.Attempts)
+	case !stamp.After(d.nextAttempt[prNumber][sc.CommentID]):
+		return
+	}
+	if stamp.IsZero() {
+		delete(d.nextAttempt[prNumber], sc.CommentID)
+		return
+	}
+	if d.nextAttempt[prNumber] == nil {
+		d.nextAttempt[prNumber] = map[string]time.Time{}
+	}
+	d.nextAttempt[prNumber][sc.CommentID] = stamp
+}
+
+func (d *Daemon) setLaunchAttemptsLocked(prNumber int, commentID string, attempts int) {
+	if d.launchAttempts == nil {
+		d.launchAttempts = map[int]map[string]int{}
+	}
+	if d.launchAttempts[prNumber] == nil {
+		d.launchAttempts[prNumber] = map[string]int{}
+	}
+	d.launchAttempts[prNumber][commentID] = attempts
+}
+
+// carriedLaunchAttempts is the failed-launch count of a request revision: the
+// highest of the count carried across Runs and the one this Run's store holds.
+func (d *Daemon) carriedLaunchAttempts(commentID string, state *ReviewStateStore) int {
+	d.nextAttemptMu.RLock()
+	defer d.nextAttemptMu.RUnlock()
+	return max(d.launchAttempts[state.PR()][commentID], ReadFailureAttempts(state, commentID))
+}
+
 // peekPendingPost reports the rehydrate post entry for
 // (prNumber, commentID), if any. The slice-A/B/C/D/E regression
 // tests use this to observe the in-memory map without depending
@@ -822,6 +875,7 @@ func (d *Daemon) loadSeenCache() error {
 	d.nextAttemptMu.Lock()
 	defer d.nextAttemptMu.Unlock()
 	d.nextAttempt = map[int]map[string]time.Time{}
+	d.launchAttempts = map[int]map[string]int{}
 
 	indexPath := daemon.BatchesIndexPath(d.BaseDir)
 	indexBefore, err := snapshotFile(indexPath)
@@ -898,12 +952,7 @@ func (d *Daemon) loadSeenCache() error {
 				}
 				d.seenCache[entry.PR][sc.CommentID] = true
 			}
-			if sc.NextAttemptAt != nil && !sc.NextAttemptAt.IsZero() {
-				if _, ok := d.nextAttempt[entry.PR]; !ok {
-					d.nextAttempt[entry.PR] = map[string]time.Time{}
-				}
-				d.nextAttempt[entry.PR][sc.CommentID] = *sc.NextAttemptAt
-			}
+			d.hydrateRetryLocked(entry.PR, sc)
 		}
 	}
 	d.replaceSeenFileSnapshots(indexSnapshot, stateSnapshots, commentPaths)
@@ -1884,6 +1933,17 @@ func (d *Daemon) reconcileCommentRevisionCache(prNumber int, commentID, key stri
 	d.seenCacheMu.Unlock()
 
 	d.nextAttemptMu.Lock()
+	if counts := d.launchAttempts[prNumber]; counts != nil {
+		if count, ok := counts[commentID]; ok {
+			delete(counts, commentID)
+			counts[key] = max(counts[key], count)
+		}
+		for candidate := range counts {
+			if candidate != key && isCommentRevision(commentID, candidate) {
+				delete(counts, candidate)
+			}
+		}
+	}
 	if attempts := d.nextAttempt[prNumber]; attempts != nil {
 		if stamp, ok := attempts[commentID]; ok {
 			delete(attempts, commentID)
@@ -2906,12 +2966,15 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("comment %s: ctx cancelled before launch failure recorded; leaving status untouched (issue #1846)", commentID)
 		return cerr
 	}
-	attempts := ReadFailureAttempts(state, commentID) + 1
+	attempts := d.carriedLaunchAttempts(commentID, state) + 1
 	backoff := d.effectiveLaunchBackoff(attempts)
 	stamp := d.now().Add(backoff)
 	if err := state.MarkSeenWithBudget(commentID, "failure", attempts, stamp); err != nil {
 		d.logf("mark %s failure (attempts=%d, nextAttemptAt=%v): %v", commentID, attempts, stamp, err)
 	}
+	d.nextAttemptMu.Lock()
+	d.setLaunchAttemptsLocked(state.PR(), commentID, attempts)
+	d.nextAttemptMu.Unlock()
 	d.SetNextAttemptAt(state.PR(), commentID, stamp)
 	d.logf("review launch failed for PR #%d request %s (attempt %d): %s; retrying at %s",
 		state.PR(), commentID, attempts, summarizeOperationError(cause), stamp.UTC().Format(time.RFC3339))
