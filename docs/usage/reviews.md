@@ -178,6 +178,18 @@ says why. `sandman attach` streams the same daemon lines from another terminal.
 Errors remain visible on stderr. Locally repairable failures are also kept in
 `.sandman/reviews/health-repair.json`.
 
+A failed launch is retried after 10 seconds, then 20, doubling up to 10 minutes.
+The count belongs to the request comment as it currently reads: it carries
+across launches and daemon restarts, and editing the comment starts it over.
+There is no attempt limit. A reviewer usage limit instead pauses all launches
+and probes every ten minutes without advancing the count.
+
+At start the daemon warns when the review agent runs a custom `command` under a
+built-in preset, because Sandman then adds no model flags and does not parse the
+output. With a custom OpenCode command the daemon still pauses on a usage limit
+the command prints as OpenCode's raw error record; see
+[Agent Compatibility](agent-compatibility.md).
+
 ### Architectural review and escalation
 
 The reviewer reads the current diff in its review worktree. The daemon supplies
@@ -322,6 +334,10 @@ not on the daemon's `PATH` or it is not authenticated there, is recorded as
 `.sandman/batches/<repair-run-id>/runs/<repair-run-id>/` (the daemon log names
 the repair Run ID), not in the daemon log itself. It counts toward the three
 repairs of the episode.
+
+The repair agent is also told not to add or change the `command` of an agent on
+a built-in preset: that would silently remove model flags, session selection,
+output parsing and usage-limit handling. It reports the change for you instead.
 
 Whatever the repair did, the daemon retries the original operation through its
 normal path. If review launches fail with `mise: not found`, see

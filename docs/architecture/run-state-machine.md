@@ -507,7 +507,8 @@ queued/await intent until admission is permitted.
 
 Reviewer quota recovery retains its daemon-wide fixed ten-minute schedule;
 implementation provider reset evidence does not affect reviewer scheduling.
-Reviewer launch failures retain the existing 10/20/40/60-second capped backoff,
+Reviewer launch failures back off from 10 seconds, doubling to a 10-minute cap,
+counted per request revision across Runs and daemon restarts, and keep
 request/head advisory artifact claims, and durable single-publication recovery,
 without a cumulative three-launch gate or a new reviewer request-age cutoff.
 The daemon records the start of a quota pause and closes it atomically on a

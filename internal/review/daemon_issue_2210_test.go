@@ -44,8 +44,8 @@ func (f *failureRunner) RepoName(ctx context.Context) (string, error) {
 //	attempt 1 → 10s
 //	attempt 2 → 20s
 //	attempt 3 → 40s
-//	attempt 4 → 60s (cap reached)
-//	attempt 5+ → 60s
+//	attempt 4 → 80s, doubling up to
+//	attempt 7+ → 10m (cap)
 func TestNextFailureBackoff_Schedule(t *testing.T) {
 	cases := []struct {
 		attempts int
@@ -56,11 +56,12 @@ func TestNextFailureBackoff_Schedule(t *testing.T) {
 		{1, 10 * time.Second},
 		{2, 20 * time.Second},
 		{3, 40 * time.Second},
-		{4, 60 * time.Second}, // cap reached
-		{5, 60 * time.Second},
-		{6, 60 * time.Second},
-		{20, 60 * time.Second},
-		{63, 60 * time.Second}, // bit-shift overflow guard
+		{4, 80 * time.Second},
+		{5, 160 * time.Second},
+		{6, 320 * time.Second},
+		{7, 10 * time.Minute}, // cap reached
+		{20, 10 * time.Minute},
+		{63, 10 * time.Minute}, // bit-shift overflow guard
 	}
 	for _, tc := range cases {
 		got := nextFailureBackoff(tc.attempts)
@@ -78,8 +79,8 @@ func TestFailureBackoffConstants_Pinned(t *testing.T) {
 	if failureBackoffBase != 10*time.Second {
 		t.Errorf("failureBackoffBase = %v, want 10s", failureBackoffBase)
 	}
-	if failureBackoffCap != 60*time.Second {
-		t.Errorf("failureBackoffCap = %v, want 60s", failureBackoffCap)
+	if failureBackoffCap != 10*time.Minute {
+		t.Errorf("failureBackoffCap = %v, want 10m", failureBackoffCap)
 	}
 }
 
@@ -247,37 +248,22 @@ func TestDaemon_LaunchFailureBackoff_RegressionFiveFailures(t *testing.T) {
 		}
 	}
 
-	// The latest review-state.json carries the post-increment
-	// attempts counter from the most recent failure — recordLaunchFailure
-	// writes attempts=1 on each fresh launch's first failure. Per-launch
-	// persistence is the contract; cross-launch / cross-restart
-	// persistence is covered by #2211's gate.
-	statePath := locateReviewStatePath(t, dir)
-	if statePath == "" {
-		t.Fatalf("expected review-state.json to exist after %d ticks, got none in %s", expectedAttempts, dir)
+	// Each launch writes its own review-state.json, and the attempt
+	// count carries across them.
+	paths, err := filepath.Glob(filepath.Join(dir, "batches", "*", "runs", "*", "review-state.json"))
+	if err != nil || len(paths) != expectedAttempts {
+		t.Fatalf("review states = %v (%v), want %d", paths, err, expectedAttempts)
 	}
-	cs, err := NewReviewStateStore(statePath, prNumber, nil)
-	if err != nil {
-		t.Fatalf("reload review state: %v", err)
-	}
-	if got := ReadFailureAttempts(cs, commentID); got != 1 {
-		t.Errorf("ReadFailureAttempts after five failures = %d, want historical per-launch count 1", got)
-	}
-
-	// The production schedule (read via the public helper) must
-	// match the AC table for the recorded attempt counts.
-	wantSchedule := []time.Duration{
-		10 * time.Second,
-		20 * time.Second,
-		40 * time.Second,
-		60 * time.Second,
-		60 * time.Second,
-	}
-	for i, want := range wantSchedule {
-		got := nextFailureBackoff(i + 1)
-		if got != want {
-			t.Errorf("nextFailureBackoff(%d) = %v, want %v", i+1, got, want)
+	highest := 0
+	for _, path := range paths {
+		cs, err := NewReviewStateStore(path, prNumber, nil)
+		if err != nil {
+			t.Fatalf("reload review state: %v", err)
 		}
+		highest = max(highest, ReadFailureAttempts(cs, commentID))
+	}
+	if highest != expectedAttempts {
+		t.Errorf("highest recorded attempts = %d, want %d", highest, expectedAttempts)
 	}
 }
 

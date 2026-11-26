@@ -44,7 +44,7 @@ func (r productionHealthRunner) RunBatch(context.Context, batch.Request) (*batch
 func TestDaemonHealthRepairStrandedFailureLaunchesRealIndependentAdapter(t *testing.T) {
 	dir := testenv.MkdirShort(t, "health-host-")
 	t.Chdir(dir) // No git repository: repair must not require ordinary preparation.
-	if err := os.WriteFile("opencode", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > repaired-launch.txt\n"), 0755); err != nil {
+	if err := os.WriteFile("opencode", []byte("#!/bin/sh\n{ printf '%s\\n' \"$@\"; cat; } > repaired-launch.txt\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -507,6 +507,7 @@ func TestDaemonHealthRepairPromptStatesScope(t *testing.T) {
 		"events.jsonl",
 		"If an action or verification step is not permitted, do not retry it",
 		"report the exact command or change for the operator",
+		"Do not add or change `command` for an agent on a built-in preset (claude, opencode, opencode-v2)",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)

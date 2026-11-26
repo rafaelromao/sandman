@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -318,6 +319,52 @@ func (d *usageLimitDetector) consume(text string, final bool) {
 			return
 		}
 	}
+}
+
+// usageLimitStreams applies one usage-limit rule to a launch's stdout and
+// stderr, framing each into lines on its own: a stream's last line may carry no
+// newline, and a shared buffer would join it with the other stream's output.
+// The zero value matches nothing.
+type usageLimitStreams struct {
+	stdout, stderr *usageLimitDetector
+}
+
+func newUsageLimitStreams(rule func(line string) bool, onTrigger func()) usageLimitStreams {
+	if rule == nil {
+		return usageLimitStreams{}
+	}
+	streams := usageLimitStreams{stdout: newUsageLimitDetector(rule), stderr: newUsageLimitDetector(rule)}
+	streams.stdout.setTrigger(onTrigger)
+	streams.stderr.setTrigger(onTrigger)
+	return streams
+}
+
+// Flush matches each stream's unterminated last line.
+func (s usageLimitStreams) Flush() {
+	if s.stdout != nil {
+		s.stdout.Flush()
+		s.stderr.Flush()
+	}
+}
+
+func (s usageLimitStreams) Triggered() bool {
+	return s.stdout != nil && (s.stdout.Triggered() || s.stderr.Triggered())
+}
+
+// opencodeUsageLimitRecord matches OpenCode's unparsed `--format json` error
+// record. Only the record's own error message counts: tool output and model
+// text that quote it sit inside records of other types. The record is the
+// line's leading JSON value, because a container's terminal can append other
+// output to a line the agent left unterminated.
+func opencodeUsageLimitRecord(line string) bool {
+	var record struct {
+		Type  string `json:"type"`
+		Error any    `json:"error"`
+	}
+	if json.NewDecoder(strings.NewReader(normalizeContextRolloverLine(line))).Decode(&record) != nil || record.Type != "error" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(messageValue(record.Error)), usageLimitLiteral)
 }
 
 // opencodeUsageLimitLine is the OpenCode usage-limit rule: the normalized

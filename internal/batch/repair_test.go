@@ -50,7 +50,7 @@ func TestRunRepairConfiguredAgentAndArtifacts(t *testing.T) {
 	if err := os.WriteFile(".sandman/task.md", []byte("parent task"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("opencode", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > repair-launch.txt\n"), 0755); err != nil {
+	if err := os.WriteFile("opencode", []byte("#!/bin/sh\n{ printf '%s\\n' \"$@\"; cat; } > repair-launch.txt\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -256,7 +256,7 @@ func TestRunRepairTaskPromptKeepsTemplateBracesLiteral(t *testing.T) {
 	if err := os.MkdirAll(".sandman", 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("opencode", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > literal-launch.txt\n"), 0755); err != nil {
+	if err := os.WriteFile("opencode", []byte("#!/bin/sh\n{ printf '%s\\n' \"$@\"; cat; } > literal-launch.txt\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

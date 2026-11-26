@@ -479,7 +479,7 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
 
-	want := `opencode run --format json -m gpt-4.1 "$(cat .sandman/task.md)"`
+	want := `opencode run --format json -m gpt-4.1 < ".sandman/task.md"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}
@@ -548,7 +548,7 @@ func TestAgentRun_RunQuotesOpaqueVariantAsOneArgument(t *testing.T) {
 	if res.Status != "success" {
 		t.Fatalf("expected success, got %s", res.Status)
 	}
-	want := `opencode run --format json --variant ` + shellenv.Quote(run.variant) + ` "$(cat .sandman/task.md)"`
+	want := `opencode run --format json --variant ` + shellenv.Quote(run.variant) + ` < ".sandman/task.md"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
 	}

@@ -116,7 +116,7 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run --format json -m gpt-4.1 "$(cat .sandman/task.md)"`
+	want := `opencode run --format json -m gpt-4.1 < ".sandman/task.md"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -130,7 +130,7 @@ func TestRenderCommand_IncludesQuotedVariantFlagForBuiltInPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run --format json --variant 'provider/foo bar' "$(cat .sandman/task.md)"`
+	want := `opencode run --format json --variant 'provider/foo bar' < ".sandman/task.md"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -154,7 +154,7 @@ func TestRenderCommand_BuiltInPreset_WithSessionName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `opencode run --format json --title 'Sandman run-42-1712345678901: ' "$(cat .sandman/task.md)"`
+	want := `opencode run --format json --title 'Sandman run-42-1712345678901: ' < ".sandman/task.md"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -181,8 +181,8 @@ func TestRenderCommand_PlainCommandPassesThrough(t *testing.T) {
 
 func TestRenderCommand_BuiltInPresets(t *testing.T) {
 	presets := map[string]string{
-		"opencode": `opencode run --format json "$(cat .sandman/task.md)"`,
-		"claude":   `claude -p --output-format stream-json --verbose "$(cat .sandman/task.md)"`,
+		"opencode": `opencode run --format json < ".sandman/task.md"`,
+		"claude":   `claude -p --output-format stream-json --verbose < ".sandman/task.md"`,
 	}
 
 	for key, want := range presets {
@@ -215,20 +215,18 @@ func TestRenderCommand_ClaudePresetFlags(t *testing.T) {
 		data CommandData
 		want string
 	}{
-		{name: "prompt only", data: CommandData{PromptFile: "./.sandman/task.md"}, want: prefix + ` "$(cat ./.sandman/task.md)"`},
-		{name: "model", data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'sonnet'"}, want: prefix + ` --model 'sonnet' "$(cat .sandman/task.md)"`},
-		{name: "continue renders nothing", data: CommandData{PromptFile: ".sandman/task.md", ContinueFlag: true}, want: prefix + ` "$(cat .sandman/task.md)"`},
-		{name: "exact session", data: CommandData{PromptFile: ".sandman/task.md", SessionFlag: "'6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11'"}, want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' "$(cat .sandman/task.md)"`},
-		{name: "skip permissions", data: CommandData{PromptFile: ".sandman/task.md", DangerouslySkipPermissions: true}, want: prefix + ` --dangerously-skip-permissions "$(cat .sandman/task.md)"`},
-		{name: "session name", data: CommandData{PromptFile: ".sandman/task.md", SessionName: "Sandman 260925-abcd-42: "}, want: prefix + ` --name 'Sandman 260925-abcd-42: ' "$(cat .sandman/task.md)"`},
-		{name: "effort", data: CommandData{PromptFile: ".sandman/task.md", VariantFlag: "--effort 'max'"}, want: prefix + ` --effort 'max' "$(cat .sandman/task.md)"`},
-		// --allowedTools takes several values: a single-value option must follow
-		// it, or the prompt would be read as another tool rule.
-		{name: "permission scope before the prompt", data: CommandData{PromptFile: ".sandman/task.md", PermissionFlag: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"}, want: prefix + ` --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk "$(cat .sandman/task.md)"`},
+		{name: "prompt only", data: CommandData{PromptFile: "./.sandman/task.md"}, want: prefix + ` < "./.sandman/task.md"`},
+		{name: "model", data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'sonnet'"}, want: prefix + ` --model 'sonnet' < ".sandman/task.md"`},
+		{name: "continue renders nothing", data: CommandData{PromptFile: ".sandman/task.md", ContinueFlag: true}, want: prefix + ` < ".sandman/task.md"`},
+		{name: "exact session", data: CommandData{PromptFile: ".sandman/task.md", SessionFlag: "'6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11'"}, want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' < ".sandman/task.md"`},
+		{name: "skip permissions", data: CommandData{PromptFile: ".sandman/task.md", DangerouslySkipPermissions: true}, want: prefix + ` --dangerously-skip-permissions < ".sandman/task.md"`},
+		{name: "session name", data: CommandData{PromptFile: ".sandman/task.md", SessionName: "Sandman 260925-abcd-42: "}, want: prefix + ` --name 'Sandman 260925-abcd-42: ' < ".sandman/task.md"`},
+		{name: "effort", data: CommandData{PromptFile: ".sandman/task.md", VariantFlag: "--effort 'max'"}, want: prefix + ` --effort 'max' < ".sandman/task.md"`},
+		{name: "permission scope", data: CommandData{PromptFile: ".sandman/task.md", PermissionFlag: "--allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk"}, want: prefix + ` --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk < ".sandman/task.md"`},
 		{
 			name: "everything",
 			data: CommandData{PromptFile: ".sandman/task.md", ModelFlag: "--model 'opus'", VariantFlag: "--effort 'high'", DangerouslySkipPermissions: true, SessionName: "Sandman r: ", ContinueFlag: true, SessionFlag: "'6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11'"},
-			want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' --dangerously-skip-permissions --name 'Sandman r: ' --model 'opus' --effort 'high' "$(cat .sandman/task.md)"`,
+			want: prefix + ` --resume '6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11' --dangerously-skip-permissions --name 'Sandman r: ' --model 'opus' --effort 'high' < ".sandman/task.md"`,
 		},
 	}
 	for _, tt := range tests {

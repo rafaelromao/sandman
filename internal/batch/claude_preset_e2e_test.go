@@ -122,17 +122,21 @@ func TestRunBatch_ClaudePresetWorktreeEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve worktree: %v", err)
 	}
-	// "$(cat ...)" strips the Task file's trailing newlines, as any shell does.
-	prompt := strings.TrimRight(readFakeClaudeFile(t, stateDir, "launch-1.task"), "\n")
-	wantFirst := []string{"-p", "--output-format", "stream-json", "--verbose", "--name", "Sandman " + runID + ": ", "--model", "sonnet", prompt}
+	prompt := readFakeClaudeFile(t, stateDir, "launch-1.stdin")
+	if task := readFakeClaudeFile(t, stateDir, "launch-1.task"); prompt != task {
+		t.Fatalf("first launch stdin holds %d bytes, want the %d bytes of the Task", len(prompt), len(task))
+	}
+	wantFirst := []string{"-p", "--output-format", "stream-json", "--verbose", "--name", "Sandman " + runID + ": ", "--model", "sonnet"}
 	if got := readFakeClaudeArgs(t, stateDir, 1); !reflect.DeepEqual(got, wantFirst) {
 		t.Fatalf("first launch argv:\n got %q\nwant %q", got, wantFirst)
 	}
 	if !strings.Contains(prompt, "Reply with SMOKE_OK.\nKeep it short.") {
-		t.Fatalf("prompt argument = %q, want the rendered Task", prompt)
+		t.Fatalf("prompt on stdin = %q, want the rendered Task", prompt)
 	}
-	secondPrompt := strings.TrimRight(readFakeClaudeFile(t, stateDir, "launch-2.task"), "\n")
-	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--resume", "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11", "--name", "Sandman " + runID + ": ", "--model", "sonnet", secondPrompt}
+	if second, task := readFakeClaudeFile(t, stateDir, "launch-2.stdin"), readFakeClaudeFile(t, stateDir, "launch-2.task"); second != task {
+		t.Fatalf("quota continuation stdin holds %d bytes, want the %d bytes of the Task", len(second), len(task))
+	}
+	wantSecond := []string{"-p", "--output-format", "stream-json", "--verbose", "--resume", "6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11", "--name", "Sandman " + runID + ": ", "--model", "sonnet"}
 	if got := readFakeClaudeArgs(t, stateDir, 2); !reflect.DeepEqual(got, wantSecond) {
 		t.Fatalf("quota continuation argv:\n got %q\nwant %q", got, wantSecond)
 	}
@@ -193,6 +197,7 @@ for arg in "$@"; do printf '%s\0' "$arg"; done > "$state_dir/launch-$n.args"
 printf 'IS_SANDBOX=%s\nDISABLE_AUTOUPDATER=%s\nCLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=%s\nPWD=%s\n' \
   "${IS_SANDBOX:-}" "${DISABLE_AUTOUPDATER:-}" "${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-}" "$(pwd -P)" > "$state_dir/launch-$n.env"
 cp .sandman/task.md "$state_dir/launch-$n.task"
+cat > "$state_dir/launch-$n.stdin"
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"6f1c2a4e-0b7d-4c1a-9a55-2f0e8d3b7c11"}'
 if [ "$n" = 1 ]; then
   git rev-parse HEAD > "$state_dir/head"

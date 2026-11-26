@@ -1,5 +1,5 @@
 == builtin-defaults
-command[0]: opencode run --format json "$(cat .sandman/task.md)"
+command[0]: opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -10,7 +10,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-model-variant-session-name
-command[0]: opencode run --format json --title 'Sandman run-1: ' -m opencode/big-pickle --variant 'high effort' "$(cat .sandman/task.md)"
+command[0]: opencode run --format json --title 'Sandman run-1: ' -m opencode/big-pickle --variant 'high effort' < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -21,7 +21,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-dangerous-builtin-permission
-command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json --dangerously-skip-permissions "$(cat .sandman/task.md)"
+command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json --dangerously-skip-permissions < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -32,7 +32,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-safe-builtin-permission
-command[0]: export EXTRA_FLAG='value with space'; opencode run --format json "$(cat .sandman/task.md)"
+command[0]: export EXTRA_FLAG='value with space'; opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -43,7 +43,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-safe-custom-permission
-command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json "$(cat .sandman/task.md)"
+command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -61,21 +61,21 @@ context_exhausted: false
 session.json: <absent>
 run.log: [run-1] HH:MM:SS {"type":"text","sessionID":"ses-new","part":{"text":"working"}}
 == builtin-text-other-preset
-command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json "$(cat .sandman/task.md)"
+command[0]: export EXTRA_FLAG='value with space'; export OPENCODE_PERMISSION='{"external_directory":"allow"}'; opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
 session.json: <absent>
 run.log: [run-1] HH:MM:SS {"type":"text","sessionID":"ses-new","part":{"text":"working"}}
 == builtin-text-no-preset
-command[0]: opencode run --format json "$(cat .sandman/task.md)"
+command[0]: opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
 session.json: <absent>
 run.log: [run-1] HH:MM:SS {"type":"text","sessionID":"ses-new","part":{"text":"working"}}
 == builtin-reuse-prior-session
-command[0]: opencode run --format json --session 'ses-old' "$(cat .sandman/task.md)"
+command[0]: opencode run --format json --session 'ses-old' < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -86,7 +86,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-reuse-without-prior-session
-command[0]: opencode run --format json --continue "$(cat .sandman/task.md)"
+command[0]: opencode run --format json --continue < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -97,8 +97,8 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS working
 == builtin-reuse-missing-session-fallback
-command[0]: export TEST_ENV=test-value; opencode run --format json --session 'ses-old' "$(cat .sandman/task.md)"
-command[1]: export TEST_ENV=test-value; opencode run --format json --continue "$(cat .sandman/task.md)"
+command[0]: export TEST_ENV=test-value; opencode run --format json --session 'ses-old' < ".sandman/task.md"
+command[1]: export TEST_ENV=test-value; opencode run --format json --continue < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false
@@ -110,7 +110,7 @@ session.json: {
 run.log: [run-1] HH:MM:SS Error: Session not found
 run.log: [run-1] HH:MM:SS resumed
 == builtin-reuse-unrelated-failure
-command[0]: opencode run --format json --session 'ses-old' "$(cat .sandman/task.md)"
+command[0]: opencode run --format json --session 'ses-old' < ".sandman/task.md"
 status: failure
 usage_limit_reached: false
 context_exhausted: false
@@ -121,7 +121,7 @@ session.json: {
 }
 run.log: [run-1] HH:MM:SS Error: provider exploded
 == builtin-usage-limit
-command[0]: opencode run --format json "$(cat .sandman/task.md)"
+command[0]: opencode run --format json < ".sandman/task.md"
 status: failure
 usage_limit_reached: true
 context_exhausted: false
@@ -150,7 +150,7 @@ session.json: <absent>
 run.log: [run-1] HH:MM:SS {"type":"text","sessionID":"ses-new","part":{"text":"working"}}
 run.log: [run-1] HH:MM:SS Error: The usage limit has been reached
 == builtin-context-overflow
-command[0]: opencode run --format json "$(cat .sandman/task.md)"
+command[0]: opencode run --format json < ".sandman/task.md"
 status: failure
 usage_limit_reached: false
 context_exhausted: true
@@ -184,7 +184,7 @@ session.json: <absent>
 run.log: [run-1] HH:MM:SS Error: prompt is too long
 run.log: [run-1] HH:MM:SS Error: prompt is too long
 == builtin-malformed-output
-command[0]: opencode run --format json "$(cat .sandman/task.md)"
+command[0]: opencode run --format json < ".sandman/task.md"
 status: success
 usage_limit_reached: false
 context_exhausted: false

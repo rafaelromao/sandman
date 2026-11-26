@@ -266,7 +266,7 @@ func writeDependencyOverrideAgentShim(t *testing.T, dir, callsPath string) {
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
 issue=unknown
-case "$*" in
+case "$(cat)" in
   *"issue #42:"*) issue=42 ;;
   *"issue #100:"*) issue=100 ;;
 esac

@@ -139,6 +139,9 @@ func (claudeStrategy) ContextRolloverDetector([]string, func()) *contextRollover
 
 func (claudeStrategy) UsageLimitRule() func(string) bool { return claudeUsageLimitLine }
 
+// UsageLimitRecordRule is nil: a custom command keeps the line rule only.
+func (claudeStrategy) UsageLimitRecordRule() func(string) bool { return nil }
+
 func (s claudeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
 
 func (s claudeStrategy) UsageLimitResetAt(stdout, _ outputParser, now time.Time) time.Time {

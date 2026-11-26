@@ -169,6 +169,11 @@ The dedup invariants are unaffected: `shouldSkipDedupStatus` still returns true 
 
 ### Launch-failure backoff (issue #2210)
 
+> Amended by [ADR-0065](0065-deliver-prompts-on-stdin-and-bound-review-relaunch-loops.md):
+> the attempt count is carried per request revision across Runs, and the cap is
+> ten minutes rather than the 60 seconds below. Deleting one Run's
+> `review-state.json` no longer gives a request a fresh budget.
+
 The launch goroutine's failure path applies an exponential backoff before returning the per-PR slot, so a transient upstream failure (e.g. the opencode SDK returning HTTP 500 — `anomalyco/opencode#33766`, `#36688`) cannot drive a tight re-launch loop that mints a new RunID every polling tick.
 
 Schedule:
