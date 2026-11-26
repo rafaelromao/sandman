@@ -390,6 +390,14 @@ func (d *Daemon) enterQuotaPause(prNumber int, commentID string, state *ReviewSt
 	d.quotaMu.Lock()
 	if !d.quota.Paused {
 		d.quota.StartedAt = now
+		// Clock rollback must not create overlapping credited intervals.
+		// Only time past the last recorded recovery can be credited; a
+		// probe that recovers before that boundary closes without credit.
+		if n := len(d.quota.CompletedPauses); n > 0 {
+			if lastRecovery := d.quota.CompletedPauses[n-1].RecoveredAt; lastRecovery.After(now) {
+				d.quota.StartedAt = lastRecovery
+			}
+		}
 	}
 	d.quota.Paused = true
 	d.quota.PausedUntil = until

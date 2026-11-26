@@ -311,6 +311,45 @@ func TestReviewQuotaPauseSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestReviewQuotaClockRollbackDoesNotPoisonLaterRequests(t *testing.T) {
+	origin := time.Date(2026, 11, 25, 11, 0, 0, 0, time.UTC)
+	at := func(minute int) time.Time { return origin.Add(time.Duration(minute) * time.Minute) }
+	now := origin
+	d, _, baseDir := newDaemonForTest(t, &fakeGH{}, &quotaProbeRunner{}, &config.Config{})
+	d.Clock = func() time.Time { return now }
+	recordPause := func(daemon *Daemon, from, to int) {
+		now = at(from)
+		daemon.enterQuotaPause(42, "c1", nil)
+		now = at(to)
+		daemon.clearQuotaPause()
+	}
+	recordPause(d, -10, 0)
+	recordPause(d, -4, 6) // Only the time starting from minute 0 is unambiguous.
+	recordPause(d, 1, 5)  // No trustworthy time beyond the previous recovery.
+
+	restarted := New(baseDir, &fakeGH{}, &prompt.Engine{}, &quotaProbeRunner{}, &config.Config{}, &lockedBuffer{}, 0, false, nil)
+	restarted.Clock = func() time.Time { return now }
+	if err := restarted.loadQuotaPause(); err != nil {
+		t.Fatal(err)
+	}
+	recordPause(restarted, 19, 60)
+	state, err := reviewquota.Read(restarted.reviewsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ started, deadline, want int }{
+		{started: -12, deadline: 18, want: 75}, // 10 + 6 + 41 minutes, no double credit.
+		{started: 7, deadline: 37, want: 78},   // The later request gets its own 41 minutes.
+	} {
+		if got, paused := state.Clock(at(tc.started), at(tc.deadline), at(61)); paused || !got.Equal(at(tc.want)) {
+			t.Errorf("request started at %v: deadline %v, paused=%t; want %v", at(tc.started), got, paused, at(tc.want))
+		}
+	}
+	if len(state.CompletedPauses) != 3 || !state.CompletedPauses[1].StartedAt.Equal(at(0)) {
+		t.Fatalf("expected the rollback to create only the unambiguous interval: %+v", state.CompletedPauses)
+	}
+}
+
 func TestReviewOpenCodeDirectQuotaErrorDetection(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	for _, tt := range []struct {
