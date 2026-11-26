@@ -208,7 +208,7 @@ func (passthroughStrategy) ContextRolloverDetector([]string, func()) *contextRol
 }
 
 func (passthroughStrategy) UsageLimitRule(bool) func(string) bool { return nil }
-func (passthroughStrategy) AwaitsUsageLimit() bool            { return false }
+func (passthroughStrategy) AwaitsUsageLimit() bool                { return false }
 func (passthroughStrategy) UsageLimitResetAt(outputParser, outputParser, time.Time) time.Time {
 	return time.Time{}
 }
