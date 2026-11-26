@@ -26,7 +26,18 @@ Each preset's agent-specific behaviour (command flags, session reuse, output
 handling, and failure classification) is selected once per launch from the
 preset. A custom `command` under a built-in preset keeps that preset's failure
 classification and environment rules, but Sandman injects no model, variant, or
-session flags into it.
+session flags into it and does not parse its output.
+
+Every built-in command reads the Task on stdin (`< ".sandman/task.md"`), so a
+long prompt is not limited by Linux's 128 KiB maximum for one argument. A custom
+command should do the same with `< "{{.PromptFile}}"`. A `command` that spells
+out a preset's earlier built-in command, which passed the prompt as
+`"$(cat {{.PromptFile}})"`, still means the built-in command.
+
+A custom command under an OpenCode preset has no parser, so usage limits are
+recognised from its output as follows: review launches also match OpenCode's raw
+`type: "error"` record, which pauses the review daemon; implementation runs do
+not wait for usage limits on a custom command.
 
 ## Model variants
 
@@ -132,7 +143,7 @@ Restart OpenCode after installing it.
 The `claude` preset renders:
 
 ```text
-claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions | --permission-mode '<permission_mode>' | --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] "$(cat .sandman/task.md)"
+claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions | --permission-mode '<permission_mode>' | --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] < ".sandman/task.md"
 ```
 
 - `stream-json` with `--verbose` is the only print-mode format that streams while
@@ -327,12 +338,8 @@ agents:
     command: >-
       claude -p --output-format stream-json --verbose
       --allowedTools "Bash" "Edit" "Write" "Read" "Glob" "Grep"
-      --permission-mode dontAsk "$(cat {{.PromptFile}})"
+      --permission-mode dontAsk < "{{.PromptFile}}"
 ```
-
-`--allowedTools` takes several values, so end its list with another option, as
-`--permission-mode dontAsk` does here; otherwise Claude Code reads the prompt as
-one more tool rule.
 
 A custom command receives no `--model`, `--effort`, or `--continue` from Sandman;
 add `--model <alias>` to it directly.

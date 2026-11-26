@@ -136,6 +136,12 @@ agents:
     config_files: ["~/.my-agent/config.json"]
 ```
 
+A command receives the prompt's path as `{{.PromptFile}}`. To hand an agent the
+prompt text, redirect it on stdin (`my-agent < "{{.PromptFile}}"`): Linux limits
+one argument to 128 KiB. Setting `command` for a built-in preset replaces what
+Sandman does around the launch; see
+[Agent Compatibility](agent-compatibility.md).
+
 Each entry may set `command`, `model`, `preset`, `env`, `config_dirs`, `config_files`, `keychain_auth`, and `permission_mode`. `permission_mode` applies only to presets whose command line takes a permission mode (`claude`); see [Agent Compatibility > Permissions](agent-compatibility.md#permissions). When `preset` is set, the custom entry inherits the built-in preset's defaults before applying overrides. See `internal/config/config.go:Agents` and `ResolveAgentProvider`.
 
 Session reuse is a run-time choice rather than a configuration
@@ -283,7 +289,8 @@ three in-session lifecycle relaunches in addition to entry and configured ordina
 retries; old cumulative repair ledgers cannot prevent a fresh executor from acting.
 Standalone CI instead permits 60 minutes and three fixes per current head within
 one invocation, resetting on a new head or fresh invocation. Reviewer launch
-failures retain backoff and publication recovery without a three-launch gate;
+failures retain backoff (up to ten minutes) and publication recovery without a
+three-launch gate;
 the ten-pass review loop and configured request deadline retain their bounds.
 
 The request deadline belongs to one confirmed trigger. A feedback resume can
