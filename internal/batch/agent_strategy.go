@@ -159,10 +159,10 @@ func AwaitsUsageLimit(agentName string) bool {
 	return strategyForPreset(strings.TrimSpace(agentName)).AwaitsUsageLimit()
 }
 
-// IsUsageLimitOutput reports whether output contains the named agent's
-// usage-limit response under that agent's own detection rule. Callers that
-// receive an error instead of an AgentRunResult use this to preserve the same
-// detection boundary.
+// IsUsageLimitOutput reports whether the text of an error contains the named
+// agent's usage-limit response, for callers that receive an error instead of an
+// AgentRunResult. It applies the rule for error text; the raw records a review
+// launch also matches are classified on the launch's output.
 func IsUsageLimitOutput(agentName, output string) bool {
 	rule := strategyForPreset(strings.TrimSpace(agentName)).UsageLimitRule(false)
 	if rule == nil {

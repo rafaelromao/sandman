@@ -783,6 +783,10 @@ func (d *Daemon) NextAttemptAt(prNumber int, commentID string) time.Time {
 func (d *Daemon) SetNextAttemptAt(prNumber int, commentID string, stamp time.Time) {
 	d.nextAttemptMu.Lock()
 	defer d.nextAttemptMu.Unlock()
+	d.setNextAttemptAtLocked(prNumber, commentID, stamp)
+}
+
+func (d *Daemon) setNextAttemptAtLocked(prNumber int, commentID string, stamp time.Time) {
 	if d.nextAttempt == nil {
 		d.nextAttempt = map[int]map[string]time.Time{}
 	}
@@ -2992,8 +2996,8 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 	}
 	d.nextAttemptMu.Lock()
 	d.setLaunchAttemptsLocked(state.PR(), commentID, attempts)
+	d.setNextAttemptAtLocked(state.PR(), commentID, stamp)
 	d.nextAttemptMu.Unlock()
-	d.SetNextAttemptAt(state.PR(), commentID, stamp)
 	d.logf("review launch failed for PR #%d request %s (attempt %d): %s; retrying at %s",
 		state.PR(), commentID, attempts, summarizeOperationError(cause), stamp.UTC().Format(time.RFC3339))
 	return &reportedLaunchFailure{cause: cause}

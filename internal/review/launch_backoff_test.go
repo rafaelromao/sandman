@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -104,6 +105,11 @@ func TestDaemon_LaunchBackoffGrowsAcrossRunFoldersAndRestarts(t *testing.T) {
 		if i == 3 || i == 7 {
 			h.restart()
 		}
+		// failOnce proves no early relaunch only while a next-attempt time is
+		// known, so a restart or refresh must not lose it.
+		if i > 0 && h.d.NextAttemptAt(backoffPR, h.key()).IsZero() {
+			t.Fatalf("attempt %d: the next-attempt time was lost", i+1)
+		}
 		if got := h.failOnce(); got != delay {
 			t.Fatalf("attempt %d: delay = %v, want %v", i+1, got, delay)
 		}
@@ -150,6 +156,51 @@ func TestDaemon_LaunchBackoffKeepsTheCountOfALegacyRecord(t *testing.T) {
 	}
 	if got := h.d.NextAttemptAt(backoffPR, h.key()).Sub(h.now); got != 80*time.Second {
 		t.Fatalf("delay after migrating the legacy record = %v, want 80s", got)
+	}
+
+	// The migrated count stays with that revision: a later edit starts over.
+	h.gh.comments[backoffPR][0].UpdatedAt = h.now.Add(time.Minute)
+	h.restart()
+	if got := h.failOnce(); got != 10*time.Second {
+		t.Fatalf("delay of the next edit = %v, want the first step", got)
+	}
+}
+
+// The records of one request revision are read from many Runs in no fixed
+// order, so the merged count and next-attempt time must not depend on it.
+func TestDaemon_RetryStateDoesNotDependOnRecordOrder(t *testing.T) {
+	at := func(minute int) *time.Time {
+		stamp := time.Date(2026, 11, 26, 12, minute, 0, 0, time.UTC)
+		return &stamp
+	}
+	for _, tc := range []struct {
+		name     string
+		records  [2]batchindex.SeenComment
+		attempts int
+		next     *time.Time
+	}{
+		{"highest count supplies the time", [2]batchindex.SeenComment{{Attempts: 2, NextAttemptAt: at(30)}, {Attempts: 3, NextAttemptAt: at(10)}}, 3, at(10)},
+		{"a tie keeps the later time", [2]batchindex.SeenComment{{Attempts: 2, NextAttemptAt: at(1)}, {Attempts: 2, NextAttemptAt: at(10)}}, 2, at(10)},
+		{"a pending record resets nothing", [2]batchindex.SeenComment{{Attempts: 2, NextAttemptAt: at(1)}, {Status: "pending"}}, 2, at(1)},
+		{"an uncounted quota pause keeps its time", [2]batchindex.SeenComment{{Status: "pending"}, {NextAttemptAt: at(10)}}, 0, at(10)},
+	} {
+		for _, reversed := range []bool{false, true} {
+			records := tc.records
+			if reversed {
+				records[0], records[1] = records[1], records[0]
+			}
+			d := &Daemon{nextAttempt: map[int]map[string]time.Time{}, launchAttempts: map[int]map[string]int{}}
+			for _, record := range records {
+				record.CommentID = "c1"
+				d.hydrateRetryLocked(backoffPR, record)
+			}
+			if got := d.launchAttempts[backoffPR]["c1"]; got != tc.attempts {
+				t.Errorf("%s (reversed=%t): attempts = %d, want %d", tc.name, reversed, got, tc.attempts)
+			}
+			if got := d.nextAttempt[backoffPR]["c1"]; !got.Equal(*tc.next) {
+				t.Errorf("%s (reversed=%t): next attempt = %v, want %v", tc.name, reversed, got, *tc.next)
+			}
+		}
 	}
 }
 
