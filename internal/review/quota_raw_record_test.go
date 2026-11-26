@@ -2,9 +2,11 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,8 +21,15 @@ import (
 
 // A custom review command prints raw JSON, so the usage limit arrives as an
 // unparsed record. The daemon must pause on it instead of relaunching on every
-// poll.
+// poll, and keep pausing while its probes meet the same record.
 func TestDaemon_CustomReviewCommandUsageLimitPausesReviews(t *testing.T) {
+	// A wrapper that pipes the agent exits zero after the refusal.
+	for _, code := range []int{1, 0} {
+		t.Run(fmt.Sprintf("exit %d", code), func(t *testing.T) { testCustomReviewCommandUsageLimit(t, code) })
+	}
+}
+
+func testCustomReviewCommandUsageLimit(t *testing.T, code int) {
 	const prNumber = 3043
 	dir := testenv.MkdirShort(t, "sm-quota-raw-")
 	t.Chdir(dir)
@@ -36,10 +45,15 @@ func TestDaemon_CustomReviewCommandUsageLimitPausesReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 	launches := filepath.Join(dir, "launches")
+	// The command runs this script, so the provider can recover mid-test.
+	agentScript := filepath.Join(dir, "agent.sh")
 	record := `{"type":"error","sessionID":"ses_x","error":{"type":"provider.quota","message":"The usage limit has been reached"}}`
+	if err := os.WriteFile(agentScript, []byte(fmt.Sprintf("printf '%%s\\n' '%s'\nexit %d\n", record, code)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join(base, "config.yaml")
 	content := "review_agent: opencode-v2\nreview_model: openai/test\nsandbox: worktree\nworktree_dir: " + filepath.Join(t.TempDir(), "worktrees") +
-		"\nagents:\n  opencode-v2:\n    command: >-\n      printf 'x\\n' >> " + launches + "; printf '%s\\n' '" + record + "'; exit 1\n"
+		"\nagents:\n  opencode-v2:\n    command: >-\n      printf 'x\\n' >> " + launches + "; sh " + agentScript + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -67,21 +81,44 @@ func TestDaemon_CustomReviewCommandUsageLimitPausesReviews(t *testing.T) {
 	if !d.IsQuotaPaused() {
 		t.Fatalf("review daemon did not pause: %s", logs.String())
 	}
+	launched := func() int {
+		t.Helper()
+		data, err := os.ReadFile(launches)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "x")
+	}
 	// Past the ordinary launch backoff but before the quota probe is due.
 	now = now.Add(5 * time.Minute)
 	tickAndWait(t, d, context.Background())
-	data, err := os.ReadFile(launches)
-	if err != nil || strings.Count(string(data), "x") != 1 {
-		t.Fatalf("launches = %q (%v), want one", data, err)
+	if got := launched(); got != 1 {
+		t.Fatalf("launches = %d, want one", got)
 	}
 	recorded, err := eventLog.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range recorded {
-		if event.Type == "run.finished" && event.Payload["reason"] == "AGENT_USAGE_LIMIT" {
-			return
-		}
+	if !slices.ContainsFunc(recorded, func(event events.Event) bool {
+		return event.Type == "run.finished" && event.Payload["reason"] == "AGENT_USAGE_LIMIT"
+	}) {
+		t.Fatalf("run.finished carries no AGENT_USAGE_LIMIT: %+v", recorded)
 	}
-	t.Fatalf("run.finished carries no AGENT_USAGE_LIMIT: %+v", recorded)
+
+	// The probe meets the same record and extends the pause.
+	now = d.QuotaPausedUntil()
+	tickAndWait(t, d, context.Background())
+	if !d.IsQuotaPaused() || launched() != 2 {
+		t.Fatalf("after a limited probe: paused = %t, launches = %d", d.IsQuotaPaused(), launched())
+	}
+
+	// A clean probe reopens reviews.
+	if err := os.WriteFile(agentScript, []byte("exit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now = d.QuotaPausedUntil()
+	tickAndWait(t, d, context.Background())
+	if d.IsQuotaPaused() {
+		t.Fatalf("daemon stayed paused after a clean probe: %s", logs.String())
+	}
 }

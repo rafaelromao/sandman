@@ -321,13 +321,10 @@ func (d *usageLimitDetector) consume(text string, final bool) {
 	}
 }
 
-// opencodeRawUsageLimitLine also matches OpenCode's unparsed `--format json`
-// error record. Only the record's own error message counts: tool output and
-// model text that quote it sit inside records of other types.
-func opencodeRawUsageLimitLine(line string) bool {
-	if opencodeUsageLimitLine(line) {
-		return true
-	}
+// opencodeUsageLimitRecord matches OpenCode's unparsed `--format json` error
+// record. Only the record's own error message counts: tool output and model
+// text that quote it sit inside records of other types.
+func opencodeUsageLimitRecord(line string) bool {
 	var record struct {
 		Type  string `json:"type"`
 		Error any    `json:"error"`

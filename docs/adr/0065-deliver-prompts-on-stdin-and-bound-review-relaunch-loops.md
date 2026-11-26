@@ -27,10 +27,12 @@ one pull request:
 - A configured command equal to a preset's former built-in command still means
   the built-in command. Former commands are pinned per preset; the config file
   is not rewritten.
-- A review launch of a custom OpenCode command also recognises a raw
-  `type: "error"` record carrying the usage-limit message. Other launches of a
-  custom command are unchanged, because a recognised limit changes their
-  admission and lifecycle selection.
+- A launch of a custom OpenCode command that serves no work item (a review, the
+  quota probe or another prompt-only run) also recognises a raw `type: "error"`
+  record carrying the usage-limit message. The record counts whatever status the
+  command exits with, because a wrapper around the agent can exit zero.
+  Implementation launches are unchanged, because a recognised limit changes
+  their admission and lifecycle selection.
 - The launch attempt count belongs to the request revision and is carried across
   Runs, daemon restarts and cache refreshes: the highest recorded count and its
   next-attempt time. The backoff doubles from ten seconds to a ten-minute cap.

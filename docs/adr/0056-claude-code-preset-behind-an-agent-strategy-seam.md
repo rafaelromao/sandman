@@ -22,8 +22,8 @@ branch in the run loop, the orchestrator, the review daemon, and the scaffold.
 
 > Amended by [ADR-0065](0065-deliver-prompts-on-stdin-and-bound-review-relaunch-loops.md):
 > built-in commands read the prompt on stdin, a former built-in command still
-> means built-in, and review launches of a custom OpenCode command also
-> recognise the raw usage-limit record.
+> means built-in, and launches of a custom OpenCode command that serve no work
+> item also recognise the raw usage-limit record.
 
 **Agent strategy seam.** Agent-specific run-loop behaviour lives behind one
 `agentStrategy` interface in `internal/batch`, selected once per launch by

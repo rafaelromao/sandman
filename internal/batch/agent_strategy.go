@@ -62,9 +62,14 @@ type agentStrategy interface {
 	// limits itself.
 	ContextRolloverDetector(literals []string, onTrigger func()) *contextRolloverDetector
 	// UsageLimitRule returns the per-line rule that recognises the agent's
-	// usage-limit response in a launch's output, or nil when the agent has
-	// none. review reports a review launch.
-	UsageLimitRule(review bool) func(line string) bool
+	// usage-limit response in a failed launch's output, or nil when the agent
+	// has none.
+	UsageLimitRule() func(line string) bool
+	// UsageLimitRecordRule returns the per-line rule that recognises the
+	// agent's structured usage-limit record when the launch's output is not
+	// parsed, or nil when the output is parsed or the agent prints no such
+	// record. The record holds whatever status the launch exits with.
+	UsageLimitRecordRule() func(line string) bool
 	// AwaitsUsageLimit reports whether a recognised usage limit enters
 	// run.await with usage-limit polling instead of the ordinary retry path.
 	AwaitsUsageLimit() bool
@@ -161,10 +166,10 @@ func AwaitsUsageLimit(agentName string) bool {
 
 // IsUsageLimitOutput reports whether the text of an error contains the named
 // agent's usage-limit response, for callers that receive an error instead of an
-// AgentRunResult. It applies the rule for error text; the raw records a review
-// launch also matches are classified on the launch's output.
+// AgentRunResult. Structured records are classified on a launch's output, not
+// here.
 func IsUsageLimitOutput(agentName, output string) bool {
-	rule := strategyForPreset(strings.TrimSpace(agentName)).UsageLimitRule(false)
+	rule := strategyForPreset(strings.TrimSpace(agentName)).UsageLimitRule()
 	if rule == nil {
 		return false
 	}
@@ -207,8 +212,9 @@ func (passthroughStrategy) ContextRolloverDetector([]string, func()) *contextRol
 	return nil
 }
 
-func (passthroughStrategy) UsageLimitRule(bool) func(string) bool { return nil }
-func (passthroughStrategy) AwaitsUsageLimit() bool                { return false }
+func (passthroughStrategy) UsageLimitRule() func(string) bool       { return nil }
+func (passthroughStrategy) UsageLimitRecordRule() func(string) bool { return nil }
+func (passthroughStrategy) AwaitsUsageLimit() bool                  { return false }
 func (passthroughStrategy) UsageLimitResetAt(outputParser, outputParser, time.Time) time.Time {
 	return time.Time{}
 }
@@ -308,16 +314,15 @@ func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger fun
 	return newContextRolloverDetector(time.Now, literals, onTrigger)
 }
 
-// UsageLimitRule matches the `Error:` line the output parser renders. A custom
-// command has no parser, so its review launches also match the raw record: the
-// review daemon must pause on it rather than relaunch. Other launches of a
-// custom command are left as they are, because a recognised limit changes
-// their admission and lifecycle selection.
-func (s opencodeStrategy) UsageLimitRule(review bool) func(string) bool {
-	if review && !s.builtInCommand {
-		return opencodeRawUsageLimitLine
+func (opencodeStrategy) UsageLimitRule() func(string) bool { return opencodeUsageLimitLine }
+
+// UsageLimitRecordRule covers a custom command, which has no parser to render
+// OpenCode's error record as an `Error:` line.
+func (s opencodeStrategy) UsageLimitRecordRule() func(string) bool {
+	if s.builtInCommand {
+		return nil
 	}
-	return opencodeUsageLimitLine
+	return opencodeUsageLimitRecord
 }
 
 func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }

@@ -298,10 +298,18 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			cancelAttempt()
 		}
 	})
-	var usageDetector *usageLimitDetector
-	if rule := strategy.UsageLimitRule(r.review); rule != nil {
+	var usageDetector, recordDetector *usageLimitDetector
+	if rule := strategy.UsageLimitRule(); rule != nil {
 		usageDetector = newUsageLimitDetector(rule)
 		usageDetector.setTrigger(r.usageLimit)
+	}
+	// Unparsed records are classified only for a launch that serves no work
+	// item (a review, the quota probe or another prompt-only run): a
+	// recognised limit would change an implementation Run's admission and
+	// lifecycle selection.
+	if rule := strategy.UsageLimitRecordRule(); rule != nil && r.issue == nil {
+		recordDetector = newUsageLimitDetector(rule)
+		recordDetector.setTrigger(r.usageLimit)
 	}
 	stdout := io.Writer(os.Stdout)
 	stderr := io.Writer(os.Stderr)
@@ -311,6 +319,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	if usageDetector != nil {
 		observers = append(observers, usageDetector)
+	}
+	if recordDetector != nil {
+		observers = append(observers, recordDetector)
 	}
 	if len(observers) > 0 {
 		stdout = io.MultiWriter(append([]io.Writer{stdout}, observers...)...)
@@ -347,6 +358,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	if usageDetector != nil {
 		usageDetector.Flush()
+	}
+	if recordDetector != nil {
+		recordDetector.Flush()
 	}
 	if detector != nil && detector.Triggered() {
 		r.contextExhausted = true
@@ -407,6 +421,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			}
 			return r.Result()
 		}
+	}
+	if recordDetector != nil && recordDetector.Triggered() && ctx.Err() == nil {
+		// A wrapper around the agent can exit zero after the provider
+		// refused the launch, so the record counts whatever the status.
+		r.usageLimitReached = true
+		r.status = "failure"
+		return r.Result()
 	}
 	if execErr != nil {
 		r.usageLimitReached = ctx.Err() == nil &&

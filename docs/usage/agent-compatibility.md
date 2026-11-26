@@ -34,10 +34,12 @@ command should do the same with `< "{{.PromptFile}}"`. A `command` that spells
 out a preset's earlier built-in command, which passed the prompt as
 `"$(cat {{.PromptFile}})"`, still means the built-in command.
 
-A custom command under an OpenCode preset has no parser, so usage limits are
-recognised from its output as follows: review launches also match OpenCode's raw
-`type: "error"` record, which pauses the review daemon; implementation runs do
-not wait for usage limits on a custom command.
+A custom command under an OpenCode preset has no parser. For launches that serve
+no work item (reviews, the review quota probe and other prompt-only runs),
+Sandman also matches OpenCode's raw `type: "error"` usage-limit record, whatever
+status the command exits with, so the review daemon pauses even when a wrapper
+exits zero. Implementation runs do not wait for usage limits on a custom
+command.
 
 ## Model variants
 
@@ -143,13 +145,13 @@ Restart OpenCode after installing it.
 The `claude` preset renders:
 
 ```text
-claude -p --output-format stream-json --verbose [--continue] [--dangerously-skip-permissions | --permission-mode '<permission_mode>' | --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] < ".sandman/task.md"
+claude -p --output-format stream-json --verbose [--resume <session-id>] [--dangerously-skip-permissions | --permission-mode '<permission_mode>' | --allowedTools 'Edit(/.sandman/**)' --permission-mode dontAsk] [--name '<session name>'] [--model '<model>'] [--effort '<variant>'] < ".sandman/task.md"
 ```
 
 - `stream-json` with `--verbose` is the only print-mode format that streams while
   the agent works, which the idle-timeout heartbeat (`run_idle_timeout`) needs.
-- `--continue` is rendered only when Sandman selects session reuse; see
-  [Session reuse](#session-reuse).
+- `--resume <session-id>` is rendered only when Sandman selects session reuse and
+  a session was recorded; see [Session reuse](#session-reuse).
 - `--dangerously-skip-permissions` follows the same default as every agent: on for
   container runs, off for worktree runs; see [Permissions](#permissions).
 - `--permission-mode '<permission_mode>'` is rendered when the agent sets

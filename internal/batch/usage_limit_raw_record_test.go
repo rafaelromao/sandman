@@ -3,11 +3,13 @@ package batch
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -19,39 +21,40 @@ const (
 	rawV1UsageLimitRecord = `{"type":"error","timestamp":1,"sessionID":"ses_x","error":{"name":"APIError","data":{"message":"The usage limit has been reached","statusCode":429}}}`
 )
 
-// customCommandUsageLimit launches a custom command under an OpenCode preset
-// that prints output and fails, and reports the recognised usage limit.
-func customCommandUsageLimit(t *testing.T, preset string, review bool, output string) bool {
+// customCommandLaunch runs a custom command under an OpenCode preset that
+// prints output and exits with code. A nil issue is a launch that serves no
+// work item: a review, the quota probe or another prompt-only run.
+func customCommandLaunch(t *testing.T, preset string, issue *github.Issue, output string, code int) AgentRunResult {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "output.jsonl"), []byte(output+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	run := NewAgentRunWithLayout(nil, "test", &fakeV2CLISandbox{fakeSandbox{workDir: root}}, paths.NewLayout(&config.Config{}, root))
-	run.preset, run.review = preset, review
+	run := NewAgentRunWithLayout(issue, "test", &fakeV2CLISandbox{fakeSandbox{workDir: root}}, paths.NewLayout(&config.Config{}, root))
+	run.preset = preset
 	run.runFolder, run.outputWriter = filepath.Join(root, "run"), &bytes.Buffer{}
 
-	result := run.Run(context.Background(), &spyRenderer{}, "cat output.jsonl; exit 1", prompt.RenderConfig{TaskPrompt: "a prompt"})
-
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure", result.Status)
-	}
-	return result.UsageLimitReached
+	return run.Run(context.Background(), &spyRenderer{}, fmt.Sprintf("cat output.jsonl; exit %d", code), prompt.RenderConfig{TaskPrompt: "a prompt"})
 }
 
-func TestReviewLaunch_CustomOpenCodeCommandRecognisesRawUsageLimitRecord(t *testing.T) {
+func TestCustomOpenCodeCommandRecognisesRawUsageLimitRecord(t *testing.T) {
 	for _, preset := range []string{"opencode", "opencode-v2"} {
 		for name, record := range map[string]string{"v1 shape": rawV1UsageLimitRecord, "v2 shape": rawV2UsageLimitRecord} {
-			t.Run(preset+" "+name, func(t *testing.T) {
-				if !customCommandUsageLimit(t, preset, true, record) {
-					t.Fatal("usage limit not recognised")
-				}
-			})
+			// A wrapper that pipes the agent exits zero after the refusal.
+			for _, code := range []int{1, 0} {
+				t.Run(fmt.Sprintf("%s %s exit %d", preset, name, code), func(t *testing.T) {
+					result := customCommandLaunch(t, preset, nil, record, code)
+
+					if !result.UsageLimitReached || result.Status != "failure" {
+						t.Fatalf("usage limit reached = %t, status = %q", result.UsageLimitReached, result.Status)
+					}
+				})
+			}
 		}
 	}
 }
 
-func TestReviewLaunch_RecordsThatOnlyQuoteTheUsageLimitDoNotMatch(t *testing.T) {
+func TestRecordsThatOnlyQuoteTheUsageLimitDoNotMatch(t *testing.T) {
 	for name, record := range map[string]string{
 		"tool output":         `{"type":"tool_use","sessionID":"ses_x","part":{"tool":"shell","state":{"status":"completed","output":"The usage limit has been reached"}}}`,
 		"quoted record":       `{"type":"text","sessionID":"ses_x","part":{"text":"{\"type\":\"error\",\"error\":{\"message\":\"The usage limit has been reached\"}}"}}`,
@@ -59,18 +62,34 @@ func TestReviewLaunch_RecordsThatOnlyQuoteTheUsageLimitDoNotMatch(t *testing.T) 
 		"nested error record": `{"type":"tool_use","part":{"state":{"output":{"type":"error","error":{"message":"The usage limit has been reached"}}}}}`,
 		"truncated record":    `{"type":"error","error":{"message":"The usage limit has been reached"`,
 	} {
-		t.Run(name, func(t *testing.T) {
-			if customCommandUsageLimit(t, "opencode-v2", true, record) {
-				t.Fatal("a record that only quotes the message was treated as the usage limit")
-			}
-		})
+		for _, code := range []int{1, 0} {
+			t.Run(fmt.Sprintf("%s exit %d", name, code), func(t *testing.T) {
+				if customCommandLaunch(t, "opencode-v2", nil, record, code).UsageLimitReached {
+					t.Fatal("a record that only quotes the message was treated as the usage limit")
+				}
+			})
+		}
+	}
+}
+
+// A successful custom command may print the rendered form of the message, as a
+// review of usage-limit handling would, so only the raw record counts then.
+func TestCustomOpenCodeCommand_ErrorLineOfASuccessfulLaunchIsNotAUsageLimit(t *testing.T) {
+	result := customCommandLaunch(t, "opencode-v2", nil, "Error: The usage limit has been reached", 0)
+
+	if result.UsageLimitReached || result.Status != "success" {
+		t.Fatalf("usage limit reached = %t, status = %q", result.UsageLimitReached, result.Status)
 	}
 }
 
 // Implementation runs with a custom command keep today's classification: a
 // recognised limit would change admission and lifecycle selection for them.
 func TestImplementationLaunch_CustomCommandIgnoresRawUsageLimitRecord(t *testing.T) {
-	if customCommandUsageLimit(t, "opencode-v2", false, rawV2UsageLimitRecord) {
-		t.Fatal("implementation launch classified the raw record")
+	for _, code := range []int{1, 0} {
+		result := customCommandLaunch(t, "opencode-v2", &github.Issue{Number: 7, Title: "T"}, rawV2UsageLimitRecord, code)
+
+		if result.UsageLimitReached {
+			t.Fatalf("exit %d: implementation launch classified the raw record", code)
+		}
 	}
 }
