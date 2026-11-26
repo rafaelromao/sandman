@@ -62,8 +62,9 @@ type agentStrategy interface {
 	// limits itself.
 	ContextRolloverDetector(literals []string, onTrigger func()) *contextRolloverDetector
 	// UsageLimitRule returns the per-line rule that recognises the agent's
-	// usage-limit response, or nil when the agent has none.
-	UsageLimitRule() func(line string) bool
+	// usage-limit response in a launch's output, or nil when the agent has
+	// none. review reports a review launch.
+	UsageLimitRule(review bool) func(line string) bool
 	// AwaitsUsageLimit reports whether a recognised usage limit enters
 	// run.await with usage-limit polling instead of the ordinary retry path.
 	AwaitsUsageLimit() bool
@@ -163,7 +164,7 @@ func AwaitsUsageLimit(agentName string) bool {
 // receive an error instead of an AgentRunResult use this to preserve the same
 // detection boundary.
 func IsUsageLimitOutput(agentName, output string) bool {
-	rule := strategyForPreset(strings.TrimSpace(agentName)).UsageLimitRule()
+	rule := strategyForPreset(strings.TrimSpace(agentName)).UsageLimitRule(false)
 	if rule == nil {
 		return false
 	}
@@ -206,7 +207,7 @@ func (passthroughStrategy) ContextRolloverDetector([]string, func()) *contextRol
 	return nil
 }
 
-func (passthroughStrategy) UsageLimitRule() func(string) bool { return nil }
+func (passthroughStrategy) UsageLimitRule(bool) func(string) bool { return nil }
 func (passthroughStrategy) AwaitsUsageLimit() bool            { return false }
 func (passthroughStrategy) UsageLimitResetAt(outputParser, outputParser, time.Time) time.Time {
 	return time.Time{}
@@ -307,7 +308,17 @@ func (opencodeStrategy) ContextRolloverDetector(literals []string, onTrigger fun
 	return newContextRolloverDetector(time.Now, literals, onTrigger)
 }
 
-func (opencodeStrategy) UsageLimitRule() func(string) bool { return opencodeUsageLimitLine }
+// UsageLimitRule matches the `Error:` line the output parser renders. A custom
+// command has no parser, so its review launches also match the raw record: the
+// review daemon must pause on it rather than relaunch. Other launches of a
+// custom command are left as they are, because a recognised limit changes
+// their admission and lifecycle selection.
+func (s opencodeStrategy) UsageLimitRule(review bool) func(string) bool {
+	if review && !s.builtInCommand {
+		return opencodeRawUsageLimitLine
+	}
+	return opencodeUsageLimitLine
+}
 
 func (s opencodeStrategy) AwaitsUsageLimit() bool { return s.builtInCommand }
 

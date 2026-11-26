@@ -299,7 +299,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	})
 	var usageDetector *usageLimitDetector
-	if rule := strategy.UsageLimitRule(); rule != nil {
+	if rule := strategy.UsageLimitRule(r.review); rule != nil {
 		usageDetector = newUsageLimitDetector(rule)
 		usageDetector.setTrigger(r.usageLimit)
 	}

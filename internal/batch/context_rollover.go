@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -318,6 +319,23 @@ func (d *usageLimitDetector) consume(text string, final bool) {
 			return
 		}
 	}
+}
+
+// opencodeRawUsageLimitLine also matches OpenCode's unparsed `--format json`
+// error record. Only the record's own error message counts: tool output and
+// model text that quote it sit inside records of other types.
+func opencodeRawUsageLimitLine(line string) bool {
+	if opencodeUsageLimitLine(line) {
+		return true
+	}
+	var record struct {
+		Type  string `json:"type"`
+		Error any    `json:"error"`
+	}
+	if json.Unmarshal([]byte(normalizeContextRolloverLine(line)), &record) != nil || record.Type != "error" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(messageValue(record.Error)), usageLimitLiteral)
 }
 
 // opencodeUsageLimitLine is the OpenCode usage-limit rule: the normalized

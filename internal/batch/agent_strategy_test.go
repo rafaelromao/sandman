@@ -168,7 +168,7 @@ func TestAgentStrategy_Contract(t *testing.T) {
 			if got := s.ContextRolloverDetector(nil, nil) != nil; got != tt.want.rolloverDetector {
 				t.Errorf("ContextRolloverDetector present = %t, want %t", got, tt.want.rolloverDetector)
 			}
-			if got := s.UsageLimitRule() != nil; got != tt.want.usageRule {
+			if got := s.UsageLimitRule(false) != nil; got != tt.want.usageRule {
 				t.Errorf("UsageLimitRule present = %t, want %t", got, tt.want.usageRule)
 			}
 			if got := s.AwaitsUsageLimit(); got != tt.want.awaitsUsageLimit {
