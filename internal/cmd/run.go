@@ -210,6 +210,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
 			reuseSessionFlag, _ := cmd.Flags().GetBool("reuse-session")
+			compactFlag, _ := cmd.Flags().GetBool("compact")
 			runIDFlag := cmd.Flags().Lookup("run-id")
 			runID, _ := cmd.Flags().GetString("run-id")
 			if runIDFlag.Changed {
@@ -222,6 +223,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			if reuseSessionFlag && !continueFlag {
 				return MarkUsage(fmt.Errorf("--reuse-session requires --continue"))
+			}
+			if compactFlag && !continueFlag {
+				return MarkUsage(fmt.Errorf("--compact requires --continue"))
+			}
+			if compactFlag && runIDFlag.Changed {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations (--run-id)"))
 			}
 			var eventLogSnapshot []events.Event
 			var readyContinuations []batch.ReadyContinuation
@@ -702,6 +709,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return err
 				}
 			}
+			if compactFlag {
+				continuationTimeout := cfg.EffectiveReviewTimeout()
+				if reviewTimeoutSet {
+					continuationTimeout = reviewTimeout
+				}
+				compactContinuedTasks(cmd, cfg, &req, continueIssues, sandmanDir, func(content string) string {
+					return prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
+				})
+			}
 
 			req.PhaseWriter = phaseWriter
 			ctx, cancel := context.WithCancel(cmd.Context())
@@ -867,6 +883,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff; tunables come from current flags/config and the worktree identity is replayed")
 	cmd.Flags().Bool("reuse-session", false, "With --continue, resume each prior agent session when the agent supports it")
+	cmd.Flags().Bool("compact", false, "With --continue, compact each continued issue's Task before it starts, archiving the original under .sandman/task-history")
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd
