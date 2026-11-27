@@ -97,6 +97,11 @@ sandbox: podman
 # Default: true.
 cleanup_worktrees: true
 
+# Compact a continuation Task larger than this many bytes.
+# 0 disables automatic compaction; otherwise at least 32768.
+# Default: 49152 (suits agents with a context window of about 250k tokens).
+task_compact_bytes: 49152
+
 # Git configuration for branch management.
 git:
   # Branch new runs start from and pull requests target. `sandman init`
@@ -239,6 +244,25 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 | `cleanup_worktrees` | `true` | Remove successful implementation worktrees after completion; `false` preserves them |
 
 This setting only controls successful implementation runs. Review worktrees and unsuccessful or blocked runs remain available for inspection regardless of this setting.
+
+## Task compaction
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `task_compact_bytes` | `49152` | Size in bytes above which an implementation launch compacts its continuation Task. `0` disables automatic compaction; other values must be at least `32768` |
+
+Every continuation, retry and resume sends the Task (`.sandman/task.md`) back to the agent, so a Task that keeps growing costs tokens on every launch. Above the threshold, Sandman first writes the complete Task to `.sandman/task-history/` in the worktree. It then moves the oldest sections the agent added, keeping the newest ones that fit three quarters of the threshold, and cuts `## Next Step` to its first 4 KiB. The template and issue sections, every plan, status lines and Sandman's own sections are kept. A `## Sandman Task History` section names the archive, and the run log records the sizes. Review runs and other prompt-only runs are never compacted.
+
+Task text costs about 4.4 bytes per token, so the default is about 11k tokens, 4.5% of a 250k-token context window. As a guide, use about 0.2 bytes per token of context window:
+
+| Context window | `task_compact_bytes` |
+|---|---|
+| 200k | `40960` |
+| 250k | `49152` |
+| 400k | `81920` |
+| 1M | `98304` |
+
+To compact one Task now, whatever its size, continue with `sandman run --continue --compact <issue>`.
 
 ## Context rollover phrases
 

@@ -448,6 +448,16 @@ _Avoid_: Instructions, query.
 The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. Its plan, checklist, and next action are agent-owned durable progress: runtime-owned re-entry rereads the latest worktree Task, never the batch-start snapshot. Missing or unreadable Tasks fail continuation before launch instead of falling back to stale or default instructions. Continuation refreshes the runtime-owned Review command, selected review mode, and effective timeout in Runtime Context from current settings while preserving the rest of the Task. It replaces `rendered-prompt.md` and subsumes the handoff document's role.
 _Avoid_: Prompt file, handoff doc.
 
+**Task compaction**:
+Sandman's lossless shrinking of an oversized continuation Task (ADR-0066). Above `task_compact_bytes` (default 48 KiB), an implementation launch keeps the Task's recorded structure, plans, status lines and Sandman's sections, keeps the first 4 KiB of `## Next Step`, keeps the newest agent-written history that fits three quarters of the threshold, and moves the rest. `sandman run --continue --compact` applies it on request.
+_Avoid_: Summarising the Task, trimming the Task.
+
+**Task history archive**:
+The complete Task as it was before a compaction, written to `.sandman/task-history/<RunID>-<UTC timestamp>.md` in the worktree before the compacted Task, and named in the Task's `## Sandman Task History` section.
+
+**Task anchors**:
+The H2 headings of a fresh implementation Task render, recorded in `.sandman/task-anchors`. They identify the template and issue sections compaction keeps; Sandman's own sections are never anchors.
+
 **Default Task Prompt**:
 The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default-task-prompt.md`.
 _Avoid_: Base prompt, stock prompt.
