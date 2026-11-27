@@ -60,11 +60,14 @@ type AgentRun struct {
 	// taskCompactBytes is the size above which an implementation launch
 	// compacts its continuation Task; 0 disables compaction.
 	taskCompactBytes int
-	env              map[string]string
-	outputWriter     io.Writer
-	layout           paths.Layout
-	runFolder        string
-	taskWriter       func(string, []byte, os.FileMode) error
+	// forceTaskCompaction compacts this launch's Task whatever its size, as
+	// `sandman run --continue --compact` requests for a row's first launch.
+	forceTaskCompaction bool
+	env                 map[string]string
+	outputWriter        io.Writer
+	layout              paths.Layout
+	runFolder           string
+	taskWriter          func(string, []byte, os.FileMode) error
 	// archiveWriter creates Task history archives without replacing any
 	// file; nil means atomicfs.WriteAtomicNew.
 	archiveWriter  func(string, []byte, os.FileMode) error
@@ -117,7 +120,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
-	r.recordTaskAnchors(rendered)
+	r.recordTaskAnchors(rendered, cfg)
 	return nil
 }
 

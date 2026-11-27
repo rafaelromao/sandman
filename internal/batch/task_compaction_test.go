@@ -171,7 +171,7 @@ func TestFreshRenderAnchorsTheTaskForLaterCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fresh render recorded no anchors: %v", err)
 	}
-	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\n"; string(anchors) != want {
+	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\nnext-step 1\n"; string(anchors) != want {
 		t.Fatalf("anchors =\n%s\nwant\n%s", anchors, want)
 	}
 	if strings.Contains(fresh.stdin, "## Sandman Task History") {
@@ -325,25 +325,129 @@ func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T)
 // with the issue body, has no boundary between the issue's sections and
 // agent history, so none of them moves.
 func TestCompactWorktreeTask_KeepsIssueSectionsWhenTheTemplateEndsWithTheIssueBody(t *testing.T) {
-	dir := t.TempDir()
-	templatePath := filepath.Join(dir, "prompt.md")
-	template := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n"
-	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
-		t.Fatal(err)
+	for name, footer := range map[string]string{"issue body last": "", "followed only by a Sandman section": "\n## Sandman Runtime Context\n\n- Base branch: `main`\n"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			templatePath := filepath.Join(dir, "prompt.md")
+			template := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n" + footer
+			if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var task strings.Builder
+			task.WriteString(strings.Replace(template, "{{ISSUE_BODY}}", "## Acceptance criteria\n\n- [ ] keep me\n", 1))
+			for i := 1; i <= 30; i++ {
+				fmt.Fprintf(&task, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
+			}
+
+			result, err := CompactWorktreeTask(task.String(), TaskCompactionRequest{WorkDir: dir, Threshold: testTaskCompactBytes, Force: true,
+				Template: prompt.RenderConfig{PromptFile: templatePath}, Now: time.Now()})
+
+			if err != nil || result.Compacted || !strings.Contains(result.Content, "- [ ] keep me") {
+				t.Fatalf("compacted = %t, err %v", result.Compacted, err)
+			}
+			if !strings.Contains(result.Reason, "no safe history boundary") {
+				t.Fatalf("reason = %q", result.Reason)
+			}
+		})
 	}
-	var task strings.Builder
-	task.WriteString(strings.Replace(template, "{{ISSUE_BODY}}", "## Acceptance criteria\n\n- [ ] keep me\n", 1))
+}
+
+// `--continue --compact` forces the first launch to compact, even under the
+// threshold and with automatic compaction disabled.
+func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) {
+	task := checkpointTask(8)
+	if len(task) > config.DefaultTaskCompactBytes || len(task) <= config.DefaultTaskCompactBytes*3/4 {
+		t.Fatalf("test Task is %d bytes", len(task))
+	}
+	for name, force := range map[string]bool{"forced": true, "not forced": false} {
+		t.Run(name, func(t *testing.T) {
+			launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, 0, nil, func(run *AgentRun) {
+				run.forceTaskCompaction = force
+			})
+
+			if compacted := !strings.Contains(launch.stdin, "## Checkpoint 1\n"); compacted != force {
+				t.Fatalf("compacted = %t, want %t", compacted, force)
+			}
+		})
+	}
+}
+
+// The row driver hands a forced compaction to the first execution only;
+// re-entry after a wait launches without it.
+func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {
+	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
+	executor := &rowDriverExecutorFake{
+		started: true,
+		results: []AgentRunResult{
+			{IssueNumber: 42, RunID: run.RunID, Branch: run.Branch, Status: "await"},
+			{IssueNumber: 42, RunID: run.RunID, Branch: run.Branch, Status: "success"},
+		},
+		observations: []lifecycleVerdict{{Action: lifecycleResume}, {Action: lifecycleResume}},
+	}
+
+	newRowDriver(executor, &rowDriverGateFake{}, &rowDriverClockFake{}).Drive(context.Background(), run, ContinuationCursor{Mode: ModeContinue, compactTask: true}, rowDriverOptions{
+		ReleaseAwaitCapacity: true,
+		PollInterval:         func(int) time.Duration { return time.Nanosecond },
+	})
+
+	if len(executor.cursors) != 2 || !executor.cursors[0].compactTask || executor.cursors[1].compactTask {
+		t.Fatalf("compactTask per execution = %v", compactFlags(executor.cursors))
+	}
+}
+
+func compactFlags(cursors []ContinuationCursor) []bool {
+	flags := make([]bool, len(cursors))
+	for i, cursor := range cursors {
+		flags[i] = cursor.compactTask
+	}
+	return flags
+}
+
+// A batch request reaches the row's first implementation launch only; its
+// retries follow the threshold.
+func TestRunBatch_CompactTasksForcesOnlyTheFirstLaunch(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	sb := &cleanupErrorSandbox{workDir: filepath.Join(workDir, "worktree"), cleanupFn: func() error { return nil }}
+	factory := &capturingRunnableFactory{sandbox: sb}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Compact", State: "open"}}}, &retryRenderer{result: "# Task\n\nInitial task."},
+		&fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{"opencode": config.BuiltInAgentPresets["opencode"].Agent("opencode")}}},
+		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
+		WithErrorLog(io.Discard), WithSandboxFactory(&cleanupErrorSandboxFactory{sandbox: sb}), WithRunnableFactory(factory))
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Retries: 1, CompactTasks: map[int]bool{42: true}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID})
+
+	if len(factory.runs) < 2 {
+		t.Fatalf("launches = %d, want a first launch and a retry", len(factory.runs))
+	}
+	for i, run := range factory.runs {
+		if run.forceTaskCompaction != (i == 0) {
+			t.Errorf("launch %d: forced = %t", i+1, run.forceTaskCompaction)
+		}
+	}
+}
+
+// A fresh render records which `## Next Step` is the template's, so an issue
+// that carries its own keeps it whole when the Task is compacted later.
+func TestFreshRenderRecordsTheTemplatesNextStep(t *testing.T) {
+	root := t.TempDir()
+	issueStep := strings.Repeat("issue step. ", 500)
+	fresh := launchInWorktree(t, root, prompt.RenderConfig{}, testTaskCompactBytes, &prompt.Engine{}, func(run *AgentRun) {
+		run.issue.Body = "## Next Step\n\n" + issueStep + "\n"
+	})
+	anchors, _ := os.ReadFile(filepath.Join(fresh.workDir, ".sandman", "task-anchors"))
+	if !strings.HasSuffix(string(anchors), "next-step 2\n") {
+		t.Fatalf("anchors =\n%s", anchors)
+	}
+
+	task := strings.Replace(fresh.stdin, "## Next Step\n\n", "## Next Step\n\n"+strings.Repeat("current step. ", 600)+"\n", 2)
 	for i := 1; i <= 30; i++ {
-		fmt.Fprintf(&task, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
+		task += fmt.Sprintf("\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
 	}
+	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: fresh.workDir, Threshold: testTaskCompactBytes, Now: time.Now()})
 
-	result, err := CompactWorktreeTask(task.String(), TaskCompactionRequest{WorkDir: dir, Threshold: testTaskCompactBytes, Force: true,
-		Template: prompt.RenderConfig{PromptFile: templatePath}, Now: time.Now()})
-
-	if err != nil || result.Compacted || !strings.Contains(result.Content, "- [ ] keep me") {
-		t.Fatalf("compacted = %t, err %v", result.Compacted, err)
-	}
-	if !strings.Contains(result.Reason, "no safe history boundary") {
-		t.Fatalf("reason = %q", result.Reason)
+	if err != nil || !result.Compacted || !strings.Contains(result.Content, issueStep) {
+		t.Fatalf("compacted = %t, err %v; the issue's Next Step changed", result.Compacted, err)
 	}
 }

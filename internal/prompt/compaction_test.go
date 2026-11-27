@@ -3,6 +3,8 @@ package prompt
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -366,5 +368,87 @@ func TestCompactTask_NextStepKeepsAPrefixNotFragments(t *testing.T) {
 	}
 	if !strings.Contains(got.Content, "Implement the first slice.") {
 		t.Fatal("lost the beginning of Next Step")
+	}
+}
+
+// An issue can carry its own `## Next Step`. Only the template's is the
+// agent's rewritable position; the issue's stays byte for byte.
+func TestCompactTask_KeepsAnIssueNextStepWhole(t *testing.T) {
+	issueStep := paragraph("issue step", 5000)
+	task := "# Task\n\n## Issue Context\n\nIssue body.\n\n## Next Step\n\n" + issueStep +
+		"\n## Execution Checklist\n\n- [ ] Implement\n\n## Next Step\n\nImplement the first slice.\n" + paragraph("now", 5000) +
+		"\n## Required Order\n\n" + paragraph("order", 500) + strings.Join(checkpoints(6, 1000), "")
+	anchors := []string{"## Issue Context", "## Next Step", "## Execution Checklist", "## Next Step", "## Required Order"}
+
+	got := CompactTask(task, TaskCompaction{Threshold: 1, Target: 12 * 1024, Force: true, Anchors: anchors, ArchivePath: "a.md", NextStepOccurrence: 2})
+
+	if !got.Compacted || !strings.Contains(got.Content, "## Next Step\n\n"+issueStep) {
+		t.Fatalf("compacted = %t; the issue's Next Step changed", got.Compacted)
+	}
+	if strings.Count(got.Content, "## Next Step\n") != 2 || strings.Count(got.Content, "now now") > 4096/4 {
+		t.Fatalf("the template's Next Step was dropped or not capped:\n%s", got.Content)
+	}
+}
+
+func TestTemplateNextStep_FindsTheTemplatesOwnOccurrence(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, template string) RenderConfig {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(template), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return RenderConfig{PromptFile: path}
+	}
+	issueWithNextStep := "## Next Step\n\nissue text\n"
+	for name, tc := range map[string]struct {
+		cfg  RenderConfig
+		task string
+		want int
+	}{
+		"default template, issue has one": {RenderConfig{}, strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", issueWithNextStep, 1), 2},
+		"default template":                {RenderConfig{}, strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "body", 1), 1},
+		"before the issue body":           {write("before.md", "## Next Step\n\n## Issue\n\n{{ISSUE_BODY}}\n"), "## Next Step\n\n## Issue\n\n" + issueWithNextStep, 1},
+		"template has none":               {write("none.md", "## Issue\n\n{{ISSUE_BODY}}\n"), "## Issue\n\n" + issueWithNextStep, -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := TemplateNextStep(tc.cfg, tc.task); got != tc.want {
+				t.Fatalf("TemplateNextStep = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// History is budgeted against the pointer that is written, naming only what
+// moves, so the newest section that fits is kept.
+func TestCompactTask_BudgetsAgainstThePointerItWrites(t *testing.T) {
+	base := structuredTask()
+	oldest := checkpoint(1, 5000)
+	opts := TaskCompaction{Threshold: 1, Target: testTarget, Force: true, Anchors: structuredAnchors, ArchivePath: ".sandman/task-history/a.md"}
+	estimate := base + oldest
+	pointer := historyPointer(opts, len(estimate)+testTarget, []string{"## Checkpoint 1"})
+	heading := "\n## Checkpoint 2\n\n"
+	room := testTarget - len(base) - len(pointer) - 2 - 8
+	newest := heading + strings.Repeat("y", room-len(heading)-1) + "\n"
+	task := base + oldest + newest
+
+	got := CompactTask(task, opts)
+
+	if !got.Compacted || !strings.Contains(got.Content, "## Checkpoint 2\n") || strings.Contains(got.Content, "## Checkpoint 1\n") || got.After > testTarget {
+		t.Fatalf("compacted = %t, after %d of %d; moved %q", got.Compacted, got.After, testTarget, got.Moved)
+	}
+	if again := CompactTask(got.Content, opts); again.Compacted || again.Content != got.Content {
+		t.Fatalf("forcing again changed the Task (reason %q)", again.Reason)
+	}
+}
+
+// When protected content exceeds the target and only a few bytes could move,
+// the pointer would grow the Task, so it is left alone.
+func TestCompactTask_NeverGrowsTheTask(t *testing.T) {
+	task := structuredTask("\n## Note\n\nsmall\n") + "\n## Plan\n\n" + paragraph("plan", 9000)
+
+	got := compact(task, false)
+
+	if got.Compacted || got.Content != task || !strings.Contains(got.Reason, "would not shrink") {
+		t.Fatalf("compacted = %t, %d -> %d bytes, reason %q", got.Compacted, got.Before, got.After, got.Reason)
 	}
 }

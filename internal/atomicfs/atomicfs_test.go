@@ -133,3 +133,22 @@ func TestWriteAtomicNew_NeverReplacesAnExistingFile(t *testing.T) {
 		t.Fatalf("mode = %v", info.Mode().Perm())
 	}
 }
+
+// A file system that cannot hard-link fails the write; no partial archive is
+// published.
+func TestWriteAtomicNew_FailedPublicationLeavesNothing(t *testing.T) {
+	failure := errors.New("operation not permitted")
+	saved := link
+	link = func(string, string) error { return failure }
+	t.Cleanup(func() { link = saved })
+	dir := t.TempDir()
+
+	err := WriteAtomicNew(filepath.Join(dir, "archive.md"), []byte("content"), 0o644)
+
+	if !errors.Is(err, failure) {
+		t.Fatalf("err = %v, want the link failure", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("left files behind: %v", entries)
+	}
+}

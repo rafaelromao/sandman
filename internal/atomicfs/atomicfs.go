@@ -42,7 +42,6 @@ package atomicfs
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,12 +93,15 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+// link publishes WriteAtomicNew's temp file; tests replace it.
+var link = os.Link
+
 // WriteAtomicNew writes data to a new file at path without ever replacing an
 // existing one. The data goes to a unique temp file in the same directory,
 // which is then hard-linked to path, so path appears complete or not at all.
-// It fails with an error wrapping os.ErrExist when path already exists. Where
-// the file system has no hard links it falls back to exclusive creation, which
-// still never replaces a file but can leave a partial one after a crash.
+// It fails with an error wrapping os.ErrExist when path already exists, and
+// with the link error, leaving no file at path, where the file system cannot
+// hard-link.
 func WriteAtomicNew(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -121,23 +123,8 @@ func WriteAtomicNew(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(tmpPath, perm); err != nil {
 		return fmt.Errorf("chmod temp for %s: %w", path, err)
 	}
-	linkErr := os.Link(tmpPath, path)
-	if linkErr == nil {
-		return nil
-	}
-	if errors.Is(linkErr, os.ErrExist) {
-		return fmt.Errorf("create %s: %w", path, linkErr)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
-	if err != nil {
+	if err := link(tmpPath, path); err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
 	}
 	return nil
 }

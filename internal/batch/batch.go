@@ -59,6 +59,11 @@ type Request struct {
 	// ReuseSession opts an individual continued row into exact OpenCode
 	// session reuse. Runtime-owned relaunches set the equivalent on the row.
 	ReuseSession map[int]bool
+	// CompactTasks forces Task compaction (ADR-0066) at the first
+	// implementation launch of each listed continued row, as
+	// `sandman run --continue --compact` requests. Later launches follow the
+	// task_compact_bytes threshold.
+	CompactTasks map[int]bool
 	// BaseBranches maps each issue number to its base branch.
 	BaseBranches map[int]string
 	// TaskPrompts maps each issue number to its rendered task prompt.

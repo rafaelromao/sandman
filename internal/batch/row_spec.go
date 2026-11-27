@@ -44,6 +44,9 @@ type ContinuationCursor struct {
 	PreviousRunBatchID string
 	quotaAllowance     usageLimitAllowance
 	feedbackAllowance  *reviewFeedbackAllowance
+	// compactTask forces Task compaction at the next implementation launch;
+	// the row driver clears it once a launch has started.
+	compactTask bool
 }
 
 type runSpecDetails struct {
@@ -81,6 +84,7 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
 			quotaAllowance:     row.quotaAllowance,
 			feedbackAllowance:  new(reviewFeedbackAllowance),
+			compactTask:        row.compactTask,
 		}
 }
 
@@ -116,6 +120,7 @@ func (run RunSpec) row(cursor ContinuationCursor) RowSpec {
 		ReuseSession:        cursor.ReuseSession,
 		quotaAllowance:      cursor.quotaAllowance,
 		feedbackAllowance:   cursor.feedbackAllowance,
+		compactTask:         cursor.compactTask,
 		BaseBranch:          run.BaseBranch, RunTS: run.RunTS, RunShortID: run.RunShortID,
 		BatchID: run.BatchID, BatchDir: run.BatchDir, BatchTS: run.BatchTS,
 		BatchShortID: run.BatchShortID, RunID: run.RunID, UserProvidedRunID: run.UserProvidedRunID,
@@ -149,6 +154,7 @@ type RowSpec struct {
 	// execution, polling, and scheduler re-entry.
 	quotaAllowance    usageLimitAllowance
 	feedbackAllowance *reviewFeedbackAllowance
+	compactTask       bool // Request.CompactTasks: forced Task compaction at the first implementation launch
 	BaseBranch        string
 	ExternalBlockers  []int
 	RenderCfg         prompt.RenderConfig
@@ -394,6 +400,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		previousRunBatchIDs:        row.PreviousRunBatchIDs,
 		reuseSession:               row.ReuseSession,
+		compactTask:                row.compactTask,
 		quotaAllowance:             row.quotaAllowance,
 		feedbackAllowance:          row.feedbackAllowance,
 		identityResolver:           bc.IdentityResolver,

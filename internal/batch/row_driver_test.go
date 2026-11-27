@@ -12,6 +12,7 @@ import (
 type rowDriverExecutorFake struct {
 	gotRun            RunSpec
 	gotCursor         ContinuationCursor
+	cursors           []ContinuationCursor
 	result            AgentRunResult
 	started           bool
 	results           []AgentRunResult
@@ -25,6 +26,7 @@ type rowDriverExecutorFake struct {
 
 func (f *rowDriverExecutorFake) ExecuteRun(_ context.Context, run RunSpec, cursor ContinuationCursor) (AgentRunResult, bool) {
 	f.gotRun, f.gotCursor = run, cursor
+	f.cursors = append(f.cursors, cursor)
 	f.executeCalls++
 	f.record("execute")
 	if len(f.results) > 0 {

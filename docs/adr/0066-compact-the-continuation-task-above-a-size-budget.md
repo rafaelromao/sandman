@@ -32,19 +32,24 @@ updates it.
 - **Deterministic and lossless.** Sandman never asks an agent to summarise the
   Task. It writes the complete Task to a new file under
   `.sandman/task-history/` in the worktree before writing the compacted one,
-  and names that file in a `## Sandman Task History` section. An archive never
-  replaces an existing file; a second compaction in the same second takes the
-  next free name. The section ends with a marker, so a later compaction
+  and names that file in a `## Sandman Task History` section. An archive is
+  published by hard-linking a complete temp file and never replaces an
+  existing file; a second compaction in the same second takes the next free
+  name, and a file system without hard links fails the archive. The section ends with a marker, so a later compaction
   replaces only what Sandman wrote and treats text after it as the agent's.
   An archive failure launches the Task unchanged.
 - **Structure is recorded, not inferred.** A fresh implementation render
   records its H2 headings in `.sandman/task-anchors`. Those headings (template
   and issue text) are the Task's structure. Sandman's own sections are never
-  anchors. Tasks rendered before this decision fall back to the template's
-  headings. If that template ends with the issue body, nothing marks where the
-  issue's own sections end, so nothing after the last template heading moves.
-- **What moves.** Sections the agent added after the last anchor are history,
-  kept newest first while the Task fits. `## Next Step` and what the agent
+  anchors. The render also records which `## Next Step` is the template's
+  own, since an issue can carry one too; only the template's is capped. Tasks
+  rendered before this decision fall back to the template's headings and its
+  position relative to the issue body. If that template has no heading after
+  the issue body other than Sandman's, nothing marks where the issue's own
+  sections end, so nothing after the last template heading moves.
+- **What moves.** Sections the agent added after the last anchor are history.
+  The fewest oldest of them move for the Task, with a pointer naming exactly
+  what moved, to fit; a result that would not be smaller is not written. `## Next Step` and what the agent
   attached to it keep their first 4 KiB, a prefix that never resumes past the
   cut. A section that holds a kept heading inside a code block the agent left
   open is kept whole. Anchored sections, every `## Plan`,
@@ -54,13 +59,14 @@ updates it.
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
   are never compacted.
-- **On request.** `sandman run --continue --compact` compacts the Task of each
-  continued issue the operator selected, even under the threshold. It runs
-  after every startup check, just before the batch starts, so a refused start
-  changes no Task. Ready continuations and dependencies added to the batch are
-  left to the automatic rule. The CLI
-  becomes a second writer of the Task; like `--continue` itself, it does not
-  guard against an agent that is still running for that row.
+- **On request.** `sandman run --continue --compact` asks the first
+  implementation launch of each continued issue the operator selected to
+  compact its Task, even under the threshold. The request travels with the
+  admitted row and is spent by its first launch, so a start refused before
+  then changes no Task, and retries and later re-entries follow the threshold.
+  Ready continuations and dependencies added to the batch are left to the
+  automatic rule. The CLI itself writes no Task. A restart before the first
+  launch drops the request.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

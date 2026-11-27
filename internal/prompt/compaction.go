@@ -56,6 +56,11 @@ type TaskCompaction struct {
 	// the Task. Sections after the last anchor may then be the issue's own,
 	// so none of them is treated as history.
 	UnboundedHistory bool
+	// NextStepOccurrence says which `## Next Step` section, counting from 1,
+	// is the template's own, the one the agent rewrites and compaction caps;
+	// an issue body can carry its own. 0 means the first; a negative value
+	// means the template has none. See TemplateNextStep.
+	NextStepOccurrence int
 }
 
 // TaskCompactionResult reports what CompactTask did.
@@ -220,11 +225,55 @@ func TemplateEndsWithIssueBody(cfg RenderConfig) bool {
 	}
 	for _, template := range templates {
 		at := strings.LastIndex(template, "{{ISSUE_BODY}}")
-		if at >= 0 && len(TaskHeadings(template[at:])) == 0 {
+		if at < 0 {
+			continue
+		}
+		if !slices.ContainsFunc(TaskHeadings(template[at:]), isAnchorHeading) {
 			return true
 		}
 	}
 	return false
+}
+
+// isAnchorHeading reports whether a heading can mark the Task's structure.
+// Sandman's own sections never do: they are composed at every launch, and a
+// fresh render places some of them after the template.
+func isAnchorHeading(heading string) bool {
+	return !runtimeHeadings[heading]
+}
+
+// TemplateNextStep returns which `## Next Step` section of task, counting
+// from 1, is the template's own, or -1 when the template has none. An issue
+// body can carry its own `## Next Step`; the template's is told apart by
+// where the template places it relative to the issue body.
+func TemplateNextStep(cfg RenderConfig, task string) int {
+	cfg.PromptFlag = ""
+	template, err := loadTemplate(cfg)
+	if err != nil {
+		template = defaultPrompt
+	}
+	before, after := template, ""
+	if at := strings.Index(template, "{{ISSUE_BODY}}"); at >= 0 {
+		before, after = template[:at], template[at:]
+	}
+	if countHeading(before, nextStepHeading) > 0 {
+		return 1
+	}
+	trailing := countHeading(after, nextStepHeading)
+	if trailing == 0 {
+		return -1
+	}
+	return max(1, countHeading(task, nextStepHeading)-trailing+1)
+}
+
+func countHeading(content, heading string) int {
+	n := 0
+	for _, h := range TaskHeadings(content) {
+		if h == heading {
+			n++
+		}
+	}
+	return n
 }
 
 // mergeHeadingCounts keeps, for each heading, the larger occurrence count.
@@ -273,7 +322,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 	sections := splitAtPointerEnd(splitTaskSections(content))
-	roles, last := classifySections(sections, opts.Anchors, opts.UnboundedHistory)
+	roles, last := classifySections(sections, opts)
 	if roles == nil {
 		result.Reason = "no recognised Task structure"
 		return result
@@ -314,18 +363,22 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 			history = append(history, i)
 		}
 	}
-	// The pointer and its blank-line separator; it lists at most everything
-	// that could move.
-	reserve := len(historyPointer(opts, len(content), append(append([]string(nil), moved...), headingsOf(sections, history)...))) + 2
-	budget := opts.Target - fixed - reserve
+	// Move the fewest oldest history sections for the Task, with the pointer
+	// naming exactly what moves, to fit the target; if none fits, move all.
 	keepFrom := len(history)
-	for keepFrom > 0 {
-		size := len(sections[history[keepFrom-1]].text)
-		if size > budget {
+	for n := 0; n <= len(history); n++ {
+		if n == 0 && !changed {
+			if fixed+historyBytes(sections, history) <= opts.Target {
+				keepFrom = 0
+				break
+			}
+			continue
+		}
+		pointer := historyPointer(opts, len(content), append(append([]string(nil), moved...), headingsOf(sections, history[:n])...))
+		if fixed+historyBytes(sections, history[n:])+len(pointer)+2 <= opts.Target {
+			keepFrom = n
 			break
 		}
-		budget -= size
-		keepFrom--
 	}
 	for _, i := range history[keepFrom:] {
 		kept[i] = sections[i].text
@@ -367,6 +420,10 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		compacted += "\n\n" + trimTrailingNewlines(pointer)
 	}
 	compacted += "\n"
+	if len(compacted) >= len(content) {
+		result.Reason = "protected content exceeds the target, and moving the rest would not shrink the Task"
+		return result
+	}
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
@@ -375,10 +432,10 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 // classifySections assigns each section a role and returns the index of the
 // last anchored section, or nil when no section matches an anchor. With
 // unbounded history, sections after the last anchor are kept.
-func classifySections(sections []taskSection, anchors []string, unbounded bool) ([]sectionRole, int) {
+func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRole, int) {
 	remaining := map[string]int{}
-	for _, heading := range anchors {
-		if !runtimeHeadings[heading] {
+	for _, heading := range opts.Anchors {
+		if isAnchorHeading(heading) {
 			remaining[heading]++
 		}
 	}
@@ -394,36 +451,54 @@ func classifySections(sections []taskSection, anchors []string, unbounded bool) 
 	if last < 0 {
 		return nil, -1
 	}
+	editable := opts.NextStepOccurrence
+	if editable == 0 {
+		editable = 1
+	}
+	occurrence := 0
 	roles := make([]sectionRole, len(sections))
 	group := roleKeep
 	for i, section := range sections {
+		nextStep := false
+		if section.heading == nextStepHeading && !section.afterPointer {
+			occurrence++
+			nextStep = occurrence == editable && (anchored[i] || i < last)
+		}
 		switch {
-		case section.afterPointer && i > last && !unbounded:
+		case section.afterPointer && i > last && !opts.UnboundedHistory:
 			roles[i] = roleHistory
 		case section.afterPointer:
 			roles[i] = group
 		case section.heading == TaskHistoryHeading:
 			roles[i] = rolePointer
+		case nextStep:
+			group = roleNextStep
+			roles[i] = group
 		case anchored[i]:
 			group = roleKeep
-			if section.heading == nextStepHeading {
-				group = roleNextStep
-			}
 			roles[i] = group
 		case section.heading == "" || runtimeHeadings[section.heading] || isProtectedHeading(section.heading):
 			roles[i] = roleKeep
-		case i > last && unbounded:
+		case i > last && opts.UnboundedHistory:
 			roles[i] = roleKeep
 		case i > last:
 			roles[i] = roleHistory
 		default:
 			roles[i] = group
 		}
-		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, anchors) {
+		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, opts.Anchors) {
 			roles[i] = roleKeep
 		}
 	}
 	return roles, last
+}
+
+func historyBytes(sections []taskSection, indexes []int) int {
+	n := 0
+	for _, i := range indexes {
+		n += len(sections[i].text)
+	}
+	return n
 }
 
 // swallowsKeptHeading reports whether a section's body holds a heading line

@@ -539,7 +539,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			baseBranches := make(map[int]string)
 			taskPrompts := make(map[int]string)
 			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
-			continuedWorktrees := make(map[int]string)
 			continuationTimeout := cfg.EffectiveReviewTimeout()
 			if reviewTimeoutSet {
 				continuationTimeout = reviewTimeout
@@ -598,7 +597,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						continue
 					}
 					continueIssues = append(continueIssues, num)
-					continuedWorktrees[num] = worktreePath
 					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
 					content, err := readTaskPrompt(cmd, taskPath)
 					if err != nil {
@@ -832,11 +830,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			warnOpencodeVersionMismatch(cmd, agentName, sandboxMode, repoRoot, cfg)
 
 			if compactFlag {
-				// After every startup check, so a refused start leaves each
-				// Task as it was; only the continued issues the operator
-				// selected, never rows added as ready continuations or
-				// dependencies.
-				compactContinuedTasks(cmd, cfg, &req, selectedIssues(continueIssues, issues), continuedWorktrees, sandmanDir, composeContinuation)
+				// The first launch of each row compacts its Task, after the
+				// batch has admitted it, so a refused start changes no Task.
+				// Only continued issues the operator selected; never rows
+				// added as ready continuations or dependencies.
+				req.CompactTasks = requestTaskCompaction(cmd, selectedIssues(continueIssues, issues))
 			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, req)

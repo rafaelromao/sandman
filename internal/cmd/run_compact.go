@@ -2,52 +2,25 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"slices"
-	"time"
 
-	"github.com/rafaelromao/sandman/internal/atomicfs"
-	"github.com/rafaelromao/sandman/internal/batch"
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/spf13/cobra"
 )
 
-// compactContinuedTasks applies `--continue --compact`: each continued
-// issue's preserved Task, at the worktree the continuation resolved, is
-// compacted even under the threshold, and its continuation prompt is composed
-// from the result. The first launch rereads the compacted Task from the
-// worktree. A failure leaves that Task as it was.
-func compactContinuedTasks(cmd *cobra.Command, cfg *config.Config, req *batch.Request, issues []int, worktrees map[int]string, sandmanDir string, compose func(string) string) {
-	template := req.PromptConfig
-	if template.PromptFile == "" {
-		template.PromptFile = filepath.Join(sandmanDir, "prompt.md")
+// requestTaskCompaction applies `--continue --compact`: each issue's Task is
+// compacted, even under the threshold, by its first implementation launch in
+// the batch, after the batch has admitted the row. It reports one line per
+// issue.
+func requestTaskCompaction(cmd *cobra.Command, issues []int) map[int]bool {
+	if len(issues) == 0 {
+		return nil
 	}
+	compact := make(map[int]bool, len(issues))
 	for _, num := range issues {
-		workDir := worktrees[num]
-		taskPath := filepath.Join(workDir, ".sandman", "task.md")
-		content, exists, err := batch.ReadTaskContent(taskPath)
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: read %s: %v\n", num, taskPath, err)
-			continue
-		}
-		if !exists {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: no Task at %s\n", num, taskPath)
-			continue
-		}
-		result, err := batch.CompactWorktreeTask(content, batch.TaskCompactionRequest{
-			WorkDir: workDir, Label: req.PreviousRunIDs[num], Threshold: cfg.EffectiveTaskCompactBytes(),
-			Force: true, Template: template, Now: time.Now(),
-		})
-		fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: %s\n", num, batch.TaskCompactionSummary(result, err))
-		if err != nil || !result.Compacted {
-			continue
-		}
-		if err := atomicfs.WriteAtomic(taskPath, []byte(result.Content), 0o644); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: write compacted Task: %v\n", num, err)
-			continue
-		}
-		req.TaskPrompts[num] = compose(result.Content)
+		compact[num] = true
+		fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: the Task is compacted at its first launch; see the run log\n", num)
 	}
+	return compact
 }
 
 // selectedIssues returns the continued issues the operator selected, by

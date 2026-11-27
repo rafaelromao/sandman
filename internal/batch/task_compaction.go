@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,8 +15,14 @@ import (
 )
 
 // taskAnchorsFile records the H2 headings of a fresh Task render, the
-// structure compaction keeps. It lives next to the Task in the worktree.
+// structure compaction keeps, one per line, and a "next-step N" line naming
+// which `## Next Step` is the template's own. It lives next to the Task in
+// the worktree.
 const taskAnchorsFile = "task-anchors"
+
+// nextStepAnchorPrefix starts the anchors file line naming the template's
+// `## Next Step` occurrence.
+const nextStepAnchorPrefix = "next-step "
 
 // maxArchiveNames bounds the names tried for one archive: the timestamp name,
 // then that name with "-2", "-3", ... when an earlier compaction in the same
@@ -58,7 +65,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		write = atomicfs.WriteAtomicNew
 	}
 	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
-	anchors, unbounded := taskAnchors(req.WorkDir, req.Template)
+	structure := taskAnchors(req.WorkDir, req.Template, content)
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.
 	for n := 1; n <= maxArchiveNames; n++ {
@@ -68,12 +75,13 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 			continue
 		}
 		result := prompt.CompactTask(content, prompt.TaskCompaction{
-			Threshold:        threshold,
-			Target:           threshold * 3 / 4,
-			Force:            req.Force,
-			Anchors:          anchors,
-			ArchivePath:      archive,
-			UnboundedHistory: unbounded,
+			Threshold:          threshold,
+			Target:             threshold * 3 / 4,
+			Force:              req.Force,
+			Anchors:            structure.anchors,
+			ArchivePath:        archive,
+			UnboundedHistory:   structure.unbounded,
+			NextStepOccurrence: structure.nextStep,
 		})
 		if !result.Compacted {
 			return result, nil
@@ -121,33 +129,55 @@ func taskArchiveName(label string, now time.Time, n int) string {
 	return name + ".md"
 }
 
-// taskAnchors returns the recorded anchors of the worktree's Task, or the
-// template's headings for a Task rendered before anchors were recorded. The
-// fallback is unbounded when the template ends with the issue body: nothing
-// then separates the issue's own sections from agent history.
-func taskAnchors(workDir string, template prompt.RenderConfig) ([]string, bool) {
+// taskStructure is what compaction knows about a Task's rendered structure.
+type taskStructure struct {
+	anchors []string
+	// unbounded: nothing separates the issue's own sections from history.
+	unbounded bool
+	// nextStep is the template's `## Next Step` occurrence; see
+	// prompt.TaskCompaction.NextStepOccurrence.
+	nextStep int
+}
+
+// taskAnchors returns the recorded structure of the worktree's Task, or the
+// template's for a Task rendered before anchors were recorded. The fallback
+// is unbounded when the template ends with the issue body.
+func taskAnchors(workDir string, template prompt.RenderConfig, content string) taskStructure {
 	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile))
 	if err != nil {
-		return prompt.TemplateHeadings(template), prompt.TemplateEndsWithIssueBody(template)
-	}
-	var anchors []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			anchors = append(anchors, line)
+		return taskStructure{
+			anchors:   prompt.TemplateHeadings(template),
+			unbounded: prompt.TemplateEndsWithIssueBody(template),
+			nextStep:  prompt.TemplateNextStep(template, content),
 		}
 	}
-	return anchors, false
+	var structure taskStructure
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, nextStepAnchorPrefix); ok {
+			if n, err := strconv.Atoi(value); err == nil {
+				structure.nextStep = n
+			}
+			continue
+		}
+		if line != "" {
+			structure.anchors = append(structure.anchors, line)
+		}
+	}
+	return structure
 }
 
 // recordTaskAnchors stores a fresh implementation Task's headings, which are
-// template, issue and Sandman text only. A failure is reported and leaves
-// later compaction to the template's headings.
-func (r *AgentRun) recordTaskAnchors(rendered string) {
+// template, issue and Sandman text only, and which `## Next Step` is the
+// template's. A failure is reported and leaves later compaction to the
+// template's headings.
+func (r *AgentRun) recordTaskAnchors(rendered string, cfg prompt.RenderConfig) {
 	if r.issue == nil || r.review {
 		return
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
-	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n"
+	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n" +
+		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, prompt.TemplateNextStep(cfg, rendered))
 	// Not through the Task writer: the anchors are not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err == nil {
@@ -162,7 +192,7 @@ func (r *AgentRun) recordTaskAnchors(rendered string) {
 // implementation launches only. Reviews and prompt-only runs such as quota
 // probes and health repairs serve no issue.
 func (r *AgentRun) compactsTask() bool {
-	return r.issue != nil && !r.review && r.taskCompactBytes > 0
+	return r.issue != nil && !r.review && (r.taskCompactBytes > 0 || r.forceTaskCompaction)
 }
 
 // compactTask compacts an implementation launch's composed Task and records
@@ -172,7 +202,7 @@ func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig) strin
 	// writer replaces the Task afterwards.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
 		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
-		Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
+		Force: r.forceTaskCompaction, Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
 	})
 	if summary := TaskCompactionSummary(result, err); summary != "" {
 		r.logRunLine(summary)
