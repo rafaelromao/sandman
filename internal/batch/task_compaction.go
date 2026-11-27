@@ -188,7 +188,7 @@ func (r *AgentRun) recordTaskAnchors(rendered string, nextStep int) {
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
 	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n" +
-		fmt.Sprintf("footer-sha256 %s\n", prompt.TaskFooterDigest(rendered)) +
+		fmt.Sprintf("footer-sha256 %s\n", prompt.RecordedTaskFooter(rendered, nextStep)) +
 		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, nextStep)
 	// Not through the Task writer: the anchors are not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)

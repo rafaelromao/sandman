@@ -316,6 +316,24 @@ func footerDigest(text string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimRight(text, " \t\r\n"))))
 }
 
+// RecordedTaskFooter identifies an immutable footer by digest, or a final
+// editable Next Step by its position in the recorded structural headings.
+func RecordedTaskFooter(content string, nextStep int) string {
+	headings := slices.DeleteFunc(TaskHeadings(content), func(heading string) bool { return !isAnchorHeading(heading) })
+	if nextStep > 0 && len(headings) > 0 && headings[len(headings)-1] == nextStepHeading {
+		count := 0
+		for _, heading := range headings {
+			if heading == nextStepHeading {
+				count++
+			}
+		}
+		if count == nextStep {
+			return "editable"
+		}
+	}
+	return TaskFooterDigest(content)
+}
+
 // LegacyTaskFooterDigest verifies a static template footer against the Task.
 func LegacyTaskFooterDigest(cfg RenderConfig) string {
 	template, err := loadTemplate(cfg)
@@ -604,7 +622,7 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			nextSteps++
 		}
 	}
-	if opts.FooterDigest != "" {
+	if opts.FooterDigest != "" && opts.FooterDigest != "editable" {
 		last = -1
 		for i, section := range sections {
 			if anchored[i] && footerDigest(section.text) == opts.FooterDigest {
@@ -633,7 +651,7 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			}
 		}
 		for _, section := range sections[:last+1] {
-			if section.heading != "" && isAnchorHeading(section.heading) {
+			if remaining[section.heading] > 0 {
 				current = append(current, section.heading)
 			}
 		}

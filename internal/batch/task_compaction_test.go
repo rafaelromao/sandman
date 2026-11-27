@@ -146,6 +146,46 @@ func TestImplementationLaunch_CompactsAnOversizedTask(t *testing.T) {
 	if err != nil || !strings.Contains(string(log), fmt.Sprintf("task compacted: %d -> %d bytes", len(archived), len(launch.stdin))) {
 		t.Fatalf("run.log lacks the compaction line: %s (%v)", log, err)
 	}
+	if summary, output := strings.Index(string(log), "task compacted:"), strings.Index(string(log), `"is_error"`); output < 0 || summary >= output {
+		t.Fatalf("compaction summary must precede agent output:\n%s", log)
+	}
+}
+
+func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T) {
+	for _, name := range []string{"legacy default", "recorded default", "recorded final Next Step"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := prompt.RenderConfig{}
+			if name == "recorded final Next Step" {
+				cfg.PromptFlag = "## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n"
+			}
+			issue := "## Goal\n\nKeep this goal.\n\n## Acceptance criteria\n\nKeep this criterion.\n"
+			rendered, editable, err := (&prompt.Engine{}).RenderWithTaskStructure(cfg, prompt.IssueData{Body: issue})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			if name != "legacy default" {
+				anchors := strings.Join(prompt.TaskHeadings(rendered), "\n") +
+					fmt.Sprintf("\nfooter-sha256 %s\nnext-step %d\n", prompt.RecordedTaskFooter(rendered, editable), editable)
+				if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".sandman", taskAnchorsFile), []byte(anchors), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			task := strings.Replace(rendered, "## Next Step\n", "## Next Step\n\nDo the work.\n"+strings.Repeat("old step detail.\n", 600)+"\n", 1)
+			if name == "recorded default" {
+				task = strings.Replace(task, "old step detail.\n", "\n## Attached old notes\n\nold step detail.\n", 1)
+			}
+			task += "\n## Old checkpoint\n\n" + strings.Repeat("old history.\n", 4000)
+			got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: dir, Force: true, Template: cfg})
+			if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) ||
+				strings.Count(got.Content, "old step detail.") > 250 || strings.Contains(got.Content, "## Old checkpoint\n") {
+				t.Fatalf("invalid compaction: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
+			}
+		})
+	}
 }
 
 func TestImplementationLaunch_LeavesATaskUnderTheThresholdAlone(t *testing.T) {

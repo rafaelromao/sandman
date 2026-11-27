@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -18,6 +19,18 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
+
+// launchOutput reports launcher start before forwarding output, even when
+// the subprocess writes before its start callback runs.
+type launchOutput struct {
+	writer  io.Writer
+	started func()
+}
+
+func (w launchOutput) Write(p []byte) (int, error) {
+	w.started()
+	return w.writer.Write(p)
+}
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
 type AgentRun struct {
@@ -146,7 +159,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		return err
 	}
 	defer logFile.Close()
-	return r.execute(ctx, command, stdout, stderr, nil, nil, logFile)
+	return r.execute(ctx, command, stdout, stderr, nil, nil, logFile, nil)
 }
 
 func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
@@ -173,7 +186,7 @@ func (r *AgentRun) openRunLog() (*os.File, error) {
 	return logFile, nil
 }
 
-func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser, logFile *os.File) error {
+func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser, logFile *os.File, started func()) error {
 	if r.outputWriter != nil {
 		stdout = io.MultiWriter(stdout, r.outputWriter)
 		stderr = io.MultiWriter(stderr, r.outputWriter)
@@ -213,7 +226,14 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	}
 
 	r.reconcileCredentials(warnings)
-	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+	var execErr error
+	if launcher, ok := r.sandbox.(interface {
+		ExecWithStart(context.Context, string, io.Writer, io.Writer, func()) error
+	}); ok && started != nil {
+		execErr = launcher.ExecWithStart(ctx, command, launchOutput{combinedOut, started}, launchOutput{combinedErr, started}, started)
+	} else {
+		execErr = r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+	}
 	flushOutputParsers(parsedStdout, parsedStderr)
 	r.reconcileCredentials(warnings)
 	_ = prefixedOut.Flush()
@@ -376,7 +396,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			})
 		}
 	}
-	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile)
+	var reportCompaction func()
+	if compactionSummary != "" {
+		reportCompaction = sync.OnceFunc(func() { r.logCompaction(logFile, compactionSummary) })
+	}
+	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
 	if errors.Is(execErr, sandbox.ErrExecNotStarted) && archivePath != "" {
 		var rollbackErr error
 		if os.IsNotExist(originalTaskErr) {
@@ -390,8 +414,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			r.logCompaction(logFile, "task not compacted: sandbox launcher did not start; previous Task restored")
 			r.removeUnusedTaskArchive(logFile, archivePath)
 		}
-	} else {
-		r.logCompaction(logFile, compactionSummary)
+	} else if reportCompaction != nil {
+		reportCompaction()
 	}
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
@@ -434,7 +458,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
-				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr, logFile)
+				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr, logFile, nil)
 				r.ciRerunAction = strategy.CIRerunAction(fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
@@ -456,7 +480,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if r.credentials != nil && attemptCtx.Err() == nil {
 			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
 			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
-			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr, logFile)
+			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr, logFile, nil)
 			r.ciRerunAction = strategy.CIRerunAction(relaunchOut, relaunchErr)
 			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
 			parsedStdout, parsedStderr = relaunchOut, relaunchErr

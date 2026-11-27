@@ -208,6 +208,11 @@ func (s *ContainerSandbox) agentExecArgs(pgidFile, guardDir, command string) []s
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	return s.ExecWithStart(ctx, command, stdout, stderr, func() {})
+}
+
+// ExecWithStart notifies the caller once the local launcher has spawned.
+func (s *ContainerSandbox) ExecWithStart(ctx context.Context, command string, stdout, stderr io.Writer, started func()) error {
 	// Gate checks may restore host-visible worktree paths between retries.
 	// Reapply container paths before every command so a later agent attempt
 	// still resolves the worktree's .git pointer inside the container.
@@ -228,6 +233,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	}
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
+	started()
 
 	// Capture KillAgentFn by value to avoid a race with test teardown that
 	// restores the global after the test function returns but while the

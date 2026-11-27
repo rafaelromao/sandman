@@ -664,6 +664,11 @@ func IsGitDir(path string) bool {
 
 // Exec runs a command in the worktree, writing stdout and stderr to the given writers.
 func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	return s.ExecWithStart(ctx, command, stdout, stderr, func() {})
+}
+
+// ExecWithStart notifies the caller once the local launcher has spawned.
+func (s *WorktreeSandbox) ExecWithStart(ctx context.Context, command string, stdout, stderr io.Writer, started func()) error {
 	guardDir, err := s.AgentGitGuardPath()
 	if err != nil {
 		return fmt.Errorf("%w: prepare agent Git guard: %w", ErrExecNotStarted, err)
@@ -681,6 +686,7 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 	s.mu.Unlock()
+	started()
 
 	if contextErr, _ := waitCmd(ctx, cmd, s.processWrapper, nil); contextErr != nil {
 		return fmt.Errorf("exec: %w", contextErr)
