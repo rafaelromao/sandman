@@ -17,8 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// compactableTask is under the default threshold but has old checkpoints a
-// forced compaction moves.
+// compactableTask is a Task under the default threshold, with checkpoints.
 func compactableTask() string {
 	var b strings.Builder
 	b.WriteString(prompt.DefaultPrompt())

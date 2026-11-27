@@ -1,0 +1,205 @@
+package prompt
+
+import (
+	"strings"
+)
+
+// TaskBounds locates the parts of a Task that compaction may change, as byte
+// offsets into it. Everything before StructureEnd is template and issue
+// content, kept except for the Next Step group. Everything after it is agent
+// history and Sandman's own sections.
+type TaskBounds struct {
+	StructureEnd int
+	// NextStepStart and NextStepEnd bound the template's `## Next Step` and
+	// what the agent added to it; they are equal when it cannot be located.
+	NextStepStart, NextStepEnd int
+}
+
+// Marker lines a fresh implementation render writes into its Task. They are
+// HTML comments, so they do not show when rendered, and carry a per-render
+// nonce recorded outside the Task, so issue text cannot forge them.
+const (
+	nextStepStartMarker = "sandman:next-step-start"
+	nextStepEndMarker   = "sandman:next-step-end"
+	taskEndMarker       = "sandman:task-end"
+)
+
+func structureMarker(name, nonce string) string {
+	return "<!-- " + name + " " + nonce + " -->"
+}
+
+// markTemplate writes the structure markers into a template before
+// substitution, so they sit at the template's positions whatever the issue
+// body holds. The Next Step group is marked unless the issue body is
+// substituted into it: from its heading to the next template section, whose
+// heading line the end marker follows so that rewriting Next Step keeps it.
+func markTemplate(template, nonce string) string {
+	sections := splitTaskSections(template)
+	offsets := make([]int, len(sections)+1)
+	for i, section := range sections {
+		offsets[i+1] = offsets[i] + len(section.text)
+	}
+	// The structure ends before the template's trailing Sandman sections,
+	// which are composed again at every launch.
+	last := len(sections) - 1
+	for last > 0 && runtimeHeadings[sections[last].heading] {
+		last--
+	}
+	end := offsets[last+1]
+	step, next := -1, -1
+	for i := 1; i <= last && step < 0; i++ {
+		if sections[i].heading == nextStepHeading {
+			step = i
+		}
+	}
+	if step >= 0 {
+		groupEnd := end
+		for i := step + 1; i <= last && next < 0; i++ {
+			if !runtimeHeadings[sections[i].heading] {
+				next, groupEnd = i, offsets[i]
+			}
+		}
+		if strings.Contains(template[offsets[step]:groupEnd], "{{ISSUE_BODY}}") {
+			step, next = -1, -1
+		}
+	}
+
+	var b strings.Builder
+	written := 0
+	insert := func(at int, line string) {
+		b.WriteString(template[written:at])
+		if at > 0 && template[at-1] != '\n' {
+			b.WriteString("\n")
+		}
+		b.WriteString(line + "\n")
+		written = at
+	}
+	if step >= 0 {
+		insert(offsets[step], structureMarker(nextStepStartMarker, nonce))
+	}
+	if next >= 0 {
+		headingEnd := offsets[next+1]
+		if nl := strings.IndexByte(sections[next].text, '\n'); nl >= 0 {
+			headingEnd = offsets[next] + nl + 1
+		}
+		insert(headingEnd, structureMarker(nextStepEndMarker, nonce))
+	}
+	closing := structureMarker(taskEndMarker, nonce)
+	if step >= 0 && next < 0 {
+		closing = structureMarker(nextStepEndMarker, nonce) + "\n" + closing
+	}
+	insert(end, closing)
+	b.WriteString(template[written:])
+	return b.String()
+}
+
+// findLine returns the offset of the first line equal to line and the offset
+// after it, or -1, -1.
+func findLine(content, line string) (int, int) {
+	for start := 0; start < len(content); {
+		next := len(content)
+		if nl := strings.IndexByte(content[start:], '\n'); nl >= 0 {
+			next = start + nl + 1
+		}
+		if strings.TrimRight(content[start:next], "\r\n") == line {
+			return start, next
+		}
+		start = next
+	}
+	return -1, -1
+}
+
+// MarkedTaskBounds locates the structure a fresh render marked with nonce. It
+// reports false when the end marker is gone. A Next Step marker that is gone
+// or moved leaves the group unlocated.
+func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
+	if nonce == "" {
+		return TaskBounds{}, false
+	}
+	closing, structureEnd := findLine(content, structureMarker(taskEndMarker, nonce))
+	if closing < 0 {
+		return TaskBounds{}, false
+	}
+	bounds := TaskBounds{StructureEnd: structureEnd}
+	_, from := findLine(content[:closing], structureMarker(nextStepStartMarker, nonce))
+	to, after := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
+	if from < 0 || to < from {
+		return bounds, true
+	}
+	// The end marker follows the heading of the section after Next Step, or,
+	// when Next Step is the last one, closes the structure.
+	if strings.TrimSpace(content[after:closing]) != "" {
+		heading := strings.LastIndex(strings.TrimRight(content[:to], "\r\n"), "\n") + 1
+		if !strings.HasPrefix(content[heading:], "## ") {
+			return bounds, true
+		}
+		to = heading
+	}
+	if from < to {
+		bounds.NextStepStart, bounds.NextStepEnd = from, to
+	}
+	return bounds, true
+}
+
+const (
+	issueContextHeading    = "## Issue Context"
+	runtimeContextHeading  = "## Runtime Context"
+	completionHeading      = "## Completion Requirements"
+	reviewBoundaryHeading  = "## Managed Review Boundary"
+	issueBodyPlaceholder   = "{{ISSUE_BODY}}"
+	builtInIssueBlockStart = issueContextHeading + "\n\n"
+)
+
+// lastTemplateSection returns the template's last section that is not one of
+// Sandman's own, without trailing newlines.
+func lastTemplateSection(template string) string {
+	sections := splitTaskSections(template)
+	for i := len(sections) - 1; i >= 0; i-- {
+		if !runtimeHeadings[sections[i].heading] {
+			return trimTrailingNewlines(sections[i].text)
+		}
+	}
+	return ""
+}
+
+// BuiltInTaskBounds locates the structure of a Task that carries no markers,
+// such as one rendered before Sandman wrote them. Only the built-in layout can
+// be verified: the template puts the issue body alone under `## Issue
+// Context`, before `## Runtime Context`, and ends with the built-in `##
+// Completion Requirements`. The Task must hold the current issue body there and
+// those requirements verbatim; otherwise nothing is located.
+func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds, bool) {
+	template, err := loadTemplate(cfg)
+	if err != nil {
+		return TaskBounds{}, false
+	}
+	issueBlock := builtInIssueBlockStart + issueBodyPlaceholder + "\n\n" + runtimeContextHeading + "\n"
+	requirements := lastTemplateSection(defaultPrompt)
+	if strings.Count(template, issueBodyPlaceholder) != 1 || !strings.Contains(template, issueBlock) ||
+		lastTemplateSection(template) != requirements {
+		return TaskBounds{}, false
+	}
+
+	body := builtInIssueBlockStart + NeutraliseBodyPlaceholders(issueBody)
+	at := strings.Index(content, body)
+	if at < 0 || !strings.HasPrefix(strings.TrimLeft(content[at+len(body):], "\r\n"), runtimeContextHeading) {
+		return TaskBounds{}, false
+	}
+	bodyEnd := at + len(body)
+
+	var bounds TaskBounds
+	offset, step := bodyEnd, -1
+	for _, section := range splitTaskSections(content[bodyEnd:]) {
+		switch {
+		case section.heading == nextStepHeading && step < 0:
+			step = offset
+		case section.heading == reviewBoundaryHeading && step >= 0 && bounds.NextStepEnd == 0:
+			bounds.NextStepStart, bounds.NextStepEnd = step, offset
+		case section.heading == completionHeading && strings.HasPrefix(section.text+"\n", requirements+"\n"):
+			bounds.StructureEnd = offset + min(len(requirements)+1, len(section.text))
+			return bounds, true
+		}
+		offset += len(section.text)
+	}
+	return TaskBounds{}, false
+}

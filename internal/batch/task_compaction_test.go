@@ -23,11 +23,12 @@ import (
 
 const testTaskCompactBytes = 48 * 1024
 
-// checkpointTask is the built-in template followed by count agent checkpoint
-// sections of about 2 KiB each, the shape a long continuation grows into.
+// checkpointTask is the built-in template, for an issue with an empty body,
+// followed by count agent checkpoint sections of about 2 KiB each, the shape a
+// long continuation grows into.
 func checkpointTask(count int) string {
 	var b strings.Builder
-	b.WriteString(prompt.DefaultPrompt())
+	b.WriteString(strings.Replace(prompt.DefaultPrompt(), "{{ISSUE_BODY}}", "", 1))
 	for i := 1; i <= count; i++ {
 		fmt.Fprintf(&b, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat(fmt.Sprintf("checkpoint %d detail. ", i), 100))
 	}
@@ -151,83 +152,11 @@ func TestImplementationLaunch_CompactsAnOversizedTask(t *testing.T) {
 	}
 }
 
-func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T) {
-	for _, name := range []string{"legacy default", "legacy custom", "recorded default", "recorded final Next Step", "renamed final Next Step"} {
-		t.Run(name, func(t *testing.T) {
-			cfg := prompt.RenderConfig{}
-			if strings.HasSuffix(name, "final Next Step") {
-				cfg.PromptFlag = "## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n"
-			}
-			if name == "legacy custom" {
-				cfg.PromptFlag = "## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n\n## Footer\n\nKeep this footer.\n"
-			}
-			issue := "## Goal\n\nKeep this goal.\n\n## Acceptance criteria\n\nKeep this criterion.\n"
-			rendered, editable, err := (&prompt.Engine{}).RenderWithTaskStructure(cfg, prompt.IssueData{Body: issue})
-			if err != nil {
-				t.Fatal(err)
-			}
-			dir := t.TempDir()
-			if !strings.HasPrefix(name, "legacy") {
-				anchors := strings.Join(prompt.TaskHeadings(rendered), "\n") +
-					fmt.Sprintf("\nfooter-sha256 %s\nnext-step %d\n", prompt.RecordedTaskFooter(rendered, editable), editable)
-				if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, ".sandman", taskAnchorsFile), []byte(anchors), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			task := strings.Replace(rendered, "## Next Step\n", "## Next Step\n\nDo the work.\n"+strings.Repeat("old step detail.\n", 600)+"\n", 1)
-			if name == "recorded default" {
-				task = strings.Replace(task, "old step detail.\n", "\n## Attached old notes\n\nold step detail.\n", 1)
-			}
-			task += "\n## Old checkpoint\n\n" + strings.Repeat("old history.\n", 4000)
-			if name == "renamed final Next Step" {
-				task = strings.Replace(task, "## Next Step", "## Current Work", 1)
-				task += "\n## Next Step\n\nLatest checkpoint.\n"
-			} else {
-				task += "\n## Next Step\n\nLatest checkpoint.\n"
-			}
-			got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: dir, Force: true, Template: cfg})
-			if name == "renamed final Next Step" {
-				if err != nil || got.Compacted || got.Content != task {
-					t.Fatalf("unverified boundary authorized compaction: compacted=%v err=%v", got.Compacted, err)
-				}
-				return
-			}
-			stepLines := strings.Count(got.Content, "old step detail.")
-			stepPreserved := stepLines == 600
-			if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) ||
-				stepPreserved != strings.HasPrefix(name, "legacy") || strings.Contains(got.Content, "## Old checkpoint\n") {
-				t.Fatalf("invalid compaction: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
-			}
-		})
-	}
-}
-
-func TestCompactWorktreeTask_UnverifiedLegacyStepIsPreserved(t *testing.T) {
-	cfg := prompt.RenderConfig{PromptFlag: "## Next Step\n\nOperator step.\n\n## Notes\n\n{{ISSUE_BODY}}\n"}
-	task := "## Next Step\n\n" + strings.Repeat("Required issue criterion.\n", 900) + "\n## Notes\n\nIssue notes.\n"
-	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
-	if err != nil || got.Compacted || got.Content != task {
-		t.Fatalf("unverified legacy step was altered: compacted=%v err=%v", got.Compacted, err)
-	}
-}
-
-func TestCompactWorktreeTask_VerifiedLegacyFooterDoesNotAuthorizeStepCut(t *testing.T) {
-	cfg := prompt.RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n\n## Footer\n\nKeep this footer.\n"}
-	issue := strings.Repeat("Required issue criterion.\n", 900)
-	task := "## Issue\n\nIssue context.\n\n## Next Step\n\n" + issue + "\n## Footer\n\nKeep this footer.\n" +
-		"\n## Old checkpoint\n\n" + strings.Repeat("Old history.\n", 5000)
-	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
-	if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) || strings.Contains(got.Content, "Old history.") {
-		t.Fatalf("unexpected result: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
-	}
-}
-
-func TestImplementationLaunch_CapsVerifiedDefaultLegacyStep(t *testing.T) {
+// A Task rendered before Sandman marked Tasks is located by the built-in
+// layout, with the current issue body.
+func TestImplementationLaunch_CompactsAnUnmarkedBuiltInTask(t *testing.T) {
 	issue := "## Goal\n\nKeep the goal.\n\n## Acceptance criteria\n\nKeep every criterion."
-	task := strings.Replace(checkpointTask(30), "{{ISSUE_BODY}}", issue, 1)
+	task := strings.Replace(checkpointTask(30), "## Issue Context\n\n", "## Issue Context\n\n"+issue, 1)
 	task = strings.Replace(task, "## Next Step\n", "## Next Step\n\nCurrent checkpoint.\n"+strings.Repeat("Obsolete step.\n", 1000), 1)
 	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
 		run.issue.Body = issue
@@ -235,20 +164,6 @@ func TestImplementationLaunch_CapsVerifiedDefaultLegacyStep(t *testing.T) {
 	if len(launch.stdin) >= testTaskCompactBytes || !strings.Contains(launch.stdin, issue) ||
 		!strings.Contains(launch.stdin, "Current checkpoint.") || strings.Count(launch.stdin, "Obsolete step.") >= 300 {
 		t.Fatalf("legacy launch did not retain the issue and cap the step: %d bytes", len(launch.stdin))
-	}
-}
-
-func TestCompactWorktreeTask_KeepsChecklistAndMovesFencedExample(t *testing.T) {
-	cfg := prompt.RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep this footer.\n"}
-	checklist := "## Execution Checklist\n\n- [x] Plan\n- [ ] Verify\n"
-	plan := "## Plan\n\nKeep the real plan.\n"
-	task := "## Issue\n\nKeep the issue.\n\n## Footer\n\nKeep this footer.\n\n" +
-		checklist + "\n## Old checkpoint\n\n```md\n## Plan\n" +
-		strings.Repeat("Obsolete example.\n", 4000) + "```\n\n" + plan
-	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
-	if err != nil || !got.Compacted || !strings.Contains(got.Content, checklist) ||
-		!strings.Contains(got.Content, plan) || strings.Contains(got.Content, "Obsolete example.") {
-		t.Fatalf("unexpected result: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
 	}
 }
 
@@ -265,18 +180,18 @@ func TestImplementationLaunch_LeavesATaskUnderTheThresholdAlone(t *testing.T) {
 	}
 }
 
-// A fresh render records its headings. Sandman's own sections in that render
-// must not anchor the checkpoints an agent appends later, or nothing would
-// ever count as history.
-func TestFreshRenderAnchorsTheTaskForLaterCompaction(t *testing.T) {
+// A fresh render marks its structure and records the markers' nonce, so a
+// later launch compacts what the agent added and nothing else.
+func TestFreshRenderMarksTheTaskForLaterCompaction(t *testing.T) {
 	root := t.TempDir()
 	fresh := launchInWorktree(t, root, prompt.RenderConfig{}, testTaskCompactBytes, &prompt.Engine{})
-	anchors, err := os.ReadFile(filepath.Join(fresh.workDir, ".sandman", "task-anchors"))
+	nonce, err := os.ReadFile(filepath.Join(fresh.workDir, ".sandman", "task-anchors"))
 	if err != nil {
-		t.Fatalf("fresh render recorded no anchors: %v", err)
+		t.Fatalf("fresh render recorded no nonce: %v", err)
 	}
-	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\nfooter-sha256 " + prompt.TaskFooterDigest(fresh.stdin) + "\nnext-step 1\n"; string(anchors) != want {
-		t.Fatalf("anchors =\n%s\nwant\n%s", anchors, want)
+	bounds, ok := prompt.MarkedTaskBounds(fresh.stdin, strings.TrimSpace(string(nonce)))
+	if !ok || bounds.NextStepEnd <= bounds.NextStepStart {
+		t.Fatalf("fresh Task has no located structure: %+v %t", bounds, ok)
 	}
 	if strings.Contains(fresh.stdin, "## Sandman Task History") {
 		t.Fatal("a fresh render was compacted")
@@ -332,7 +247,7 @@ func TestOnlyImplementationLaunchesAreCompacted(t *testing.T) {
 }
 
 func TestImplementationLaunch_LogsATaskItCannotShrink(t *testing.T) {
-	task := prompt.DefaultPrompt() + "\n## Plan\n\n" + strings.Repeat("a long plan line\n", 4000)
+	task := checkpointTask(0) + "\n## Plan\n\n" + strings.Repeat("a long plan line\n", 4000)
 
 	launch := launchWithCompaction(t, task, testTaskCompactBytes)
 
@@ -407,7 +322,7 @@ func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T)
 	}
 	first := checkpointTask(30)
 	once := compact(first)
-	second := once.Content + checkpointTask(30)[len(prompt.DefaultPrompt()):]
+	second := once.Content + checkpointTask(30)[len(checkpointTask(0)):]
 	twice := compact(second)
 
 	archives := map[string]string{
@@ -425,32 +340,32 @@ func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T)
 	}
 }
 
-// A Task rendered before anchors were recorded, from a template that ends
-// with the issue body, has no boundary between the issue's sections and
-// agent history, so none of them moves.
-func TestCompactWorktreeTask_KeepsIssueSectionsWhenTheTemplateEndsWithTheIssueBody(t *testing.T) {
-	for name, footer := range map[string]string{"issue body last": "", "followed only by a Sandman section": "\n## Sandman Runtime Context\n\n- Base branch: `main`\n"} {
+// A Task without markers whose layout cannot be verified is left alone, with
+// the reason, whatever its size.
+func TestCompactWorktreeTask_LeavesUnverifiedLayoutsAlone(t *testing.T) {
+	issue := "## Acceptance criteria\n\n- [ ] keep me\n"
+	history := checkpointTask(30)[len(checkpointTask(0)):]
+	custom := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n"
+	for name, tc := range map[string]struct {
+		task string
+		cfg  prompt.RenderConfig
+		body string
+	}{
+		"custom template ending with the issue body": {strings.Replace(custom, "{{ISSUE_BODY}}", issue, 1) + history, prompt.RenderConfig{PromptFlag: custom}, issue},
+		"custom template with the built-in Task":     {checkpointTask(30), prompt.RenderConfig{PromptFlag: custom}, ""},
+		"built-in Task with an edited issue":         {checkpointTask(30), prompt.RenderConfig{}, issue},
+	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			templatePath := filepath.Join(dir, "prompt.md")
-			template := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n" + footer
-			if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			var task strings.Builder
-			task.WriteString(strings.Replace(template, "{{ISSUE_BODY}}", "## Acceptance criteria\n\n- [ ] keep me\n", 1))
-			for i := 1; i <= 30; i++ {
-				fmt.Fprintf(&task, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
-			}
 
-			result, err := CompactWorktreeTask(task.String(), TaskCompactionRequest{WorkDir: dir, Threshold: testTaskCompactBytes, Force: true,
-				Template: prompt.RenderConfig{PromptFile: templatePath}, Now: time.Now()})
+			result, err := CompactWorktreeTask(tc.task, TaskCompactionRequest{WorkDir: dir, Threshold: testTaskCompactBytes, Force: true,
+				Template: tc.cfg, IssueBody: tc.body, Now: time.Now()})
 
-			if err != nil || result.Compacted || !strings.Contains(result.Content, "- [ ] keep me") {
-				t.Fatalf("compacted = %t, err %v", result.Compacted, err)
+			if err != nil || result.Compacted || result.Content != tc.task || result.Reason != "no recorded Task structure" {
+				t.Fatalf("compacted = %t, reason %q, err %v", result.Compacted, result.Reason, err)
 			}
-			if !strings.Contains(result.Reason, "no safe history boundary") {
-				t.Fatalf("reason = %q", result.Reason)
+			if _, err := os.Stat(filepath.Join(dir, ".sandman", "task-history")); !os.IsNotExist(err) {
+				t.Fatalf("an archive directory exists: %v", err)
 			}
 		})
 	}
@@ -531,46 +446,6 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	}
 }
 
-func TestCompactWorktreeTask_UnknownLegacyTemplatePreservesIssueContent(t *testing.T) {
-	task := "# Task\n\n## Issue Context\n\n## Next Step\n\n" + strings.Repeat("Acceptance criteria.\n", 3000)
-	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true})
-	if err != nil || result.Compacted || result.Content != task {
-		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
-	}
-}
-
-func TestCompactWorktreeTask_AmbiguousLegacyFooterPreservesIssueContent(t *testing.T) {
-	template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Implementation Notes\n\nTemplate footer.\n"
-	issue := "## Implementation Notes\n\nIssue notes.\n\n## Acceptance criteria\n\n" + strings.Repeat("Acceptance criterion.\n", 3000)
-	task := strings.Replace(template, "{{ISSUE_BODY}}", issue, 1)
-	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
-	if err != nil || result.Compacted || result.Content != task {
-		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
-	}
-}
-
-func TestCompactWorktreeTask_ChangedLegacyFooterCannotMatchIssueHeading(t *testing.T) {
-	template := "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nNew template instructions.\n"
-	task := "## Issue\n\n## Footer\n\nIssue notes.\n\n## Acceptance criteria\n\n" + strings.Repeat("Required.\n", 4000)
-	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
-	if err != nil || result.Compacted || result.Content != task {
-		t.Fatalf("unverified legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
-	}
-}
-
-func TestCompactWorktreeTask_LegacyNextStepPreservesEmbeddedIssueAndMovesHistory(t *testing.T) {
-	template := "# Task\n\n## Next Step\n\nCurrent step.\n\n## Sandman Runtime Context\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep the footer.\n"
-	issue := strings.Repeat("Acceptance criterion.\n", 500)
-	rendered := strings.Replace(template, "{{ISSUE_BODY}}", issue, 1)
-	for _, extra := range []string{"", "\n## Next Step\n\nLatest checkpoint.\n"} {
-		task := rendered + "\n## Old checkpoint\n\n" + strings.Repeat("old detail.\n", 4000) + extra
-		result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
-		if err != nil || !result.Compacted || !strings.HasPrefix(result.Content, rendered) || strings.Contains(result.Content, "## Old checkpoint\n") {
-			t.Fatalf("protected content or history handled incorrectly: compacted=%v err=%v", result.Compacted, err)
-		}
-	}
-}
-
 // The row driver hands a forced compaction to the first execution only;
 // re-entry after a wait launches without it.
 func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {
@@ -636,20 +511,17 @@ func TestRunBatch_CompactTasksForcesOnlyTheFirstLaunch(t *testing.T) {
 	}
 }
 
-// A fresh render records which `## Next Step` is the template's, so an issue
-// that carries its own keeps it whole when the Task is compacted later.
-func TestFreshRenderRecordsTheTemplatesNextStep(t *testing.T) {
+// An issue can carry its own `## Next Step`; the render marks only the
+// template's, so compaction keeps the issue's whole and caps the template's.
+func TestFreshRenderMarksTheTemplatesNextStep(t *testing.T) {
 	root := t.TempDir()
 	issueStep := strings.Repeat("issue step. ", 500)
 	fresh := launchInWorktree(t, root, prompt.RenderConfig{}, testTaskCompactBytes, &prompt.Engine{}, func(run *AgentRun) {
 		run.issue.Body = "## Next Step\n\n" + issueStep + "\n"
 	})
-	anchors, _ := os.ReadFile(filepath.Join(fresh.workDir, ".sandman", "task-anchors"))
-	if !strings.HasSuffix(string(anchors), "next-step 2\n") {
-		t.Fatalf("anchors =\n%s", anchors)
-	}
 
-	task := strings.Replace(fresh.stdin, "## Next Step\n\n", "## Next Step\n\n"+strings.Repeat("current step. ", 600)+"\n", 2)
+	at := strings.LastIndex(fresh.stdin, "## Next Step\n")
+	task := fresh.stdin[:at] + strings.Replace(fresh.stdin[at:], "## Next Step\n", "## Next Step\n\n"+strings.Repeat("current step. ", 600)+"\n", 1)
 	for i := 1; i <= 30; i++ {
 		task += fmt.Sprintf("\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
 	}
@@ -657,5 +529,8 @@ func TestFreshRenderRecordsTheTemplatesNextStep(t *testing.T) {
 
 	if err != nil || !result.Compacted || !strings.Contains(result.Content, issueStep) {
 		t.Fatalf("compacted = %t, err %v; the issue's Next Step changed", result.Compacted, err)
+	}
+	if strings.Count(result.Content, "current step.") >= 600 {
+		t.Fatal("the template's Next Step was not capped")
 	}
 }

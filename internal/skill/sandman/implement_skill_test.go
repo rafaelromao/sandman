@@ -108,6 +108,7 @@ func TestSkillsKeepTheTaskACurrentStateCheckpoint(t *testing.T) {
 			"rewrite `## Next Step` in place",
 			"replace a superseded checkpoint instead of adding another section",
 			"do not paste logs, command output or review reports into it",
+			"Leave any `<!-- sandman:... -->` comment lines where they are",
 			"`.sandman/task-history/`",
 		},
 		"run/SKILL.md": {"rewrite the registered `## Next Step` in place"},

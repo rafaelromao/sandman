@@ -123,13 +123,14 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 		SourceBranch: r.branch,
 		BaseBranch:   r.baseBranch,
 	}
-	var rendered string
+	var rendered, nonce string
 	var err error
-	nextStep := -1
-	if structured, ok := renderer.(interface {
-		RenderWithTaskStructure(prompt.RenderConfig, prompt.IssueData) (string, int, error)
+	if marker, ok := renderer.(interface {
+		RenderMarked(prompt.RenderConfig, prompt.IssueData, string) (string, error)
 	}); ok && r.issue != nil && !r.review {
-		rendered, nextStep, err = structured.RenderWithTaskStructure(cfg, data)
+		if nonce, err = newTaskNonce(); err == nil {
+			rendered, err = marker.RenderMarked(cfg, data, nonce)
+		}
 	} else {
 		rendered, err = renderer.Render(cfg, data)
 	}
@@ -144,7 +145,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
-	r.recordTaskAnchors(rendered, nextStep)
+	r.recordTaskNonce(nonce)
 	return nil
 }
 

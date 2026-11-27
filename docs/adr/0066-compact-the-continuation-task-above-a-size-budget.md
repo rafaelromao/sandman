@@ -38,28 +38,31 @@ updates it.
   name, and a file system without hard links fails the archive. The section ends with a marker, so a later compaction
   replaces only what Sandman wrote and treats text after it as the agent's.
   An archive failure launches the Task unchanged.
-- **Structure is recorded, not inferred.** A fresh implementation render
-  records its H2 headings in `.sandman/task-anchors`. Those headings (template
-  and issue text) are the Task's structure. Sandman's own sections are never
-  anchors. The render also records which `## Next Step` is the template's
-  own. If that section contains substituted issue text, it is kept whole.
-  Tasks rendered before this decision are compacted only if the current
-  template's structural headings match the Task in order and its static
-  footer can be verified. A verified legacy footer authorizes moving history,
-  but the Next Step remains uncapped unless its ownership was recorded at
-  render or the built-in layout and unchanged issue body establish it.
-  Fresh renders record the footer fingerprint, so a
-  later checkpoint with the same heading cannot displace it. If the template has no heading
-  after the issue body other than Sandman's, nothing marks where the issue's
-  own sections end, so nothing after the last template heading moves.
-- **What moves.** Sections the agent added after the last anchor are history.
-  The fewest oldest of them move for the Task, with a pointer naming exactly
-  what moved, to fit; a result that would not be smaller is not written. `## Next Step` and what the agent
-  attached to it keep their first 4 KiB, a prefix that never resumes past the
-  cut. A section that holds a kept heading inside a code block the agent left
-  open is kept whole. Anchored sections, every `## Plan`,
-  status lines and Sandman's sections are kept byte for byte. A Task that
-  cannot shrink is launched unchanged and the run log says why.
+- **Structure is marked, not inferred.** Telling template, issue and agent
+  text apart from headings alone is ambiguous: issue bodies, agent checkpoints
+  and edited sections can all reuse template titles. A fresh implementation
+  render therefore writes comment markers into its Task, carrying a per-render
+  nonce recorded in `.sandman/task-anchors`: before the template's
+  `## Next Step`, after the heading of the section that follows it, and at the
+  end of the template and issue content. Issue text cannot forge the nonce. A
+  Next Step that the issue body is substituted into is not marked.
+- **Unmarked Tasks.** A Task without markers, such as one rendered before this
+  decision, is located only for the built-in layout: the template puts the
+  issue body alone under `## Issue Context` before `## Runtime Context` and ends
+  with the built-in `## Completion Requirements`, and the Task holds the current
+  issue body and those requirements verbatim. Its Next Step group ends at
+  `## Managed Review Boundary`. Anything else is left unchanged, and the run
+  log says there is no recorded structure.
+- **What moves.** Only what follows the structure is history. The fewest oldest
+  sections move for the Task, with a pointer naming exactly what moved, to fit;
+  a result that would not be smaller is not written. The marked Next Step group
+  keeps its first 4 KiB, a prefix that never resumes past the cut. The rest of
+  the structure, every `## Plan`, execution checklists, status lines and
+  Sandman's sections are kept byte for byte. So is a section whose code block
+  swallowed one of those, unless the block is clearly a language-tagged example
+  that starts with that heading while a real one exists. If an agent removes
+  the Next Step markers the step is kept whole; if it removes the closing
+  marker and the layout cannot be verified, the Task is left unchanged.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches

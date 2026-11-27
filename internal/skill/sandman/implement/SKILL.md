@@ -65,7 +65,7 @@ Report truthfully. Keep local verification in progress, external CI or review aw
 
 ### Keep the Task a checkpoint
 
-Every continuation, retry and resume sends the Task back to the agent as its prompt, so its size is paid on every launch. Keep `.sandman/task.md` a current-state checkpoint: rewrite `## Next Step` in place, replace a superseded checkpoint instead of adding another section, and do not paste logs, command output or review reports into it. Record facts once, where they belong.
+Every continuation, retry and resume sends the Task back to the agent as its prompt, so its size is paid on every launch. Keep `.sandman/task.md` a current-state checkpoint: rewrite `## Next Step` in place, replace a superseded checkpoint instead of adding another section, and do not paste logs, command output or review reports into it. Record facts once, where they belong. Leave any `<!-- sandman:... -->` comment lines where they are: they mark which parts of the Task Sandman may compact.
 
 When the Task grows past its size budget, Sandman moves earlier checkpoints to `.sandman/task-history/` and names the file in the Task. That content is history: read it only when a detail you need is missing from the Task and from the live repository, pull request and checks.
 

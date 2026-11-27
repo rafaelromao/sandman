@@ -44,7 +44,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 │   └── review.sock                     # review-daemon control socket
 ├── worktrees/<branch>/                 # per-run worktree (git)
 │   ├── .sandman/task.md                # per-worktree rendered prompt
-│   ├── .sandman/task-anchors           # H2 headings of the fresh render (ADR-0066)
+│   ├── .sandman/task-anchors           # nonce of the Task's structure markers (ADR-0066)
 │   └── .sandman/task-history/          # complete Tasks archived before compaction
 └── state/                              # runtime sidecars
     ├── run-claims/<RunID>.lock          # advisory RunID ownership claim; `clean --stale`/`--all` remove it once the Run is event-terminal
@@ -165,7 +165,7 @@ event batch identity have terminal projections. See [Architecture Overview](over
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
 | `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (auto-cleaned on `success`; preserved on `failure`/`aborted`/`blocked` for `--continue` / inspection) + `sandman clean` (remaining cases) | per AgentRun |
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing); an implementation launch's compaction rewrites it above `task_compact_bytes`, or at a `run --continue --compact` row's first launch | agent | orchestrator (removed with worktree on `success`) + `sandman clean` (preserved with worktree otherwise) | per AgentRun |
-| `worktrees/<branch>/.sandman/task-anchors` | runtime, atomic-rename; H2 headings, then a `next-step N` line | implementation launch at a fresh render | Task compaction | removed with the worktree | per fresh implementation render |
+| `worktrees/<branch>/.sandman/task-anchors` | runtime, atomic-rename; the nonce of the Task's structure markers | implementation launch at a fresh render | Task compaction | removed with the worktree | per fresh implementation render |
 | `worktrees/<branch>/.sandman/task-history/<RunID>-<UTC timestamp>[-N].md` | runtime, atomic create (temp file hard-linked into place, never replacing a file), written before the compacted Task | implementation launch (RunID), including the first launch of a `run --continue --compact` row | agent, on demand | removed with the worktree | per compaction |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |

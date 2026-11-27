@@ -3,8 +3,6 @@ package prompt
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,27 +10,32 @@ import (
 const (
 	testThreshold = 8 * 1024
 	testTarget    = 6 * 1024
+	testNonce     = "n0nce"
 )
 
 func paragraph(label string, size int) string {
 	return strings.Repeat(label+" ", size/(len(label)+1)) + "\n"
 }
 
-// structuredTask is a small Task with the default template's shape: issue
-// context holding its own H2 sections, runtime context, checklist, Next Step
-// and the guidance sections, followed by sections an agent appended.
-func structuredTask(history ...string) string {
-	var b strings.Builder
-	b.WriteString("# Task\n\n## Issue Context\n\nIssue body.\n\n## Acceptance criteria\n\n- [ ] keep me\n\n")
-	b.WriteString("## Runtime Context\n\n- Base branch: `main`\n\n## Execution Checklist\n\n- [x] Create branch\n- [ ] Implement\n\n")
-	b.WriteString("## Next Step\n\nImplement the first slice.\n\n## Required Order\n\n" + paragraph("order", 1500) + "\n")
-	for _, section := range history {
-		b.WriteString(section)
-	}
-	return b.String()
+// testTemplate has the default template's shape: issue context, runtime
+// context, checklist, Next Step and guidance sections.
+func testTemplate() string {
+	return "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n" +
+		"## Runtime Context\n\n- Base branch: `main`\n\n## Execution Checklist\n\n- [x] Create branch\n- [ ] Implement\n\n" +
+		"## Next Step\n\nImplement the first slice.\n\n## Required Order\n\n" + paragraph("order", 1500) + "\n"
 }
 
-var structuredAnchors = []string{"## Issue Context", "## Runtime Context", "## Execution Checklist", "## Next Step", "## Required Order"}
+const testIssue = "Issue body.\n\n## Acceptance criteria\n\n- [ ] keep me"
+
+// renderMarked is what a fresh render of template produces.
+func renderMarked(template, issue string) string {
+	return strings.Replace(markTemplate(template, testNonce), "{{ISSUE_BODY}}", issue, 1)
+}
+
+// structuredTask is a fresh Task followed by sections an agent appended.
+func structuredTask(history ...string) string {
+	return renderMarked(testTemplate(), testIssue) + strings.Join(history, "")
+}
 
 func checkpoint(n, size int) string {
 	return fmt.Sprintf("\n## Checkpoint %d\n\n%s", n, paragraph(fmt.Sprintf("c%d", n), size))
@@ -46,9 +49,26 @@ func checkpoints(count, size int) []string {
 	return sections
 }
 
+func compactTo(content string, target int, force bool) TaskCompactionResult {
+	opts := TaskCompaction{Threshold: testThreshold, Target: target, Force: force, ArchivePath: ".sandman/task-history/a.md"}
+	if bounds, ok := MarkedTaskBounds(content, testNonce); ok {
+		opts.Bounds = &bounds
+	}
+	return CompactTask(content, opts)
+}
+
 func compact(content string, force bool) TaskCompactionResult {
-	return CompactTask(content, TaskCompaction{Threshold: testThreshold, Target: testTarget, Force: force,
-		Anchors: structuredAnchors, ArchivePath: ".sandman/task-history/a.md"})
+	return compactTo(content, testTarget, force)
+}
+
+func headingsIn(content string) []string {
+	var headings []string
+	for _, section := range splitTaskSections(content) {
+		if section.heading != "" {
+			headings = append(headings, section.heading)
+		}
+	}
+	return headings
 }
 
 func TestCompactTask_KeepsTheTaskStructureAndTheNewestHistory(t *testing.T) {
@@ -68,7 +88,7 @@ func TestCompactTask_KeepsTheTaskStructureAndTheNewestHistory(t *testing.T) {
 		t.Error("kept the oldest checkpoint")
 	}
 	if !strings.Contains(got.Content, TaskHistoryHeading) || !strings.Contains(got.Content, "- Checkpoint 1\n") {
-		t.Errorf("pointer missing or incomplete:\n%s", got.Content[strings.Index(got.Content, TaskHistoryHeading):])
+		t.Errorf("pointer missing or incomplete:\n%s", got.Content)
 	}
 }
 
@@ -81,55 +101,21 @@ func TestCompactTask_LeavesATaskAtTheThresholdAlone(t *testing.T) {
 	}
 }
 
-func TestCompactTask_ProtectsPlansStatusLinesAndFencedHeadings(t *testing.T) {
+func TestCompactTask_ProtectsPlansStatusLinesChecklistsAndFencedHeadings(t *testing.T) {
 	fenced := "\n## Notes\n\n```md\n## Not a heading\n" + paragraph("fenced", 2000) + "```\n"
-	task := structuredTask(append(checkpoints(10, 1000),
-		"\n## Plan\n\n### Behaviors to test\n\n1. keep the plan\n",
-		"\n## Status: already resolved\n",
-		fenced)...)
+	kept := []string{
+		"## Plan\n\n### Behaviors to test\n\n1. keep the plan",
+		"## Status: already resolved",
+		"## Execution Checklist\n\n- [ ] later item",
+	}
+	history := append(checkpoints(10, 1000), "\n"+kept[0]+"\n", "\n"+kept[1]+"\n", "\n"+kept[2]+"\n", fenced)
 
-	got := compact(task, false)
+	got := compact(structuredTask(history...), false)
 
-	for _, kept := range []string{"## Plan\n\n### Behaviors to test\n\n1. keep the plan", "## Status: already resolved", "## Not a heading\n" + paragraph("fenced", 2000) + "```"} {
-		if !strings.Contains(got.Content, kept) {
-			t.Errorf("lost %q", kept[:min(len(kept), 40)])
+	for _, text := range append(kept, "## Not a heading\n"+paragraph("fenced", 2000)+"```") {
+		if !strings.Contains(got.Content, text) {
+			t.Errorf("lost %q", text[:min(len(text), 40)])
 		}
-	}
-}
-
-func TestCompactTask_TreatsExtraOccurrencesOfAnAnchorAsHistory(t *testing.T) {
-	task := structuredTask(append(checkpoints(10, 1000), "\n## Next Step\n\nnewest step\n")...)
-
-	got := compact(task, false)
-
-	if strings.Count(got.Content, "## Next Step\n") != 2 || strings.Contains(got.Content, "## Checkpoint 1\n") {
-		t.Fatalf("a later Next Step anchored the checkpoints:\n%s", got.Content)
-	}
-}
-
-func TestCompactTask_KeepsRecordedFooterWhenAnInsertedHeadingShadowsIt(t *testing.T) {
-	footer := "## Required Order\n\nOriginal footer instructions.\n"
-	task := structuredTask()
-	start := strings.Index(task, "## Required Order\n")
-	task = task[:start] + "## Required Order\n\nInserted notes.\n\n" + footer + strings.Join(checkpoints(12, 1000), "")
-	got := compact(task, true)
-	if !got.Compacted || !strings.Contains(got.Content, footer) || strings.Contains(got.Content, "## Checkpoint 1\n") {
-		t.Fatal("compaction did not preserve the original footer and remove old history")
-	}
-}
-
-func TestCompactTask_VerifiesRecordedFooterAndEditableSequence(t *testing.T) {
-	issue := "## Next Step\n\n" + paragraph("issue criteria", 5000)
-	rendered := "## Issue\n\n" + issue + "\n## Next Step\n\nDo the work.\n\n## Footer\n\nOriginal instructions.\n"
-	task := strings.Replace(rendered, "## Next Step\n\nDo the work.", "## Current Work\n\nDo the work.", 1) +
-		strings.Join(checkpoints(12, 1000), "") + "\n## Next Step\n\nNotes.\n\n## Footer\n\nMore notes.\n"
-	got := CompactTask(task, TaskCompaction{
-		Force: true, Target: 8 * 1024, Anchors: TaskHeadings(rendered),
-		NextStepOccurrence: 2, FooterDigest: TaskFooterDigest(rendered), ArchivePath: "archive.md",
-	})
-	if !got.Compacted || !strings.Contains(got.Content, issue) ||
-		!strings.Contains(got.Content, "Original instructions.") || strings.Contains(got.Content, "## Checkpoint 1\n") {
-		t.Fatal("compaction did not preserve the rendered instructions and move old history")
 	}
 }
 
@@ -141,7 +127,7 @@ func TestCompactTask_CapsNextStepKeepingItsBeginning(t *testing.T) {
 
 	start := strings.Index(got.Content, "## Next Step")
 	end := strings.Index(got.Content, "## Required Order")
-	if !strings.Contains(got.Content[start:end], "Implement the first slice.") || end-start > 4096 {
+	if !strings.Contains(got.Content[start:end], "Implement the first slice.") || end-start > nextStepLimit {
 		t.Fatalf("Next Step group is %d bytes:\n%s", end-start, got.Content[start:end])
 	}
 	if strings.Contains(got.Content, "oldest") {
@@ -154,6 +140,27 @@ func TestCompactTask_IsIdempotent(t *testing.T) {
 
 	if again := compact(once.Content, true); again.Compacted || again.Content != once.Content || again.Reason != "already compact" {
 		t.Fatalf("second compaction changed the Task (reason %q)", again.Reason)
+	}
+}
+
+// A Next Step cut at the limit, followed by the pointer or the next section,
+// must not be cut again.
+func TestCompactTask_ACappedNextStepStaysCapped(t *testing.T) {
+	for name, template := range map[string]string{
+		"followed by a template section": testTemplate(),
+		"last section":                   "# Task\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := renderMarked(template, "Issue.") + strings.Join(checkpoints(10, 1000), "")
+			task = strings.Replace(task, "## Next Step\n", "## Next Step\n\n"+strings.Repeat("x\n", 5000), 1)
+
+			first := compact(task, true)
+			second := compact(first.Content, true)
+
+			if !first.Compacted || second.Compacted || second.Content != first.Content {
+				t.Fatalf("not idempotent: %d -> %d -> %d (%s)", len(task), first.After, second.After, second.Reason)
+			}
+		})
 	}
 }
 
@@ -170,16 +177,14 @@ func TestCompactTask_ReplacesThePointerInsteadOfAddingOne(t *testing.T) {
 
 func TestCompactTask_LeavesTasksItCannotShrinkAlone(t *testing.T) {
 	for name, tc := range map[string]struct {
-		task    string
-		anchors []string
-		reason  string
+		task   string
+		reason string
 	}{
-		"protected content over the target": {structuredTask() + "\n## Plan\n\n" + paragraph("plan", 9000), structuredAnchors, "protected content exceeds the target"},
-		"no recognised structure":           {"## Stage: implement\n\n" + paragraph("legacy", 9000), structuredAnchors, "no recognised Task structure"},
-		"only Sandman sections recorded":    {structuredTask(checkpoints(12, 1000)...), []string{reviewEvidenceHeading, continuationFreshnessGuardHeading}, "no recognised Task structure"},
+		"protected content over the target": {structuredTask() + "\n## Plan\n\n" + paragraph("plan", 9000), "protected content exceeds the target"},
+		"no recorded structure":             {"## Stage: implement\n\n" + paragraph("legacy", 9000), "no recorded Task structure"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := CompactTask(tc.task, TaskCompaction{Threshold: testThreshold, Target: testTarget, Anchors: tc.anchors})
+			got := compact(tc.task, false)
 
 			if got.Compacted || got.Content != tc.task || got.Reason != tc.reason {
 				t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
@@ -188,76 +193,153 @@ func TestCompactTask_LeavesTasksItCannotShrinkAlone(t *testing.T) {
 	}
 }
 
-func TestTemplateHeadings_AnchorAnIssueBodysOwnSectionsToIssueContext(t *testing.T) {
-	task := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "## Goal\n\nShip it.\n\n## Acceptance criteria\n\n- [ ] works\n", 1)
-	for i := 1; i <= 40; i++ {
-		task += checkpoint(i, 1000)
-	}
-
-	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, Anchors: TemplateHeadings(RenderConfig{})})
-
-	if !got.Compacted || !strings.Contains(got.Content, "## Acceptance criteria\n\n- [ ] works") {
-		t.Fatalf("compacted = %t; issue body sections lost", got.Compacted)
-	}
-}
-
-func TestTaskHeadings_IgnoreHeadingsInFencedCode(t *testing.T) {
+func TestSplitTaskSections_IgnoresHeadingsInFencedCode(t *testing.T) {
 	content := "# Task\n\n## Issue Context\n\n```md\n## Next Step\n```\n\n   ~~~\n## Plan\n   ~~~\n\n## Next Step\n\ntext ## not a heading\n"
 
-	got := TaskHeadings(content)
-
-	if want := []string{"## Issue Context", "## Next Step"}; strings.Join(got, "|") != strings.Join(want, "|") {
+	if got, want := headingsIn(content), []string{"## Issue Context", "## Next Step"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("headings = %q, want %q", got, want)
 	}
 }
 
-// incidentTask rebuilds the shape of the 119 KB Task that motivated
-// compaction: the default template with an issue body carrying its own H2
-// sections, a plan, a 15 KB Next Step, 22 checkpoints and review evidence
-// holding the reviewer's 11 KB report.
-func incidentTask() (task, report string) {
-	body := "## Goal\n\nMake URLs portable.\n\n## Acceptance criteria\n\n- [ ] Analyze and Compare URLs survive a reload\n"
-	rendered := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", body, 1)
-	rendered = strings.Replace(rendered, "## Next Step\n", "## Next Step\n\n"+paragraph("newest step", 3000)+strings.Repeat(paragraph("older step", 1000), 11)+paragraph("oldest step", 1000), 1)
-	rendered += "\n## Plan\n\n### Behaviors to test\n\n" + paragraph("behavior", 4000)
-	for i := 1; i <= 22; i++ {
-		rendered += checkpoint(i, 1900)
+func TestSplitTaskSections_OnlyAMatchingBareFenceClosesABlock(t *testing.T) {
+	content := "````go\n## A\n```\n## B\n````go\n## C\n````\n## D\n~~~\n## E\n```\n## F\n~~~~\n## G\n"
+
+	if got := headingsIn(content); strings.Join(got, "|") != "## D|## G" {
+		t.Fatalf("headings = %q", got)
 	}
-	report = "## Summary\n\n" + strings.Repeat("A finding with evidence. ", 460)
-	source := func() map[string]any {
-		return map[string]any{"top_level": []any{map[string]any{"body": report}}}
-	}
-	evidence := map[string]any{"reason": "REVIEW_INFORMAL_FEEDBACK", "review_request": map[string]any{
-		"classification":    map[string]any{"boundary_evidence": map[string]any{"sources": source()}, "sources": source()},
-		"informal_feedback": []any{map[string]any{"body": report}},
-	}}
-	return ContinuationTaskPromptWithReviewSettings(TaskWithReviewEvidence(rendered, evidence), "/sandman review", true, 1800), report
 }
 
-func TestCompactTask_IncidentReplay(t *testing.T) {
-	task, report := incidentTask()
-	anchors := TaskHeadings(EnsureManagedTaskContext(strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "## Goal\n\n## Acceptance criteria\n", 1)))
+func TestMarkTemplate_MarksTheNextStepGroupAndTheEndOfTheStructure(t *testing.T) {
+	marked := markTemplate(DefaultPrompt(), testNonce)
 
-	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, Anchors: anchors, ArchivePath: ".sandman/task-history/a.md"})
-
-	if !got.Compacted || got.After*2 > got.Before || got.After > 48*1024 {
-		t.Fatalf("compacted = %t: %d -> %d bytes, want under half and under the threshold", got.Compacted, got.Before, got.After)
-	}
-	for i := 1; i <= 22; i++ {
-		if strings.Contains(got.Content, fmt.Sprintf("## Checkpoint %d\n", i)) {
-			t.Fatalf("checkpoint %d was kept", i)
+	for _, want := range []string{
+		structureMarker(nextStepStartMarker, testNonce) + "\n## Next Step\n",
+		"## Managed Review Boundary\n" + structureMarker(nextStepEndMarker, testNonce) + "\n",
+	} {
+		if !strings.Contains(marked, want) {
+			t.Errorf("missing %q", want)
 		}
 	}
-	escaped, _ := json.Marshal(report)
-	for _, kept := range []string{"- [ ] Analyze and Compare URLs survive a reload", "## Execution Checklist", "### Behaviors to test", "newest step", strings.Trim(string(escaped), `"`)} {
-		if !strings.Contains(got.Content, kept) {
-			t.Errorf("lost %q", kept[:min(len(kept), 40)])
-		}
+	if !strings.HasSuffix(marked, structureMarker(taskEndMarker, testNonce)+"\n") {
+		t.Errorf("the structure does not end the template:\n%s", marked[len(marked)-200:])
 	}
-	if strings.Contains(got.Content, "oldest step") {
-		t.Error("kept the end of Next Step")
+	if got := strings.ReplaceAll(marked, "<!-- sandman:", ""); strings.Count(marked, "<!-- sandman:") != 3 || len(got) == len(marked) {
+		t.Errorf("want exactly three markers")
 	}
-	t.Logf("%d -> %d bytes", got.Before, got.After)
+}
+
+func TestMarkTemplate_PlacesTheEndOfTheStructureBeforeSandmanSections(t *testing.T) {
+	template := "## Issue\n\n{{ISSUE_BODY}}\n\n" + reviewTimeoutContextHeading + "\n\n- x\n"
+
+	marked := markTemplate(template, testNonce)
+
+	if at := strings.Index(marked, structureMarker(taskEndMarker, testNonce)); at < 0 || at > strings.Index(marked, reviewTimeoutContextHeading) {
+		t.Fatalf("marked:\n%s", marked)
+	}
+}
+
+func TestMarkTemplate_LeavesANextStepHoldingTheIssueBodyUnmarked(t *testing.T) {
+	template := "## Next Step\n\nStart.\n\n{{ISSUE_BODY}}\n\n## Notes\n\nFooter.\n"
+
+	marked := markTemplate(template, testNonce)
+
+	if strings.Contains(marked, nextStepStartMarker) || strings.Contains(marked, nextStepEndMarker) {
+		t.Fatalf("marked:\n%s", marked)
+	}
+	task := renderMarked(template, paragraph("criterion", 9000)) + strings.Join(checkpoints(10, 1000), "")
+	got := compact(task, false)
+	if !got.Compacted || !strings.Contains(got.Content, paragraph("criterion", 9000)) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatalf("compacted = %t", got.Compacted)
+	}
+}
+
+// An issue can carry its own `## Next Step`, `## Required Order` or pointer
+// heading. They are part of the structure and stay byte for byte.
+func TestCompactTask_KeepsIssueSectionsThatReuseTemplateHeadings(t *testing.T) {
+	issue := "## Next Step\n\n" + paragraph("issue step", 5000) + "\n## Required Order\n\nIssue order.\n\n" +
+		TaskHistoryHeading + "\n\nHistory the issue author wrote."
+	task := renderMarked(testTemplate(), issue) + strings.Join(checkpoints(12, 1000), "")
+	task = strings.Replace(task, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 5000), 1)
+
+	got := compactTo(task, 12*1024, true)
+
+	if !got.Compacted || !strings.Contains(got.Content, issue) {
+		t.Fatalf("compacted = %t; the issue changed", got.Compacted)
+	}
+	if strings.Count(got.Content, "now now") > nextStepLimit/4 {
+		t.Fatal("the template's Next Step was not capped")
+	}
+}
+
+// An agent may rewrite Next Step and edit the checklist, and the custom
+// template may end with either; the markers still locate the structure.
+func TestCompactTask_SurvivesEditsToAFinalChecklistOrNextStep(t *testing.T) {
+	for name, template := range map[string]string{
+		"final checklist": "## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n\n## Execution Checklist\n\n- [ ] Plan\n- [ ] Verify\n",
+		"final Next Step": "## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := renderMarked(template, "Issue.")
+			task = strings.Replace(task, "- [ ] Plan", "- [x] Plan", 1)
+			task = strings.Replace(task, "Start.", "Rewritten step.", 1)
+			task += strings.Join(checkpoints(30, 1000), "")
+
+			got := compact(task, false)
+
+			if !got.Compacted || got.After > testTarget || strings.Contains(got.Content, "## Checkpoint 1\n") || !strings.Contains(got.Content, "Rewritten step.") {
+				t.Fatalf("compacted = %t, %d bytes (%s)", got.Compacted, got.After, got.Reason)
+			}
+		})
+	}
+}
+
+// A section the agent appends under the name of a template section is
+// history, not structure.
+func TestCompactTask_TreatsAppendedDuplicatesOfTemplateHeadingsAsHistory(t *testing.T) {
+	task := structuredTask(append(checkpoints(10, 1000), "\n## Next Step\n\nnewest step\n", "\n## Required Order\n\nnotes\n")...)
+
+	got := compact(task, false)
+
+	if strings.Count(got.Content, "## Next Step\n") != 2 || strings.Contains(got.Content, "## Checkpoint 1\n") || !strings.Contains(got.Content, "newest step") {
+		t.Fatalf("got:\n%s", got.Content)
+	}
+}
+
+// Without the Next Step markers the step is kept whole, while history still
+// moves; without the closing marker nothing is located.
+func TestMarkedTaskBounds_FailClosedWhenMarkersAreGone(t *testing.T) {
+	step := paragraph("now", 6000)
+	task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Implement the first slice.\n", step, 1)
+
+	withoutStep := strings.Replace(task, structureMarker(nextStepEndMarker, testNonce)+"\n", "", 1)
+	got := compactTo(withoutStep, 12*1024, false)
+	if !got.Compacted || !strings.Contains(got.Content, step) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+	}
+
+	withoutEnd := strings.Replace(task, structureMarker(taskEndMarker, testNonce)+"\n", "", 1)
+	if _, ok := MarkedTaskBounds(withoutEnd, testNonce); ok {
+		t.Fatal("located a structure without its closing marker")
+	}
+	if _, ok := MarkedTaskBounds(task, "other"); ok {
+		t.Fatal("located a structure marked with another nonce")
+	}
+}
+
+// Issue text cannot forge markers, and a copy an agent makes later does not
+// move the structure.
+func TestMarkedTaskBounds_UsesTheRendersOwnMarkers(t *testing.T) {
+	forged := "<!-- sandman:task-end guessed -->\n\n## Acceptance criteria\n\n- [ ] keep me"
+	task := renderMarked(testTemplate(), forged) + "\n## Copy\n\n" + structureMarker(taskEndMarker, testNonce) + "\n" + strings.Join(checkpoints(10, 1000), "")
+
+	got := compact(task, false)
+
+	if !got.Compacted || !strings.Contains(got.Content, forged) {
+		t.Fatalf("compacted = %t; the issue changed", got.Compacted)
+	}
+	if strings.Contains(got.Content, "## Copy\n") {
+		t.Fatal("the quoted marker extended the structure")
+	}
 }
 
 // A Next Step cut inside a code block would leave the fence open, and the
@@ -282,6 +364,35 @@ func TestCompactTask_NeverCutsNextStepInsideACodeBlock(t *testing.T) {
 	}
 }
 
+// Next Step keeps a prefix: once it is cut, a later attached section moves
+// even if it would fit in what is left of the limit.
+func TestCompactTask_NextStepKeepsAPrefixNotFragments(t *testing.T) {
+	step := "Implement the first slice.\n" + strings.Repeat("x", 5000) + "\n\n## Attached note\n\nbeyond the limit\n"
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	got := compact(task, false)
+
+	if !got.Compacted || strings.Contains(got.Content, "beyond the limit") {
+		t.Fatalf("compacted = %t; kept text from beyond the first 4 KiB", got.Compacted)
+	}
+	if !strings.Contains(got.Content, "Implement the first slice.") {
+		t.Fatal("lost the beginning of Next Step")
+	}
+}
+
+// Dropping a section attached to Next Step is a change even when no history
+// moves.
+func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
+	task := strings.Replace(structuredTask(), "## Required Order\n", "## Old notes\n\n"+paragraph("old note", 6000)+"\n## Required Order\n", 1)
+	task = strings.Replace(task, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 4050), 1)
+
+	got := compact(task, false)
+
+	if !got.Compacted || strings.Contains(got.Content, "old note") {
+		t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
+	}
+}
+
 // An agent's unclosed fence, such as a truncated log, must not swallow the
 // sections after it.
 func TestCompactTask_AnUnclosedFenceDoesNotSwallowLaterSections(t *testing.T) {
@@ -301,11 +412,52 @@ func TestCompactTask_AnUnclosedFenceDoesNotSwallowLaterSections(t *testing.T) {
 	}
 }
 
-func TestTaskHeadings_OnlyAMatchingBareFenceClosesABlock(t *testing.T) {
-	content := "````go\n## A\n```\n## B\n````go\n## C\n````\n## D\n~~~\n## E\n```\n## F\n~~~~\n## G\n"
+// A fence an agent left open can be closed by a later one, so the plan lands
+// inside the history section, even with a second plan present and whatever
+// language tags the fences carry. That section is kept.
+func TestCompactTask_KeepsAHistorySectionThatSwallowedAPlan(t *testing.T) {
+	sample := "\n## Plan\n\n- [ ] Verify the output.\n\n```\noutput\n```\n\nThe plan's prose.\n"
+	for name, tc := range map[string]struct {
+		in        int
+		log, plan string
+	}{
+		"untagged log": {2, "```\ntruncated log\n", "\n## Plan\n\n```go\nfunc slice() {}\n```\n\nThe plan's prose.\n"},
+		"tagged log":   {2, "```text\ntruncated log\n", sample},
+		// Nothing but the log's own lines separates the fence from the plan.
+		"tagged log directly before the plan": {9, "```text\ntruncated log\n", sample},
+	} {
+		t.Run(name, func(t *testing.T) {
+			history := checkpoints(10, 1000)
+			history[tc.in] += tc.log
+			task := structuredTask(history...) + tc.plan + "\n## Plan\n\nA separate plan.\n"
 
-	if got := TaskHeadings(content); strings.Join(got, "|") != "## D|## G" {
-		t.Fatalf("headings = %q", got)
+			// A target too small for any history: only protection keeps it.
+			got := compactTo(task, 1024, true)
+
+			for _, kept := range []string{tc.plan, "A separate plan."} {
+				if !strings.Contains(got.Content, kept) {
+					t.Errorf("lost %q", kept[:min(len(kept), 40)])
+				}
+			}
+			if strings.Contains(got.Content, "## Checkpoint 1\n") {
+				t.Error("the checkpoints before the open fence were kept")
+			}
+			if !got.Compacted {
+				t.Errorf("nothing moved: %s", got.Reason)
+			}
+		})
+	}
+}
+
+// A clearly bounded example of a plan in old history does not protect it.
+func TestCompactTask_MovesAnExampleOfAPlan(t *testing.T) {
+	example := "\n## Old checkpoint\n\n```md\n## Plan\n" + strings.Repeat("Obsolete example.\n", 600) + "```\n"
+	task := structuredTask(example, "\n## Plan\n\nKeep the real plan.\n")
+
+	got := compact(task, false)
+
+	if !got.Compacted || strings.Contains(got.Content, "Obsolete example.") || !strings.Contains(got.Content, "Keep the real plan.") {
+		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
 	}
 }
 
@@ -323,47 +475,12 @@ func TestCompactTask_TextAppendedAfterCompactionSurvivesTheNext(t *testing.T) {
 	}
 }
 
-// Dropping a section attached to Next Step is a change even when no history
-// moves.
-func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
-	task := strings.Replace(structuredTask(), "## Required Order\n", "## Old notes\n\n"+paragraph("old note", 6000)+"\n## Required Order\n", 1)
-	task = strings.Replace(task, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 4050), 1)
-
-	got := compact(task, false)
-
-	if !got.Compacted || strings.Contains(got.Content, "old note") {
-		t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
-	}
-}
-
-// A fence an agent left open is closed by the next bare fence, here the one
-// ending the plan's code block, so the plan heading lands inside the history
-// section. That section is kept rather than moving the plan.
-func TestCompactTask_KeepsAHistorySectionThatSwallowedThePlan(t *testing.T) {
-	history := checkpoints(10, 1000)
-	history[2] += "```text\ntruncated log\n"
-	firstPlan := "\n## Plan\n\n- [ ] Verify the output.\n\n```\noutput\n```\n\nThe plan's prose.\n"
-	task := structuredTask(history...) + firstPlan + "\n## Plan\n\nA separate plan.\n"
-
-	got := compact(task, true)
-
-	for _, kept := range []string{firstPlan, "A separate plan.", "## Checkpoint 10\n"} {
-		if !strings.Contains(got.Content, kept) {
-			t.Errorf("lost %q", kept)
-		}
-	}
-	if strings.Contains(got.Content, "## Checkpoint 1\n") {
-		t.Error("the checkpoints before the open fence were kept")
-	}
-}
-
 // The history pointer ends with a marker, so a note written after it is the
 // agent's, whether the pointer ends the Task or another section follows it.
 func TestCompactTask_KeepsANoteWrittenAfterThePointer(t *testing.T) {
 	for name, after := range map[string]string{"pointer at the end": "", "pointer before a section": "\n" + continuationFreshnessGuardHeading + "\n\nguard\n"} {
 		t.Run(name, func(t *testing.T) {
-			huge := []string{checkpoint(1, 9000)}
-			once := compact(structuredTask(huge...)+after, false)
+			once := compact(structuredTask(checkpoint(1, 9000))+after, false)
 			if !once.Compacted || strings.Contains(once.Content, "## Checkpoint 1\n") {
 				t.Fatalf("setup: compacted = %t", once.Compacted)
 			}
@@ -382,143 +499,34 @@ func TestCompactTask_KeepsANoteWrittenAfterThePointer(t *testing.T) {
 	}
 }
 
-// Next Step keeps a prefix: once it is cut, a later attached section moves
-// even if it would fit in what is left of the limit.
-func TestCompactTask_NextStepKeepsAPrefixNotFragments(t *testing.T) {
-	step := "Implement the first slice.\n" + strings.Repeat("x", 5000) + "\n\n## Attached note\n\nbeyond the limit\n"
-	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
-
-	got := compact(task, false)
-
-	if !got.Compacted || strings.Contains(got.Content, "beyond the limit") {
-		t.Fatalf("compacted = %t; kept text from beyond the first 4 KiB", got.Compacted)
-	}
-	if !strings.Contains(got.Content, "Implement the first slice.") {
-		t.Fatal("lost the beginning of Next Step")
-	}
-}
-
-// An issue can carry its own `## Next Step`. Only the template's is the
-// agent's rewritable position; the issue's stays byte for byte.
-func TestCompactTask_KeepsAnIssueNextStepWhole(t *testing.T) {
-	issueStep := paragraph("issue step", 5000)
-	task := "# Task\n\n## Issue Context\n\nIssue body.\n\n## Next Step\n\n" + issueStep +
-		"\n## Execution Checklist\n\n- [ ] Implement\n\n## Next Step\n\nImplement the first slice.\n" + paragraph("now", 5000) +
-		"\n## Required Order\n\n" + paragraph("order", 500) + strings.Join(checkpoints(6, 1000), "")
-	anchors := []string{"## Issue Context", "## Next Step", "## Execution Checklist", "## Next Step", "## Required Order"}
-
-	got := CompactTask(task, TaskCompaction{Threshold: 1, Target: 12 * 1024, Force: true, Anchors: anchors, ArchivePath: "a.md", NextStepOccurrence: 2})
-
-	if !got.Compacted || !strings.Contains(got.Content, "## Next Step\n\n"+issueStep) {
-		t.Fatalf("compacted = %t; the issue's Next Step changed", got.Compacted)
-	}
-	if strings.Count(got.Content, "## Next Step\n") != 2 || strings.Count(got.Content, "now now") > 4096/4 {
-		t.Fatalf("the template's Next Step was dropped or not capped:\n%s", got.Content)
-	}
-}
-
-func TestRenderWithTaskStructure_FindsTheTemplatesOwnOccurrence(t *testing.T) {
-	dir := t.TempDir()
-	write := func(name, template string) RenderConfig {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(template), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return RenderConfig{PromptFile: path}
-	}
-	issueWithNextStep := "## Next Step\n\nissue text\n"
-	for name, tc := range map[string]struct {
-		cfg  RenderConfig
-		body string
-		want int
-	}{
-		"default template, issue has one": {RenderConfig{}, issueWithNextStep, 2},
-		"default template":                {RenderConfig{}, "body", 1},
-		"before the issue body":           {write("before.md", "## Next Step\n\n## Issue\n\n{{ISSUE_BODY}}\n"), issueWithNextStep, 1},
-		"template has none":               {write("none.md", "## Issue\n\n{{ISSUE_BODY}}\n"), issueWithNextStep, -1},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, got, err := (&Engine{}).RenderWithTaskStructure(tc.cfg, IssueData{Body: tc.body}); err != nil || got != tc.want {
-				t.Fatalf("editable occurrence = %d, want %d (err %v)", got, tc.want, err)
-			}
-		})
-	}
-}
-
 // History is budgeted against the pointer that is written, naming only what
 // moves, so the newest section that fits is kept.
 func TestCompactTask_BudgetsAgainstThePointerItWrites(t *testing.T) {
 	base := structuredTask()
 	oldest := checkpoint(1, 5000)
-	opts := TaskCompaction{Threshold: 1, Target: testTarget, Force: true, Anchors: structuredAnchors, ArchivePath: ".sandman/task-history/a.md"}
-	estimate := base + oldest
-	pointer := renderHistoryPointer(opts, len(estimate)+testTarget, []string{"## Checkpoint 1"}, 1)
+	opts := TaskCompaction{Threshold: 1, Target: testTarget, Force: true, ArchivePath: ".sandman/task-history/a.md"}
+	pointer := renderHistoryPointer(opts, len(base)+len(oldest)+testTarget, []string{"## Checkpoint 1"}, 1)
 	heading := "\n## Checkpoint 2\n\n"
 	room := testTarget - len(base) - len(pointer) - 2 - 8
-	newest := heading + strings.Repeat("y", room-len(heading)-1) + "\n"
-	task := base + oldest + newest
+	task := base + oldest + heading + strings.Repeat("y", room-len(heading)-1) + "\n"
+	withBounds := func(content string, target int) TaskCompactionResult {
+		bounds, _ := MarkedTaskBounds(content, testNonce)
+		opts := opts
+		opts.Target, opts.Bounds = target, &bounds
+		return CompactTask(content, opts)
+	}
 
-	got := CompactTask(task, opts)
+	got := withBounds(task, testTarget)
 
 	if !got.Compacted || !strings.Contains(got.Content, "## Checkpoint 2\n") || strings.Contains(got.Content, "## Checkpoint 1\n") || got.After > testTarget {
 		t.Fatalf("compacted = %t, after %d of %d; moved %q", got.Compacted, got.After, testTarget, got.Moved)
 	}
-	if again := CompactTask(got.Content, opts); again.Compacted || again.Content != got.Content {
+	if again := withBounds(got.Content, testTarget); again.Compacted || again.Content != got.Content {
 		t.Fatalf("forcing again changed the Task (reason %q)", again.Reason)
 	}
-	opts.Target = got.After
-	exact := CompactTask(task, opts)
-	if exact.After != opts.Target || !strings.Contains(exact.Content, "## Checkpoint 2\n") {
+	exact := withBounds(task, got.After)
+	if exact.After != got.After || !strings.Contains(exact.Content, "## Checkpoint 2\n") {
 		t.Fatalf("exact fit discarded newest checkpoint: %d bytes, moved %q", exact.After, exact.Moved)
-	}
-}
-
-func TestCompactTask_PreservesIssueSectionNamedLikeHistory(t *testing.T) {
-	issueSection := TaskHistoryHeading + "\n\nHistory provided by the issue author.\n"
-	task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Issue body.\n", issueSection, 1)
-	got := compact(task, true)
-	if !got.Compacted || !strings.Contains(got.Content, issueSection) {
-		t.Fatalf("compacted = %v; issue history was not preserved", got.Compacted)
-	}
-}
-
-func TestCompactTask_PointerSeparatorDoesNotExtendNextStep(t *testing.T) {
-	const heading = "## Next Step\n"
-	prefix := heading + strings.Repeat("x", nextStepLimit-len(heading)-1) + "\n"
-	task := prefix + strings.Repeat("older step\n", 1000)
-	opts := TaskCompaction{Force: true, Target: testTarget, Anchors: []string{nextStepHeading}, ArchivePath: "archive.md"}
-	first := CompactTask(task, opts)
-	second := CompactTask(first.Content, opts)
-	if !first.Compacted || second.Compacted || second.Content != first.Content {
-		t.Fatalf("compaction was not idempotent: %d -> %d -> %d", len(task), first.After, second.After)
-	}
-}
-
-func TestRenderWithTaskStructure_IdentifiesNextStepBetweenIssueCopies(t *testing.T) {
-	cfg := RenderConfig{PromptFlag: "# Task\n\n{{ISSUE_BODY}}\n## Next Step\n\nTemplate step.\n\n{{ISSUE_BODY}}\n"}
-	issue := "## Next Step\n\n" + strings.Repeat("Issue step.\n", 500)
-	rendered, editable, err := (&Engine{}).RenderWithTaskStructure(cfg, IssueData{Body: issue})
-	if err != nil || editable != 2 {
-		t.Fatalf("editable section = %d, err = %v", editable, err)
-	}
-	task := strings.Replace(rendered, "Template step.\n", strings.Repeat("Template step.\n", 500), 1)
-	got := CompactTask(task, TaskCompaction{Force: true, Target: 12 * 1024, Anchors: TaskHeadings(rendered), NextStepOccurrence: editable, ArchivePath: "archive.md"})
-	if !got.Compacted || strings.Count(got.Content, issue) != 2 {
-		t.Fatal("compaction did not preserve both copies of the issue section")
-	}
-}
-
-func TestRenderWithTaskStructure_ProtectsIssueProseInsideNextStep(t *testing.T) {
-	template := "# Task\n\n## Next Step\n\nTemplate step.\n\n{{ISSUE_BODY}}\n\n## Implementation Notes\n\nFooter.\n"
-	issue := strings.Repeat("Acceptance criterion.\n", 500)
-	rendered, editable, err := (&Engine{}).RenderWithTaskStructure(RenderConfig{PromptFlag: template}, IssueData{Body: issue})
-	if err != nil || editable != -1 {
-		t.Fatalf("editable section = %d, err = %v", editable, err)
-	}
-	task := rendered + strings.Join(checkpoints(12, 1000), "")
-	got := CompactTask(task, TaskCompaction{Force: true, Target: testTarget, Anchors: TaskHeadings(rendered), NextStepOccurrence: editable, ArchivePath: "archive.md"})
-	if !got.Compacted || !strings.HasPrefix(got.Content, rendered) || strings.Contains(got.Content, "## Checkpoint 1\n") {
-		t.Fatal("compaction did not preserve the rendered Task and move old history")
 	}
 }
 
@@ -531,5 +539,124 @@ func TestCompactTask_NeverGrowsTheTask(t *testing.T) {
 
 	if got.Compacted || got.Content != task || !strings.Contains(got.Reason, "would not shrink") {
 		t.Fatalf("compacted = %t, %d -> %d bytes, reason %q", got.Compacted, got.Before, got.After, got.Reason)
+	}
+}
+
+const incidentIssue = "## Goal\n\nMake URLs portable.\n\n## Acceptance criteria\n\n- [ ] Analyze and Compare URLs survive a reload\n"
+
+// incidentTask rebuilds the shape of the 119 KB Task that motivated
+// compaction: a template render holding the issue body's own H2 sections, a
+// plan, a 15 KB Next Step with attached sections, 22 checkpoints and review
+// evidence holding the reviewer's 11 KB report.
+func incidentTask(rendered string) (task, report string) {
+	step := "## Plan\n\n### Behaviors to test\n\n" + paragraph("behavior", 4000) + "\n## Next Step\n\n" +
+		paragraph("newest step", 3000) + strings.Repeat(paragraph("older step", 1000), 8) +
+		"\n## Review-Fix Checkpoint\n\n" + strings.Repeat(paragraph("older step", 1000), 3) + paragraph("oldest step", 1000)
+	// The template's Next Step is the last one; an issue may carry its own.
+	at := strings.LastIndex(rendered, "## Next Step\n")
+	rendered = rendered[:at] + strings.Replace(rendered[at:], "## Next Step\n", step, 1)
+	for i := 1; i <= 22; i++ {
+		rendered += checkpoint(i, 1900)
+	}
+	report = "## Summary\n\n" + strings.Repeat("A finding with evidence. ", 460)
+	source := func() map[string]any {
+		return map[string]any{"top_level": []any{map[string]any{"body": report}}}
+	}
+	evidence := map[string]any{"reason": "REVIEW_INFORMAL_FEEDBACK", "review_request": map[string]any{
+		"classification":    map[string]any{"boundary_evidence": map[string]any{"sources": source()}, "sources": source()},
+		"informal_feedback": []any{map[string]any{"body": report}},
+	}}
+	return ContinuationTaskPromptWithReviewSettings(TaskWithReviewEvidence(rendered, evidence), "/sandman review", true, 1800), report
+}
+
+func requireIncidentCompacted(t *testing.T, task, report string, bounds TaskBounds) TaskCompactionResult {
+	t.Helper()
+	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, ArchivePath: ".sandman/task-history/a.md", Bounds: &bounds})
+	if !got.Compacted || got.After*2 > got.Before || got.After > 48*1024 {
+		t.Fatalf("compacted = %t (%s): %d -> %d bytes, want under half and under the threshold", got.Compacted, got.Reason, got.Before, got.After)
+	}
+	for i := 1; i <= 22; i++ {
+		if strings.Contains(got.Content, fmt.Sprintf("## Checkpoint %d\n", i)) {
+			t.Fatalf("checkpoint %d was kept", i)
+		}
+	}
+	escaped, _ := json.Marshal(report)
+	for _, kept := range []string{"- [ ] Analyze and Compare URLs survive a reload", "## Execution Checklist", "### Behaviors to test", "newest step", strings.Trim(string(escaped), `"`)} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept[:min(len(kept), 40)])
+		}
+	}
+	if strings.Contains(got.Content, "oldest step") {
+		t.Error("kept the end of Next Step")
+	}
+	return got
+}
+
+// The incident Task was rendered before Sandman marked Tasks, so the built-in
+// layout locates it, as do the upgrade variants of the same shape.
+func TestCompactTask_IncidentReplay(t *testing.T) {
+	legacy := func(body string) string { return strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", body, 1) }
+	for name, tc := range map[string]struct {
+		body  string
+		after func(string) string
+	}{
+		"incident":                       {incidentIssue, func(s string) string { return s }},
+		"issue body ending in a newline": {incidentIssue + "\n", func(s string) string { return s }},
+		"issue with its own Next Step":   {incidentIssue + "\n## Next Step\n\nThe issue's step.\n", func(s string) string { return s }},
+		"later duplicate Next Step":      {incidentIssue, func(s string) string { return s + "\n## Next Step\n\nlater notes\n" }},
+		"older Managed Review Boundary": {incidentIssue, func(s string) string {
+			return strings.Replace(s, "## Managed Review Boundary\n", "## Managed Review Boundary\n\nOlder wording.\n", 1)
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task, report := incidentTask(legacy(tc.body))
+			task = tc.after(task)
+			bounds, ok := BuiltInTaskBounds(RenderConfig{}, task, tc.body)
+			if !ok {
+				t.Fatal("the built-in layout was not located")
+			}
+
+			got := requireIncidentCompacted(t, task, report, bounds)
+
+			if !strings.Contains(got.Content, strings.TrimSpace(tc.body)) {
+				t.Fatal("the issue body changed")
+			}
+		})
+	}
+	t.Run("marked render", func(t *testing.T) {
+		task, report := incidentTask(renderMarked(DefaultPrompt(), incidentIssue))
+		bounds, ok := MarkedTaskBounds(task, testNonce)
+		if !ok {
+			t.Fatal("the markers were not located")
+		}
+
+		requireIncidentCompacted(t, task, report, bounds)
+	})
+}
+
+// A Task whose layout cannot be verified is left alone.
+func TestBuiltInTaskBounds_RefusesLayoutsItCannotVerify(t *testing.T) {
+	rendered := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", incidentIssue, 1)
+	for name, tc := range map[string]struct {
+		cfg  RenderConfig
+		task string
+		body string
+	}{
+		"template with two issue bodies": {
+			RenderConfig{PromptFlag: strings.Replace(DefaultPrompt(), "## Required Order\n", "## Required Order\n\n{{ISSUE_BODY}}\n", 1)}, rendered, incidentIssue},
+		"template with a section after the requirements": {
+			RenderConfig{PromptFlag: DefaultPrompt() + "\n## Project Rules\n\nRules.\n"}, rendered, incidentIssue},
+		"template that moved the issue body": {
+			RenderConfig{PromptFlag: strings.Replace(strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "", 1), "## Required Order\n", "## Required Order\n\n{{ISSUE_BODY}}\n", 1)}, rendered, incidentIssue},
+		"edited issue body":       {RenderConfig{}, rendered, incidentIssue + "More.\n"},
+		"edited requirements":     {RenderConfig{}, strings.Replace(rendered, "Whether PR merge was performed", "Whether the merge happened", 1), incidentIssue},
+		"custom template":         {RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nF.\n"}, rendered, incidentIssue},
+		"issue only quoted later": {RenderConfig{}, "## Notes\n\n" + incidentIssue + rendered[strings.Index(rendered, "## Runtime Context"):], incidentIssue},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if bounds, ok := BuiltInTaskBounds(tc.cfg, tc.task, tc.body); ok {
+				t.Fatalf("located %+v", bounds)
+			}
+		})
 	}
 }

@@ -1,12 +1,13 @@
 package batch
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,15 +16,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// taskAnchorsFile records the H2 headings of a fresh Task render, the
-// structure compaction keeps, one per line, and a "next-step N" line naming
-// which `## Next Step` is the template's own. It lives next to the Task in
-// the worktree.
+// taskAnchorsFile records the nonce of the structure markers a fresh
+// implementation render wrote into its Task. It lives next to the Task in the
+// worktree.
 const taskAnchorsFile = "task-anchors"
-
-// nextStepAnchorPrefix starts the anchors file line naming the template's
-// `## Next Step` occurrence.
-const nextStepAnchorPrefix = "next-step "
 
 // maxArchiveNames bounds the names tried for one archive: the timestamp name,
 // then that name with "-2", "-3", ... when an earlier compaction in the same
@@ -41,8 +37,8 @@ type TaskCompactionRequest struct {
 	Threshold int
 	// Force compacts below the threshold, as `--continue --compact` does.
 	Force bool
-	// Template locates the template a Task without recorded anchors would
-	// be rendered from.
+	// Template and IssueBody verify the built-in layout of a Task that
+	// carries no markers.
 	Template  prompt.RenderConfig
 	IssueBody string
 	Now       time.Time
@@ -67,7 +63,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		write = atomicfs.WriteAtomicNew
 	}
 	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
-	structure := taskAnchors(req.WorkDir, req.Template, content, req.IssueBody)
+	bounds := taskBounds(req.WorkDir, req.Template, content, req.IssueBody)
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.
 	for n := 1; n <= maxArchiveNames; n++ {
@@ -77,14 +73,11 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 			continue
 		}
 		result := prompt.CompactTask(content, prompt.TaskCompaction{
-			Threshold:          threshold,
-			Target:             threshold * 3 / 4,
-			Force:              req.Force,
-			Anchors:            structure.anchors,
-			ArchivePath:        archive,
-			UnboundedHistory:   structure.unbounded,
-			NextStepOccurrence: structure.nextStep,
-			FooterDigest:       structure.footerDigest,
+			Threshold:   threshold,
+			Target:      threshold * 3 / 4,
+			Force:       req.Force,
+			ArchivePath: archive,
+			Bounds:      bounds,
 		})
 		if !result.Compacted {
 			return result, nil
@@ -132,72 +125,44 @@ func taskArchiveName(label string, now time.Time, n int) string {
 	return name + ".md"
 }
 
-// taskStructure is what compaction knows about a Task's rendered structure.
-type taskStructure struct {
-	anchors []string
-	// unbounded: nothing separates the issue's own sections from history.
-	unbounded bool
-	// nextStep is the template's `## Next Step` occurrence; see
-	// prompt.TaskCompaction.NextStepOccurrence.
-	nextStep     int
-	footerDigest string
-}
-
-// taskAnchors returns the recorded structure of the worktree's Task, or the
-// template's for a Task rendered before anchors were recorded. The fallback
-// is unbounded when the template ends with the issue body.
-func taskAnchors(workDir string, template prompt.RenderConfig, content, issueBody string) taskStructure {
-	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile))
-	if err != nil {
-		if !prompt.MatchesTaskTemplate(template, content) {
-			return taskStructure{nextStep: -1}
-		}
-		return taskStructure{
-			anchors:      prompt.TemplateHeadings(template),
-			unbounded:    prompt.TemplateEndsWithIssueBody(template),
-			nextStep:     prompt.DefaultLegacyNextStep(template, content, issueBody),
-			footerDigest: prompt.LegacyTaskFooterDigest(template),
+// taskBounds locates the structure of a worktree's Task from the markers its
+// fresh render recorded, or, for a Task without them, from the built-in
+// layout. It returns nil when neither is verified.
+func taskBounds(workDir string, template prompt.RenderConfig, content, issueBody string) *prompt.TaskBounds {
+	if data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile)); err == nil {
+		if bounds, ok := prompt.MarkedTaskBounds(content, strings.TrimSpace(string(data))); ok {
+			return &bounds
 		}
 	}
-	structure := taskStructure{nextStep: -1}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if value, ok := strings.CutPrefix(line, "footer-sha256 "); ok {
-			structure.footerDigest = value
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, nextStepAnchorPrefix); ok {
-			if n, err := strconv.Atoi(value); err == nil {
-				structure.nextStep = n
-			}
-			continue
-		}
-		if line != "" {
-			structure.anchors = append(structure.anchors, line)
-		}
+	if bounds, ok := prompt.BuiltInTaskBounds(template, content, issueBody); ok {
+		return &bounds
 	}
-	return structure
+	return nil
 }
 
-// recordTaskAnchors stores a fresh implementation Task's headings, which are
-// template, issue and Sandman text only, and which `## Next Step` is the
-// template's. A failure is reported and leaves later compaction to the
-// template's headings.
-func (r *AgentRun) recordTaskAnchors(rendered string, nextStep int) {
-	if r.issue == nil || r.review {
+// newTaskNonce returns the nonce a fresh render marks its Task with.
+func newTaskNonce() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate Task marker nonce: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// recordTaskNonce stores the nonce of a fresh Task's markers. A failure is
+// reported and leaves later compaction to the built-in layout.
+func (r *AgentRun) recordTaskNonce(nonce string) {
+	if nonce == "" {
 		return
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
-	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n" +
-		fmt.Sprintf("footer-sha256 %s\n", prompt.RecordedTaskFooter(rendered, nextStep)) +
-		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, nextStep)
-	// Not through the Task writer: the anchors are not the Task.
+	// Not through the Task writer: the nonce is not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err == nil {
-		err = atomicfs.WriteAtomic(path, []byte(data), 0o644)
+		err = atomicfs.WriteAtomic(path, []byte(nonce+"\n"), 0o644)
 	}
 	if err != nil && r.warningWriter() != nil {
-		fmt.Fprintf(r.warningWriter(), "warning: record Task anchors: %v\n", err)
+		fmt.Fprintf(r.warningWriter(), "warning: record Task markers: %v\n", err)
 	}
 }
 

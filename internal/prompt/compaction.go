@@ -1,9 +1,7 @@
 package prompt
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 )
@@ -28,8 +26,7 @@ const nextStepLimit = 4 * 1024
 const movedHeadingsListed = 20
 
 // runtimeHeadings are Sandman's own sections. They are composed at every
-// launch, so they are kept, and never anchor the agent's sections: a fresh
-// render already places some of them after the template.
+// launch, so compaction always keeps them.
 var runtimeHeadings = map[string]bool{
 	reviewTimeoutContextHeading:       true,
 	reviewEvidenceHeading:             true,
@@ -48,24 +45,11 @@ type TaskCompaction struct {
 	Target int
 	// Force compacts even when the Task is not above Threshold.
 	Force bool
-	// Anchors are the H2 heading lines of the Task's fresh render, one entry
-	// per occurrence. Sections whose headings they name are the Task's
-	// structure; see TaskHeadings and TemplateHeadings.
-	Anchors []string
 	// ArchivePath is the worktree-relative path the history pointer names.
 	ArchivePath string
-	// UnboundedHistory reports that the anchors do not mark where the issue
-	// body ends: the template ends with it, and no anchors were recorded for
-	// the Task. Sections after the last anchor may then be the issue's own,
-	// so none of them is treated as history.
-	UnboundedHistory bool
-	// NextStepOccurrence says which `## Next Step` section, counting from 1,
-	// is the template's own, the one the agent rewrites and compaction caps;
-	// an issue body can carry its own. 0 means the first; a negative value
-	// means ownership could not be established or the template has none.
-	NextStepOccurrence int
-	// FooterDigest verifies the original final structural section.
-	FooterDigest string
+	// Bounds locates the Task's structure (see MarkedTaskBounds and
+	// BuiltInTaskBounds); nil leaves the Task alone.
+	Bounds *TaskBounds
 }
 
 // TaskCompactionResult reports what CompactTask did.
@@ -204,198 +188,8 @@ func (f fence) closes(open fence) bool {
 	return f.char == open.char && f.length >= open.length && !f.info
 }
 
-// TaskHeadings returns the H2 heading lines of a Task, one per occurrence,
-// ignoring headings inside fenced code blocks.
-func TaskHeadings(content string) []string {
-	var headings []string
-	for _, section := range splitTaskSections(content) {
-		if section.heading != "" {
-			headings = append(headings, section.heading)
-		}
-	}
-	return headings
-}
-
-// TemplateHeadings returns the H2 heading lines of the template a Task would
-// be rendered from. It is the fallback structure for Tasks rendered before
-// Sandman recorded their anchors.
-func TemplateHeadings(cfg RenderConfig) []string {
-	template, err := loadTemplate(cfg)
-	if err != nil {
-		return nil
-	}
-	return TaskHeadings(template)
-}
-
-// TemplateEndsWithIssueBody reports whether a template a Task would be
-// rendered from (see TemplateHeadings) has no H2 heading after the issue body.
-// The issue's own headings then end the Task's structure, and without
-// recorded anchors nothing marks where they end and agent history begins.
-func TemplateEndsWithIssueBody(cfg RenderConfig) bool {
-	templates := []string{defaultPrompt}
-	if template, err := loadTemplate(cfg); err == nil {
-		templates = append(templates, template)
-	}
-	for _, template := range templates {
-		at := strings.LastIndex(template, "{{ISSUE_BODY}}")
-		if at < 0 {
-			continue
-		}
-		if !slices.ContainsFunc(TaskHeadings(template[at:]), isAnchorHeading) {
-			return true
-		}
-	}
-	return false
-}
-
-// isAnchorHeading reports whether a heading can mark the Task's structure.
-// Sandman's own sections never do: they are composed at every launch, and a
-// fresh render places some of them after the template.
-func isAnchorHeading(heading string) bool {
-	return !runtimeHeadings[heading]
-}
-
-// TaskFooterDigest fingerprints the last structural section, excluding
-// trailing whitespace that may change when another section is appended.
-func TaskFooterDigest(content string) string {
-	sections := splitTaskSections(content)
-	for i := len(sections) - 1; i >= 0; i-- {
-		if sections[i].heading != "" && isAnchorHeading(sections[i].heading) {
-			return footerDigest(sections[i].text)
-		}
-	}
-	return ""
-}
-
-func footerDigest(text string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimRight(text, " \t\r\n"))))
-}
-
-// RecordedTaskFooter identifies an immutable footer by digest, or a final
-// editable Next Step by its position in the recorded structural headings.
-func RecordedTaskFooter(content string, nextStep int) string {
-	headings := slices.DeleteFunc(TaskHeadings(content), func(heading string) bool { return !isAnchorHeading(heading) })
-	if nextStep > 0 && len(headings) > 0 && headings[len(headings)-1] == nextStepHeading {
-		count := 0
-		for _, heading := range headings {
-			if heading == nextStepHeading {
-				count++
-			}
-		}
-		if count == nextStep {
-			return "editable"
-		}
-	}
-	return TaskFooterDigest(content)
-}
-
-// DefaultLegacyNextStep verifies the current issue body against the saved
-// default Task before allowing a legacy step to be shortened.
-func DefaultLegacyNextStep(cfg RenderConfig, task, issueBody string) int {
-	template, err := loadTemplate(cfg)
-	body := strings.TrimSpace(NeutraliseBodyPlaceholders(issueBody))
-	if err != nil || template != defaultPrompt || body == "" {
-		return -1
-	}
-	issueBlock := "## Issue Context\n\n" + body + "\n\n## Runtime Context\n"
-	if strings.Count(task, body) != 1 || !strings.Contains(task, issueBlock) {
-		return -1
-	}
-	occurrence := 0
-	for _, section := range splitTaskSections(task) {
-		if section.heading == nextStepHeading {
-			occurrence++
-		}
-	}
-	// A duplicate can be classified as history by the verified footer, but
-	// does not independently establish which legacy step is editable.
-	if occurrence != 1 {
-		return -1
-	}
-	return 1
-}
-
-// LegacyTaskFooterDigest verifies a static template footer against the Task.
-func LegacyTaskFooterDigest(cfg RenderConfig) string {
-	template, err := loadTemplate(cfg)
-	if err != nil || TemplateEndsWithIssueBody(cfg) {
-		return ""
-	}
-	return TaskFooterDigest(template)
-}
-
-func renderedNextStep(template, body, rendered string) int {
-	type bodySpan struct{ start, end int }
-	var spans []bodySpan
-	offset := 0
-	first := true
-	for piece := range strings.SplitSeq(template, "{{ISSUE_BODY}}") {
-		if !first {
-			spans = append(spans, bodySpan{offset, offset + len(body)})
-			offset += len(body)
-		}
-		first = false
-		offset += len(piece)
-	}
-	offset, occurrence, spanIndex := 0, 0, 0
-	for _, section := range splitTaskSections(rendered) {
-		if section.heading == nextStepHeading {
-			occurrence++
-			for spanIndex < len(spans) && spans[spanIndex].end <= offset {
-				spanIndex++
-			}
-			if spanIndex == len(spans) || spans[spanIndex].start >= offset+len(section.text) {
-				return occurrence
-			}
-		}
-		offset += len(section.text)
-	}
-	return -1
-}
-
-// MatchesTaskTemplate requires the legacy Task to contain the known template
-// structure in order before treating any unrecorded tail as agent history.
-func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
-	template, err := loadTemplate(cfg)
-	if err != nil {
-		return false
-	}
-	headings := slices.DeleteFunc(TaskHeadings(template), func(h string) bool { return !isAnchorHeading(h) })
-	if len(headings) == 0 {
-		return false
-	}
-	actual := TaskHeadings(content)
-	counts := make(map[string]int, len(actual))
-	last := make(map[string]int, len(actual))
-	for i, heading := range actual {
-		counts[heading]++
-		last[heading] = i
-	}
-	for _, heading := range headings {
-		if counts[heading] > 1 {
-			footer := headings[len(headings)-1]
-			if heading == nextStepHeading && counts[footer] == 1 {
-				beforeFooter := slices.Index(actual[:last[footer]], nextStepHeading)
-				if beforeFooter >= 0 && !slices.Contains(actual[beforeFooter+1:last[footer]], nextStepHeading) {
-					continue
-				}
-			}
-			// An issue heading could otherwise be mistaken for the
-			// template's footer, making some issue text look like history.
-			return false
-		}
-	}
-	for _, heading := range actual {
-		if heading == headings[0] {
-			headings = headings[1:]
-			if len(headings) == 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
+// isProtectedHeading reports whether a section holds agent state that is
+// never moved: the checklist, a plan or a status line.
 func isProtectedHeading(heading string) bool {
 	if heading == "## Execution Checklist" {
 		return true
@@ -406,73 +200,58 @@ func isProtectedHeading(heading string) bool {
 	return heading == "## Plan" || strings.HasPrefix(heading, "## Plan ") || strings.HasPrefix(heading, "## Plan:")
 }
 
-type sectionRole uint8
+// isKeptSection reports whether compaction keeps a section byte for byte
+// wherever it is: Sandman's sections, protected state, and a section whose
+// fenced block swallowed one of those.
+func isKeptSection(section taskSection, topLevel map[string]bool) bool {
+	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) || swallowsProtected(section.text, topLevel)
+}
 
-const (
-	roleKeep sectionRole = iota
-	roleNextStep
-	roleHistory
-	rolePointer
-)
-
-// CompactTask moves the oldest agent-written history out of an oversized
-// Task. Sections are anchored to the Task's rendered structure (opts.Anchors):
-// a section without an anchor belongs to the anchor before it, and sections
-// after the last anchor are history. Anchored sections, plans, status lines
-// and Sandman's own sections are kept byte for byte; the Next Step group keeps
-// its first 4 KiB; history is kept from the end while the Task fits the
-// target. The caller archives the original before using the result.
+// CompactTask moves the oldest agent-written history out of an oversized Task
+// and trims its Next Step group to the first 4 KiB, using opts.Bounds. The
+// rest of the structure, plans, status lines and Sandman's sections are kept
+// byte for byte; history is kept from the end while the Task fits the target.
+// The caller archives the original before using the result.
 func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	result := TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
 	if opts.Target <= 0 || !opts.Force && (opts.Threshold <= 0 || len(content) <= opts.Threshold) {
 		return result
 	}
-	sections := splitAtPointerEnd(splitTaskSections(content))
-	roles, last := classifySections(sections, opts)
-	if roles == nil {
-		result.Reason = "no recognised Task structure"
+	if opts.Bounds == nil {
+		result.Reason = "no recorded Task structure"
 		return result
 	}
-
-	kept := make([]string, len(sections))
-	var moved []string
-	fixed := 0
-	nextStep := 0
-	changed := false
-	// Once the Next Step group is cut, what follows it moved too: the group
-	// keeps a prefix, never fragments from beyond the limit.
-	capped := false
-	for i, section := range sections {
-		switch roles[i] {
-		case roleKeep:
-			kept[i] = section.text
-		case roleNextStep:
-			switch remaining := nextStepLimit - nextStep; {
-			case !capped && len(section.text) <= remaining:
-				kept[i] = section.text
-			case !capped && remaining > len(section.heading):
-				kept[i] = cutOutsideFence(section.text, remaining)
-				capped, changed = true, true
-				moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
-			default:
-				capped, changed = true, true
-				moved = append(moved, section.label())
-			}
-			nextStep += len(kept[i])
-		}
-		fixed += len(kept[i])
+	bounds := *opts.Bounds
+	topLevel := map[string]bool{}
+	for _, section := range splitTaskSections(content) {
+		topLevel[section.heading] = true
 	}
+	head, moved, changed := capNextStep(content[:bounds.StructureEnd], bounds.NextStepStart, bounds.NextStepEnd, topLevel)
 
+	// What follows the structure is history, except what is always kept. The
+	// text before the first heading stays with the structure.
+	tail := splitAtPointerEnd(splitTaskSections(content[bounds.StructureEnd:]))
+	kept := make([]string, len(tail))
 	var history []int
-	for i := range sections {
-		if roles[i] == roleHistory {
+	fixed := len(head)
+	for i, section := range tail {
+		switch {
+		case section.generatedPointer:
+			continue
+		case section.afterPointer:
+			history = append(history, i)
+		case section.heading == "" || isKeptSection(section, topLevel):
+			kept[i] = section.text
+			fixed += len(section.text)
+		default:
 			history = append(history, i)
 		}
 	}
+
 	// Move the fewest oldest history sections for the Task, with the pointer
 	// naming exactly what moves, to fit the target; if none fits, move all.
 	keepFrom := len(history)
-	keptSize := fixed + historyBytes(sections, history)
+	keptSize := fixed + historyBytes(tail, history)
 	listed := append([]string(nil), moved[:min(len(moved), movedHeadingsListed)]...)
 	listedBytes := 0
 	for _, heading := range listed {
@@ -481,7 +260,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(taskHistorySeparator)
 	for n := 0; n <= len(history); n++ {
 		if n > 0 {
-			section := sections[history[n-1]]
+			section := tail[history[n-1]]
 			keptSize -= len(section.text)
 			if len(listed) < movedHeadingsListed {
 				heading := section.label()
@@ -510,40 +289,33 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		}
 	}
 	for _, i := range history[keepFrom:] {
-		kept[i] = sections[i].text
+		kept[i] = tail[i].text
 	}
-	moved = append(moved, headingsOf(sections, history[:keepFrom])...)
+	for _, i := range history[:keepFrom] {
+		moved = append(moved, tail[i].label())
+	}
 
 	if keepFrom == 0 && !changed {
-		switch {
-		case len(content) <= opts.Target:
+		if len(content) <= opts.Target {
 			result.Reason = "already compact"
-		case opts.UnboundedHistory:
-			result.Reason = "no safe history boundary: the template ends with the issue body and the Task has no recorded anchors"
-		default:
+		} else {
 			result.Reason = "protected content exceeds the target"
 		}
 		return result
 	}
 
-	insertAt := len(sections)
-	for i := range sections {
-		if i > last && kept[i] != "" && insertAt == len(sections) {
-			insertAt = i
-		}
-	}
-	// The pointer goes after the Task's structure, not at the end, so text
-	// the agent appends later never becomes part of it.
-	pointer := taskHistorySeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved))
+	// The pointer goes right after the structure, so text the agent appends
+	// later never becomes part of it.
 	var b strings.Builder
-	for i := range sections {
-		if i == insertAt {
-			b.WriteString(pointer)
-		}
-		b.WriteString(kept[i])
+	b.WriteString(head)
+	rest := 0
+	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
+		b.WriteString(kept[0])
+		rest = 1
 	}
-	if insertAt == len(sections) {
-		b.WriteString(pointer)
+	b.WriteString(taskHistorySeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved)))
+	for _, text := range kept[rest:] {
+		b.WriteString(text)
 	}
 	compacted := b.String()
 	if len(compacted) >= len(content) {
@@ -555,130 +327,47 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	return result
 }
 
-// classifySections assigns each section a role and returns the index of the
-// last anchored section, or nil when no section matches an anchor. With
-// unbounded history, sections after the last anchor are kept.
-func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRole, int) {
-	remaining := map[string]int{}
-	for _, heading := range opts.Anchors {
-		if isAnchorHeading(heading) {
-			remaining[heading]++
-		}
+// capNextStep keeps the first 4 KiB of the Next Step group of a Task's
+// structure, the bytes from from to to. Once cut, what follows in the group
+// moves too: the group keeps a prefix, never fragments from beyond the limit.
+// Kept sections inside it stay and do not count.
+func capNextStep(structure string, from, to int, topLevel map[string]bool) (string, []string, bool) {
+	if from >= to {
+		return structure, nil, false
 	}
-	anchored := make([]bool, len(sections))
-	last := -1
-	nextSteps := 0
-	for i, section := range sections {
-		if section.heading != "" && remaining[section.heading] > 0 {
-			if section.heading != nextStepHeading || nextSteps < remaining[nextStepHeading] {
-				anchored[i] = true
-				last = i
-			}
-		}
-		if section.heading == nextStepHeading {
-			nextSteps++
-		}
-	}
-	if opts.FooterDigest != "" && opts.FooterDigest != "editable" {
-		last = -1
-		for i, section := range sections {
-			if anchored[i] && footerDigest(section.text) == opts.FooterDigest {
-				if last >= 0 {
-					return nil, -1
-				}
-				last = i
-			}
-		}
-		for i := last + 1; i < len(anchored); i++ {
-			anchored[i] = false
-		}
-	}
-	if last < 0 {
-		return nil, -1
-	}
-	editable := opts.NextStepOccurrence
-	if editable == 0 {
-		editable = 1
-	}
-	if opts.FooterDigest != "" {
-		var expected, current []string
-		for _, heading := range opts.Anchors {
-			if isAnchorHeading(heading) {
-				expected = append(expected, heading)
-			}
-		}
-		for _, section := range sections[:last+1] {
-			if remaining[section.heading] > 0 {
-				current = append(current, section.heading)
-			} else if opts.FooterDigest == "editable" && section.heading != "" &&
-				!runtimeHeadings[section.heading] && !isProtectedHeading(section.heading) {
-				// A renamed final step could precede a later checkpoint with
-				// its old title. The recorded heading sequence alone cannot
-				// distinguish that checkpoint from the editable footer.
-				return nil, -1
-			}
-		}
-		if !slices.Equal(expected, current) {
-			if opts.FooterDigest == "editable" {
-				return nil, -1
-			}
-			editable = -1
-		}
-	}
-	if opts.FooterDigest == "" && nextSteps > remaining[nextStepHeading] && remaining[nextStepHeading] > 0 {
-		editable = -1
-		if sections[last].heading == nextStepHeading {
-			for i := last + 1; i < len(sections); i++ {
-				if sections[i].heading == nextStepHeading {
-					anchored[i] = true
-					last = i
-				}
-			}
-		}
-	}
-	occurrence := 0
-	roles := make([]sectionRole, len(sections))
-	topLevel := make(map[string]bool, len(sections))
+	sections := splitTaskSections(structure[from:to])
+	size := 0
 	for _, section := range sections {
-		topLevel[section.heading] = true
-	}
-	group := roleKeep
-	for i, section := range sections {
-		nextStep := false
-		if section.heading == nextStepHeading && !section.afterPointer {
-			occurrence++
-			nextStep = occurrence == editable && (anchored[i] || i < last)
+		if !isKeptSection(section, topLevel) {
+			size += len(section.text)
 		}
+	}
+	if size <= nextStepLimit {
+		return structure, nil, false
+	}
+	var b strings.Builder
+	var moved []string
+	// The cut ends with a blank line, which counts against the limit.
+	room := nextStepLimit - len("\n\n")
+	cut := false
+	for _, section := range sections {
 		switch {
-		case section.afterPointer && i > last && !opts.UnboundedHistory:
-			roles[i] = roleHistory
-		case section.afterPointer:
-			roles[i] = group
-		case section.generatedPointer:
-			roles[i] = rolePointer
-		case nextStep:
-			group = roleNextStep
-			roles[i] = group
-		case anchored[i]:
-			group = roleKeep
-			roles[i] = group
-		case section.heading == "" || runtimeHeadings[section.heading] || isProtectedHeading(section.heading):
-			roles[i] = roleKeep
-			if runtimeHeadings[section.heading] {
-				group = roleKeep
-			}
-		case i > last && opts.UnboundedHistory:
-			roles[i] = roleKeep
-		case i > last:
-			roles[i] = roleHistory
+		case section.text == "":
+		case isKeptSection(section, topLevel):
+			b.WriteString(section.text)
+		case !cut && len(section.text) <= room:
+			b.WriteString(section.text)
+			room -= len(section.text)
+		case !cut && room > len(section.heading):
+			b.WriteString(trimTrailingNewlines(cutOutsideFence(section.text, room)) + "\n\n")
+			cut = true
+			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
 		default:
-			roles[i] = group
-		}
-		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, opts.Anchors, topLevel) {
-			roles[i] = roleKeep
+			cut = true
+			moved = append(moved, section.label())
 		}
 	}
-	return roles, last
+	return structure[:from] + b.String() + structure[to:], moved, true
 }
 
 func historyBytes(sections []taskSection, indexes []int) int {
@@ -689,52 +378,41 @@ func historyBytes(sections []taskSection, indexes []int) int {
 	return n
 }
 
-// swallowsKeptHeading reports whether a section's body holds a heading line
-// compaction would keep: an anchor, a plan, a status line or one of Sandman's
-// sections. Such a line is inside a fenced block, typically one an agent left
-// open and a later fence closed, so the section is kept whole rather than
-// risk moving what it swallowed.
-func swallowsKeptHeading(text string, anchors []string, topLevel map[string]bool) bool {
+// swallowsProtected reports whether a section's body holds, inside a fenced
+// block, a heading compaction would keep, typically because an agent left a
+// fence open and a later one closed it. Such a section is kept whole. Only a
+// clearly bounded example is not: a language-tagged block whose first line is
+// the heading, which also heads a real section, closed by a bare fence with no
+// fence inside.
+func swallowsProtected(text string, topLevel map[string]bool) bool {
 	_, body, _ := strings.Cut(text, "\n")
 	var open fence
-	exampleHeading := false
-	atExampleStart := false
+	example, atStart := false, false
 	for line := range strings.SplitSeq(body, "\n") {
-		if marker, ok := parseFence(strings.TrimRight(line, "\r")); ok {
+		line = strings.TrimRight(line, "\r")
+		if marker, ok := parseFence(line); ok {
 			switch {
 			case open.char == 0:
-				open = marker
-				atExampleStart = true
+				open, atStart = marker, true
 			case marker.closes(open):
-				open, exampleHeading = fence{}, false
-			case exampleHeading:
-				// A fence inside the apparent example could be the
-				// opening fence of an actual swallowed plan.
+				open, example = fence{}, false
+			case example:
 				return true
 			}
 			continue
 		}
 		heading := strings.TrimSpace(line)
-		if !strings.HasPrefix(heading, "## ") {
-			continue
-		}
-		if runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading) {
-			if !open.info || !atExampleStart || !topLevel[heading] {
+		if strings.HasPrefix(heading, "## ") && (runtimeHeadings[heading] || isProtectedHeading(heading)) {
+			if !open.info || !atStart || !topLevel[heading] {
 				return true
 			}
-			exampleHeading = true
+			example = true
 		}
-		atExampleStart = false
+		if heading != "" {
+			atStart = false
+		}
 	}
-	return exampleHeading
-}
-
-func headingsOf(sections []taskSection, indexes []int) []string {
-	headings := make([]string, 0, len(indexes))
-	for _, i := range indexes {
-		headings = append(headings, sections[i].label())
-	}
-	return headings
+	return example
 }
 
 // cutOutsideFence returns the longest prefix of text, ending at a line break

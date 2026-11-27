@@ -211,16 +211,22 @@ type Engine struct{}
 // unchanged so the historical "missing substitution keys" contract is
 // preserved.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
-	result, _, err := e.RenderWithTaskStructure(cfg, data)
-	return result, err
+	return e.render(cfg, data, "")
 }
 
-// RenderWithTaskStructure also identifies the editable Next Step using the
-// actual template and issue-body substitutions from this render.
-func (e *Engine) RenderWithTaskStructure(cfg RenderConfig, data IssueData) (string, int, error) {
+// RenderMarked renders a Task like Render, marking the template's structure
+// with nonce so that compaction can tell it from what the agent adds later.
+func (e *Engine) RenderMarked(cfg RenderConfig, data IssueData, nonce string) (string, error) {
+	return e.render(cfg, data, nonce)
+}
+
+func (e *Engine) render(cfg RenderConfig, data IssueData, nonce string) (string, error) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
-		return "", -1, err
+		return "", err
+	}
+	if nonce != "" {
+		template = markTemplate(template, nonce)
 	}
 
 	mapping := issueMapping(data)
@@ -228,13 +234,8 @@ func (e *Engine) RenderWithTaskStructure(cfg RenderConfig, data IssueData) (stri
 		mapping[k] = v
 	}
 
-	template = substituteTemplate(template, mapping)
-	body := NeutraliseBodyPlaceholders(data.Body)
-	result, _, err := checkedRender(strings.ReplaceAll(template, "{{ISSUE_BODY}}", body))
-	if err != nil {
-		return "", -1, err
-	}
-	return result, renderedNextStep(template, body, result), nil
+	result, _, err := (&Renderer{}).Render(template, data.Body, mapping)
+	return result, err
 }
 
 // RenderReview produces a review prompt string. The template is taken from
