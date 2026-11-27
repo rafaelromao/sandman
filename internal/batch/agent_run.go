@@ -57,13 +57,16 @@ type AgentRun struct {
 	cleanupError            error // distinct cleanup failure from context cancellation
 	operationalError        error
 	contextRolloverLiterals []string
-	env                     map[string]string
-	outputWriter            io.Writer
-	layout                  paths.Layout
-	runFolder               string
-	taskWriter              func(string, []byte, os.FileMode) error
-	sessionWarning          io.Writer
-	now                     func() time.Time
+	// taskCompactBytes is the size above which an implementation launch
+	// compacts its continuation Task; 0 disables compaction.
+	taskCompactBytes int
+	env              map[string]string
+	outputWriter     io.Writer
+	layout           paths.Layout
+	runFolder        string
+	taskWriter       func(string, []byte, os.FileMode) error
+	sessionWarning   io.Writer
+	now              func() time.Time
 	// credentials reconciles rotating agent credentials between the host and
 	// the batch config snapshot around every launch; nil for none.
 	credentials *credentialSync
@@ -223,6 +226,9 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if !r.review {
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
 			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
+		}
+		if r.compactsTask() {
+			taskPrompt = r.compactTask(taskPrompt, renderCfg)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			// A clean recovery session must not start without its checkpoint-first

@@ -19,16 +19,22 @@ var ErrBreakingContract = errors.New("config contract migration required")
 
 // Defaults for optional config fields.
 const (
-	DefaultAgent             = "opencode"
-	DefaultModel             = "opencode/big-pickle"
-	DefaultReviewAgent       = "opencode"
-	DefaultReviewModel       = "opencode/big-pickle"
-	DefaultBuildToolsPreset  = "generic"
-	DefaultReviewCommand     = ""
-	DefaultParallel          = 1
-	DefaultReviewParallel    = 1
-	DefaultStartDelay        = 0
-	DefaultRunIdleTimeout    = 3600
+	DefaultAgent            = "opencode"
+	DefaultModel            = "opencode/big-pickle"
+	DefaultReviewAgent      = "opencode"
+	DefaultReviewModel      = "opencode/big-pickle"
+	DefaultBuildToolsPreset = "generic"
+	DefaultReviewCommand    = ""
+	DefaultParallel         = 1
+	DefaultReviewParallel   = 1
+	DefaultStartDelay       = 0
+	DefaultRunIdleTimeout   = 3600
+	// DefaultTaskCompactBytes is the Task size above which a continuation is
+	// compacted: about 11k tokens, 4.5% of a 250k-token context window.
+	DefaultTaskCompactBytes = 48 * 1024
+	// MinTaskCompactBytes keeps compaction above the built-in template's own
+	// size, so it does not run on every launch.
+	MinTaskCompactBytes      = 32 * 1024
 	DefaultReviewTimeout     = 1800
 	MinReviewTimeout         = 240
 	DefaultRetries           = 3
