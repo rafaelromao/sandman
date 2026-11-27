@@ -281,22 +281,24 @@ func TemplateNextStep(cfg RenderConfig, task string) int {
 // LegacyTemplateNextStep declines to edit a section when an older Task has
 // several candidates and no record of which one the template supplied.
 func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
-	if digest := LegacyTaskFooterDigest(cfg); digest != "" {
-		offset, boundary := 0, -1
-		for _, section := range splitTaskSections(task) {
-			offset += len(section.text)
-			if section.heading != "" && footerDigest(section.text) == digest {
-				if boundary >= 0 {
-					return -1
-				}
-				boundary = offset
-			}
-		}
-		if boundary < 0 {
-			return -1
-		}
-		task = task[:boundary]
+	digest := LegacyTaskFooterDigest(cfg)
+	if digest == "" {
+		return -1
 	}
+	offset, boundary := 0, -1
+	for _, section := range splitTaskSections(task) {
+		offset += len(section.text)
+		if section.heading != "" && footerDigest(section.text) == digest {
+			if boundary >= 0 {
+				return -1
+			}
+			boundary = offset
+		}
+	}
+	if boundary < 0 {
+		return -1
+	}
+	task = task[:boundary]
 	if countHeading(task, nextStepHeading) != 1 {
 		return -1
 	}
@@ -442,6 +444,9 @@ func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
 }
 
 func isProtectedHeading(heading string) bool {
+	if heading == "## Execution Checklist" {
+		return true
+	}
 	if strings.HasPrefix(heading, "## Status:") {
 		return true
 	}
@@ -652,6 +657,12 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 		for _, section := range sections[:last+1] {
 			if remaining[section.heading] > 0 {
 				current = append(current, section.heading)
+			} else if opts.FooterDigest == "editable" && section.heading != "" &&
+				!runtimeHeadings[section.heading] && !isProtectedHeading(section.heading) {
+				// A renamed final step could precede a later checkpoint with
+				// its old title. The recorded heading sequence alone cannot
+				// distinguish that checkpoint from the editable footer.
+				return nil, -1
 			}
 		}
 		if !slices.Equal(expected, current) {
@@ -674,6 +685,10 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 	}
 	occurrence := 0
 	roles := make([]sectionRole, len(sections))
+	topLevel := make(map[string]bool, len(sections))
+	for _, section := range sections {
+		topLevel[section.heading] = true
+	}
 	group := roleKeep
 	for i, section := range sections {
 		nextStep := false
@@ -706,7 +721,7 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 		default:
 			roles[i] = group
 		}
-		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, opts.Anchors) {
+		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, opts.Anchors, topLevel) {
 			roles[i] = roleKeep
 		}
 	}
@@ -726,14 +741,14 @@ func historyBytes(sections []taskSection, indexes []int) int {
 // sections. Such a line is inside a fenced block, typically one an agent left
 // open and a later fence closed, so the section is kept whole rather than
 // risk moving what it swallowed.
-func swallowsKeptHeading(text string, anchors []string) bool {
+func swallowsKeptHeading(text string, anchors []string, topLevel map[string]bool) bool {
 	_, body, _ := strings.Cut(text, "\n")
 	for _, line := range strings.Split(body, "\n") {
 		heading := strings.TrimSpace(line)
 		if !strings.HasPrefix(heading, "## ") {
 			continue
 		}
-		if runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading) {
+		if !topLevel[heading] && (runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading)) {
 			return true
 		}
 	}

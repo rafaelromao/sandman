@@ -184,7 +184,7 @@ func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T
 			task += "\n## Old checkpoint\n\n" + strings.Repeat("old history.\n", 4000)
 			if name == "renamed final Next Step" {
 				task = strings.Replace(task, "## Next Step", "## Current Work", 1)
-				task = strings.Replace(task, "## Acceptance criteria", "## Acceptance Criteria", 1)
+				task += "\n## Next Step\n\nLatest checkpoint.\n"
 			} else {
 				task += "\n## Next Step\n\nLatest checkpoint.\n"
 			}
@@ -200,6 +200,29 @@ func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T
 				t.Fatalf("invalid compaction: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
 			}
 		})
+	}
+}
+
+func TestCompactWorktreeTask_UnverifiedLegacyStepIsPreserved(t *testing.T) {
+	cfg := prompt.RenderConfig{PromptFlag: "## Next Step\n\nOperator step.\n\n## Notes\n\n{{ISSUE_BODY}}\n"}
+	task := "## Next Step\n\n" + strings.Repeat("Required issue criterion.\n", 900) + "\n## Notes\n\nIssue notes.\n"
+	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
+	if err != nil || got.Compacted || got.Content != task {
+		t.Fatalf("unverified legacy step was altered: compacted=%v err=%v", got.Compacted, err)
+	}
+}
+
+func TestCompactWorktreeTask_KeepsChecklistAndMovesFencedExample(t *testing.T) {
+	cfg := prompt.RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep this footer.\n"}
+	checklist := "## Execution Checklist\n\n- [x] Plan\n- [ ] Verify\n"
+	plan := "## Plan\n\nKeep the real plan.\n"
+	task := "## Issue\n\nKeep the issue.\n\n## Footer\n\nKeep this footer.\n\n" +
+		checklist + "\n## Old checkpoint\n\n```md\n## Plan\n" +
+		strings.Repeat("Obsolete example.\n", 4000) + "```\n\n" + plan
+	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
+	if err != nil || !got.Compacted || !strings.Contains(got.Content, checklist) ||
+		!strings.Contains(got.Content, plan) || strings.Contains(got.Content, "Obsolete example.") {
+		t.Fatalf("unexpected result: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
 	}
 }
 
