@@ -62,14 +62,19 @@ type Renderer struct{}
 // is non-empty. The error string is "missing substitution keys: …" to
 // match the historical Engine.Render contract.
 func (r *Renderer) Render(template, body string, mapping map[string]string) (string, []string, error) {
-	intermediate := template
+	intermediate := substituteTemplate(template, mapping)
+	result := strings.ReplaceAll(intermediate, "{{ISSUE_BODY}}", NeutraliseBodyPlaceholders(body))
+	return checkedRender(result)
+}
+
+func substituteTemplate(template string, mapping map[string]string) string {
 	for k, v := range mapping {
-		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)
+		template = strings.ReplaceAll(template, "{{"+k+"}}", v)
 	}
+	return template
+}
 
-	neutralisedBody := NeutraliseBodyPlaceholders(body)
-	result := strings.ReplaceAll(intermediate, "{{ISSUE_BODY}}", neutralisedBody)
-
+func checkedRender(result string) (string, []string, error) {
 	unfilled := keyPattern.FindAllString(result, -1)
 	if len(unfilled) > 0 {
 		return "", unfilled, fmt.Errorf("missing substitution keys: %s", strings.Join(unfilled, ", "))

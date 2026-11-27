@@ -145,6 +145,9 @@ type taskStructure struct {
 func taskAnchors(workDir string, template prompt.RenderConfig, content string) taskStructure {
 	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile))
 	if err != nil {
+		if !prompt.MatchesTaskTemplate(template, content) {
+			return taskStructure{nextStep: -1}
+		}
 		return taskStructure{
 			anchors:   prompt.TemplateHeadings(template),
 			unbounded: prompt.TemplateEndsWithIssueBody(template),
@@ -171,13 +174,13 @@ func taskAnchors(workDir string, template prompt.RenderConfig, content string) t
 // template, issue and Sandman text only, and which `## Next Step` is the
 // template's. A failure is reported and leaves later compaction to the
 // template's headings.
-func (r *AgentRun) recordTaskAnchors(rendered string, cfg prompt.RenderConfig) {
+func (r *AgentRun) recordTaskAnchors(rendered string, nextStep int) {
 	if r.issue == nil || r.review {
 		return
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
 	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n" +
-		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, prompt.TemplateNextStep(cfg, rendered))
+		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, nextStep)
 	// Not through the Task writer: the anchors are not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err == nil {

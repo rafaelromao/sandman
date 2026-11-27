@@ -102,13 +102,23 @@ func NewAgentRunWithLayout(issue *github.Issue, branch string, sandbox sandbox.S
 // Prepare renders the prompt for the issue and writes it to the sandbox.
 func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfig) error {
 	issue := r.issueData()
-	rendered, err := renderer.Render(cfg, prompt.IssueData{
+	data := prompt.IssueData{
 		Number:       issue.Number,
 		Title:        issue.Title,
 		Body:         issue.Body,
 		SourceBranch: r.branch,
 		BaseBranch:   r.baseBranch,
-	})
+	}
+	var rendered string
+	var err error
+	nextStep := -1
+	if structured, ok := renderer.(interface {
+		RenderWithTaskStructure(prompt.RenderConfig, prompt.IssueData) (string, int, error)
+	}); ok && r.issue != nil && !r.review {
+		rendered, nextStep, err = structured.RenderWithTaskStructure(cfg, data)
+	} else {
+		rendered, err = renderer.Render(cfg, data)
+	}
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
 	}
@@ -120,7 +130,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
-	r.recordTaskAnchors(rendered, cfg)
+	r.recordTaskAnchors(rendered, nextStep)
 	return nil
 }
 
@@ -224,30 +234,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 
-	if renderCfg.TaskPrompt != "" {
-		if ctx.Err() != nil {
-			r.status = "aborted"
-			return r.Result()
-		}
-		taskPrompt := renderCfg.TaskPrompt
-		if !r.review {
-			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
-			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
-		}
-		if r.compactsTask() {
-			taskPrompt = r.compactTask(taskPrompt, renderCfg)
-		}
-		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
-			// A clean recovery session must not start without its checkpoint-first
-			// Task, even though atomic replacement preserved the prior Task.
-			// Retain the rollover cause so the ordinary retry boundary retries
-			// against that unchanged Task rather than treating this as a generic
-			// failure and replacing it with a continuation prompt.
-			r.contextExhausted = renderCfg.ContextRecovery
-			r.status = "failure"
-			return r.Result()
-		}
-	} else {
+	if renderCfg.TaskPrompt == "" {
 		if err := r.Prepare(renderer, renderCfg); err != nil {
 			r.status = "failure"
 			return r.Result()
@@ -302,6 +289,27 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		// error returned by prependEnv directly.
 		r.status = "failure"
 		return r.Result()
+	}
+
+	if taskPrompt := renderCfg.TaskPrompt; taskPrompt != "" {
+		if ctx.Err() != nil {
+			r.status = "aborted"
+			return r.Result()
+		}
+		if !r.review {
+			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
+			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
+		}
+		if r.compactsTask() {
+			taskPrompt = r.compactTask(taskPrompt, renderCfg)
+		}
+		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
+			// Preserve the rollover cause so the ordinary retry uses the
+			// unchanged checkpoint rather than a generic continuation prompt.
+			r.contextExhausted = renderCfg.ContextRecovery
+			r.status = "failure"
+			return r.Result()
+		}
 	}
 
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)

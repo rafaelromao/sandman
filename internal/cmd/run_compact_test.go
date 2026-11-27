@@ -113,12 +113,14 @@ func TestRun_ContinueWithoutCompact_LeavesTheTaskAlone(t *testing.T) {
 
 func TestRun_CompactUsageErrorsTouchNothing(t *testing.T) {
 	for name, args := range map[string][]string{
-		"without --continue":   {"--compact", "42"},
-		"prompt-only":          {"--continue", "--compact", "--run-id", "my-run"},
-		"implicit prompt-only": {"--continue", "--compact", "--prompt", "Run this standalone task"},
+		"without --continue":    {"--compact", "42"},
+		"prompt-only":           {"--continue", "--compact", "--run-id", "my-run"},
+		"implicit prompt-only":  {"--continue", "--compact", "--prompt", "Run this standalone task"},
+		"empty label selection": {"--continue", "--compact", "--label", "no-match", "--prompt", "Run this standalone task"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCompactFixture(t, nil)
+			f.deps.GitHubClient.(*fakeGitHubClient).searchIssuesResult = []github.Issue{}
 
 			_, err := f.run(t, args...)
 

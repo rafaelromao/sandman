@@ -211,9 +211,16 @@ type Engine struct{}
 // unchanged so the historical "missing substitution keys" contract is
 // preserved.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
+	result, _, err := e.RenderWithTaskStructure(cfg, data)
+	return result, err
+}
+
+// RenderWithTaskStructure also identifies the editable Next Step using the
+// actual template and issue-body substitutions from this render.
+func (e *Engine) RenderWithTaskStructure(cfg RenderConfig, data IssueData) (string, int, error) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
-		return "", err
+		return "", -1, err
 	}
 
 	mapping := issueMapping(data)
@@ -221,8 +228,13 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 		mapping[k] = v
 	}
 
-	result, _, err := (&Renderer{}).Render(template, data.Body, mapping)
-	return result, err
+	template = substituteTemplate(template, mapping)
+	body := NeutraliseBodyPlaceholders(data.Body)
+	result, _, err := checkedRender(strings.ReplaceAll(template, "{{ISSUE_BODY}}", body))
+	if err != nil {
+		return "", -1, err
+	}
+	return result, renderedNextStep(template, body, result), nil
 }
 
 // RenderReview produces a review prompt string. The template is taken from

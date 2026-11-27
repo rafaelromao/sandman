@@ -14,6 +14,7 @@ const TaskHistoryHeading = "## Sandman Task History"
 // taskHistoryEnd closes the history pointer, so text an agent writes after it
 // stays its own and is never replaced with the pointer.
 const taskHistoryEnd = "<!-- end of Sandman Task History -->"
+const taskHistorySeparator = "\n\n"
 
 // nextStepHeading is the template section the agent rewrites with its current
 // position. Its beginning is kept when it grows; see nextStepLimit.
@@ -103,6 +104,12 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 				strings.HasPrefix(section.text, TaskHistoryHeading+"\n\nSandman moved ") {
 				end := at + len(taskHistoryEnd) + 2
 				section.generatedPointer = true
+				if len(out) > 0 {
+					previous := &out[len(out)-1]
+					if before, ok := strings.CutSuffix(previous.text, taskHistorySeparator); ok {
+						previous.text = before
+					}
+				}
 				if tail := section.text[end:]; strings.TrimSpace(tail) != "" {
 					section.text = section.text[:end]
 					out = append(out, section, taskSection{text: tail, afterPointer: true})
@@ -287,6 +294,58 @@ func countHeading(content, heading string) int {
 	return n
 }
 
+func renderedNextStep(template, body, rendered string) int {
+	type bodySpan struct{ start, end int }
+	var spans []bodySpan
+	offset := 0
+	first := true
+	for piece := range strings.SplitSeq(template, "{{ISSUE_BODY}}") {
+		if !first {
+			spans = append(spans, bodySpan{offset, offset + len(body)})
+			offset += len(body)
+		}
+		first = false
+		offset += len(piece)
+	}
+	offset, occurrence, spanIndex := 0, 0, 0
+	for _, section := range splitTaskSections(rendered) {
+		if section.heading == nextStepHeading {
+			occurrence++
+			line, _, _ := strings.Cut(section.text, "\n")
+			for spanIndex < len(spans) && spans[spanIndex].end <= offset {
+				spanIndex++
+			}
+			if spanIndex == len(spans) || spans[spanIndex].start >= offset+len(line) {
+				return occurrence
+			}
+		}
+		offset += len(section.text)
+	}
+	return -1
+}
+
+// MatchesTaskTemplate requires the legacy Task to contain the known template
+// structure in order before treating any unrecorded tail as agent history.
+func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
+	template, err := loadTemplate(cfg)
+	if err != nil {
+		return false
+	}
+	headings := slices.DeleteFunc(TaskHeadings(template), func(h string) bool { return !isAnchorHeading(h) })
+	if len(headings) == 0 {
+		return false
+	}
+	for _, heading := range TaskHeadings(content) {
+		if heading == headings[0] {
+			headings = headings[1:]
+			if len(headings) == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // mergeHeadingCounts keeps, for each heading, the larger occurrence count.
 func mergeHeadingCounts(a, b []string) []string {
 	counts := map[string]int{}
@@ -383,8 +442,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	for _, heading := range listed {
 		listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
 	}
-	const pointerSeparator = "\n\n"
-	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(pointerSeparator)
+	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(taskHistorySeparator)
 	for n := 0; n <= len(history); n++ {
 		if n > 0 {
 			section := sections[history[n-1]]
@@ -440,7 +498,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	}
 	// The pointer goes after the Task's structure, not at the end, so text
 	// the agent appends later never becomes part of it.
-	pointer := pointerSeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved))
+	pointer := taskHistorySeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved))
 	var b strings.Builder
 	for i := range sections {
 		if i == insertAt {

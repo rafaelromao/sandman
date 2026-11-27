@@ -372,6 +372,40 @@ func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) 
 	}
 }
 
+func TestImplementationLaunch_InvalidCommandLeavesTaskUnchanged(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+	sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
+	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+		t.Fatal(err)
+	}
+	task := checkpointTask(30)
+	if err := sb.WritePrompt(task); err != nil {
+		t.Fatal(err)
+	}
+	run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
+	run.forceTaskCompaction = true
+	result := run.Run(context.Background(), &prompt.Engine{}, "fake-agent {{.Unknown}}", prompt.RenderConfig{TaskPrompt: task})
+	if result.Status != "failure" {
+		t.Fatalf("status = %s, want failure", result.Status)
+	}
+	got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
+	if err != nil || string(got) != task {
+		t.Fatalf("the refused launch changed its Task: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sb.WorkDir(), ".sandman", "task-history")); !os.IsNotExist(err) {
+		t.Fatalf("the refused launch created a history directory: %v", err)
+	}
+}
+
+func TestCompactWorktreeTask_UnknownLegacyTemplatePreservesIssueContent(t *testing.T) {
+	task := "# Task\n\n## Issue Context\n\n## Next Step\n\n" + strings.Repeat("Acceptance criteria.\n", 3000)
+	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true})
+	if err != nil || result.Compacted || result.Content != task {
+		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
+	}
+}
+
 // The row driver hands a forced compaction to the first execution only;
 // re-entry after a wait launches without it.
 func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {

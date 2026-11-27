@@ -43,7 +43,8 @@ updates it.
   and issue text) are the Task's structure. Sandman's own sections are never
   anchors. The render also records which `## Next Step` is the template's
   own, since an issue can carry one too; only the template's is capped. Tasks
-  rendered before this decision fall back to the template's headings. If an
+  rendered before this decision are compacted only if the current template's
+  structural headings match the Task in order. If an
   older Task has multiple `## Next Step` headings, compaction leaves them
   uncapped because it cannot reliably identify the template's section. If the
   template has no heading after the issue body other than Sandman's, nothing marks where the issue's own

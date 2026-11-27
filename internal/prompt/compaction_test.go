@@ -455,6 +455,32 @@ func TestCompactTask_PreservesIssueSectionNamedLikeHistory(t *testing.T) {
 	}
 }
 
+func TestCompactTask_PointerSeparatorDoesNotExtendNextStep(t *testing.T) {
+	const heading = "## Next Step\n"
+	prefix := heading + strings.Repeat("x", nextStepLimit-len(heading)-1) + "\n"
+	task := prefix + strings.Repeat("older step\n", 1000)
+	opts := TaskCompaction{Force: true, Target: testTarget, Anchors: []string{nextStepHeading}, ArchivePath: "archive.md"}
+	first := CompactTask(task, opts)
+	second := CompactTask(first.Content, opts)
+	if !first.Compacted || second.Compacted || second.Content != first.Content {
+		t.Fatalf("compaction was not idempotent: %d -> %d -> %d", len(task), first.After, second.After)
+	}
+}
+
+func TestRenderWithTaskStructure_IdentifiesNextStepBetweenIssueCopies(t *testing.T) {
+	cfg := RenderConfig{PromptFlag: "# Task\n\n{{ISSUE_BODY}}\n## Next Step\n\nTemplate step.\n\n{{ISSUE_BODY}}\n"}
+	issue := "## Next Step\n\n" + strings.Repeat("Issue step.\n", 500)
+	rendered, editable, err := (&Engine{}).RenderWithTaskStructure(cfg, IssueData{Body: issue})
+	if err != nil || editable != 2 {
+		t.Fatalf("editable section = %d, err = %v", editable, err)
+	}
+	task := strings.Replace(rendered, "Template step.\n", strings.Repeat("Template step.\n", 500), 1)
+	got := CompactTask(task, TaskCompaction{Force: true, Target: 12 * 1024, Anchors: TaskHeadings(rendered), NextStepOccurrence: editable, ArchivePath: "archive.md"})
+	if !got.Compacted || strings.Count(got.Content, issue) != 2 {
+		t.Fatal("compaction did not preserve both copies of the issue section")
+	}
+}
+
 func TestTemplateNextStep_InlineAndAmbiguousLegacy(t *testing.T) {
 	cfg := RenderConfig{PromptFlag: "## Next Step\n\nTemplate instructions.\n\n## Issue\n\n{{ISSUE_BODY}}\n"}
 	task := strings.Replace(cfg.PromptFlag, "{{ISSUE_BODY}}", "## Next Step\n\nIssue instructions.\n", 1)

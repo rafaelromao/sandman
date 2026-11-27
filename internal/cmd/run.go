@@ -424,6 +424,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			if compactFlag && overridePrompt && len(issues) == 0 {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") && len(readyContinuations) == 0 {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
