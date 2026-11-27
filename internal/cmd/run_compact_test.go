@@ -190,49 +190,80 @@ func TestRun_ContinueCompact_SkipsPromotedRows(t *testing.T) {
 	}
 }
 
-// A ready continuation resumed with the named rows passes through --continue
-// like them, so --compact applies to it too; the compacted prompt replaces the
-// one composed for its ready routing, and session reuse is kept.
-func TestRun_ContinueCompact_CompactsAReadyContinuationItContinues(t *testing.T) {
+// --compact applies to the continued issues the operator selected. A ready
+// continuation resumed alongside them is compacted only when it is selected
+// too; either way it keeps its ready routing, and session reuse is kept.
+func TestRun_ContinueCompact_ReadyContinuationsOnlyWhenSelected(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args       []string
+		compacts43 bool
+	}{
+		"resumed automatically": {[]string{"--continue", "--compact", "--reuse-session", "42"}, false},
+		"selected":              {[]string{"--continue", "--compact", "--reuse-session", "42", "43"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCompactFixture(t, nil)
+			worktrees := filepath.Dir(filepath.Dir(filepath.Dir(f.taskPath)))
+			readyTask := filepath.Join(addRegisteredContinuationWorktree(t, f.deps.RepoRoot, worktrees, "43-other"), ".sandman", "task.md")
+			if err := os.MkdirAll(filepath.Dir(readyTask), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(readyTask, []byte(f.task), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f.deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open", Title: "Other"}}, prs: map[string]*github.PR{}}
+			readyRunID := testRunTS + "-" + testRunShortID + "-43-prev"
+			started := time.Now().UTC().Add(-2 * time.Minute)
+			log := f.deps.EventLog.(*fakeEventLog)
+			log.events = append(log.events,
+				events.Event{Type: "run.started", Timestamp: started, RunID: readyRunID, Issue: 43, Payload: map[string]any{
+					"branch": "43-other", "base_branch": "main", "batch_id": "old-batch", "issue_title": "Other"}},
+				events.Event{Type: "run.await", Timestamp: started.Add(time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{"gate": "pending", "await": true}},
+				events.Event{Type: "run.capacity_queued", Timestamp: started.Add(2 * time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{
+					"ready_continuation": true, "branch": "43-other", "base_branch": "main", "batch_id": "old-batch",
+					"previous_run_id": readyRunID, "previous_run_batch_id": "old-batch", "issue_title": "Other"}},
+			)
+
+			out, err := f.run(t, tc.args...)
+
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
+			if !f.spy.req.ReadyContinuations[43] || f.spy.req.RunIDs[43] != readyRunID {
+				t.Fatalf("#43 lost its ready routing:\n%s", out)
+			}
+			if !strings.Contains(out, "[--compact] #42: task compacted:") || strings.Contains(f.spy.req.TaskPrompts[42], "## Checkpoint 1\n") || !f.spy.req.ReuseSession[42] {
+				t.Fatalf("#42 was not compacted with session reuse:\n%s", out)
+			}
+			got, _ := os.ReadFile(readyTask)
+			compacted := string(got) != f.task
+			if compacted != tc.compacts43 || strings.Contains(out, "[--compact] #43") != tc.compacts43 {
+				t.Fatalf("#43 compacted = %t, want %t:\n%s", compacted, tc.compacts43, out)
+			}
+			if tc.compacts43 && strings.Contains(f.spy.req.TaskPrompts[43], "## Checkpoint 1\n") {
+				t.Fatal("#43's prompt was not composed from its compacted Task")
+			}
+		})
+	}
+}
+
+// A start refused after the continuation is accepted, here because the batch
+// ID cannot be generated, leaves the Task as it was.
+func TestRun_ContinueCompact_RefusedStartLeavesTheTaskAlone(t *testing.T) {
 	f := newCompactFixture(t, nil)
-	worktrees := filepath.Dir(filepath.Dir(filepath.Dir(f.taskPath)))
-	readyTask := filepath.Join(addRegisteredContinuationWorktree(t, f.deps.RepoRoot, worktrees, "43-other"), ".sandman", "task.md")
-	if err := os.MkdirAll(filepath.Dir(readyTask), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(".sandman", "batches"), []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(readyTask, []byte(f.task), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f.deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open", Title: "Other"}}, prs: map[string]*github.PR{}}
-	readyRunID := testRunTS + "-" + testRunShortID + "-43-prev"
-	started := time.Now().UTC().Add(-2 * time.Minute)
-	log := f.deps.EventLog.(*fakeEventLog)
-	log.events = append(log.events,
-		events.Event{Type: "run.started", Timestamp: started, RunID: readyRunID, Issue: 43, Payload: map[string]any{
-			"branch": "43-other", "base_branch": "main", "batch_id": "old-batch", "issue_title": "Other"}},
-		events.Event{Type: "run.await", Timestamp: started.Add(time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{"gate": "pending", "await": true}},
-		events.Event{Type: "run.capacity_queued", Timestamp: started.Add(2 * time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{
-			"ready_continuation": true, "branch": "43-other", "base_branch": "main", "batch_id": "old-batch",
-			"previous_run_id": readyRunID, "previous_run_batch_id": "old-batch", "issue_title": "Other"}},
-	)
 
-	out, err := f.run(t, "--continue", "--compact", "--reuse-session", "42")
+	out, err := f.run(t, "--continue", "--compact", "42")
 
-	if err != nil {
-		t.Fatalf("run: %v\n%s", err, out)
+	if err == nil || f.spy.called {
+		t.Fatalf("expected the start to be refused: err %v\n%s", err, out)
 	}
-	if !f.spy.req.ReadyContinuations[43] || f.spy.req.RunIDs[43] != readyRunID {
-		t.Fatalf("#43 lost its ready routing:\n%s", out)
+	if got, _ := os.ReadFile(f.taskPath); string(got) != f.task {
+		t.Fatal("a refused start compacted the Task")
 	}
-	for _, num := range []int{42, 43} {
-		if !strings.Contains(out, fmt.Sprintf("[--compact] #%d: task compacted:", num)) || strings.Contains(f.spy.req.TaskPrompts[num], "## Checkpoint 1\n") {
-			t.Fatalf("#%d was not compacted:\n%s", num, out)
-		}
-		if !f.spy.req.ReuseSession[num] {
-			t.Fatalf("#%d lost session reuse", num)
-		}
-	}
-	if got, _ := os.ReadFile(readyTask); strings.Contains(string(got), "## Checkpoint 1\n") {
-		t.Fatal("the ready continuation's worktree Task was not compacted")
+	if archives, _ := filepath.Glob(filepath.Join(filepath.Dir(f.taskPath), "task-history", "*")); len(archives) != 0 {
+		t.Fatalf("a refused start wrote archives: %v", archives)
 	}
 }

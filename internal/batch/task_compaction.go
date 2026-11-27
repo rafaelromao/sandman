@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 // taskAnchorsFile records the H2 headings of a fresh Task render, the
 // structure compaction keeps. It lives next to the Task in the worktree.
 const taskAnchorsFile = "task-anchors"
+
+// maxArchiveNames bounds the names tried for one archive: the timestamp name,
+// then that name with "-2", "-3", ... when an earlier compaction in the same
+// second already holds it.
+const maxArchiveNames = 100
 
 // TaskCompactionRequest describes one compaction of a worktree's Task.
 type TaskCompactionRequest struct {
@@ -31,7 +37,9 @@ type TaskCompactionRequest struct {
 	// be rendered from.
 	Template prompt.RenderConfig
 	Now      time.Time
-	// Write stores the archive atomically.
+	// Write creates the archive atomically and must never replace an
+	// existing file, failing with an error wrapping os.ErrExist instead;
+	// nil means atomicfs.WriteAtomicNew.
 	Write func(path string, data []byte, mode os.FileMode) error
 }
 
@@ -45,29 +53,44 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 	if req.Force && threshold <= 0 {
 		threshold = config.DefaultTaskCompactBytes
 	}
-	archive := filepath.ToSlash(filepath.Join(".sandman", "task-history", taskArchiveName(req.Label, req.Now)))
-	result := prompt.CompactTask(content, prompt.TaskCompaction{
-		Threshold:   threshold,
-		Target:      threshold * 3 / 4,
-		Force:       req.Force,
-		Anchors:     taskAnchors(req.WorkDir, req.Template),
-		ArchivePath: archive,
-	})
-	if !result.Compacted {
-		return result, nil
-	}
 	write := req.Write
 	if write == nil {
-		write = atomicfs.WriteAtomic
+		write = atomicfs.WriteAtomicNew
 	}
-	path := filepath.Join(req.WorkDir, filepath.FromSlash(archive))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}, fmt.Errorf("archive Task: %w", err)
+	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
+	anchors, unbounded := taskAnchors(req.WorkDir, req.Template)
+	// Every archive gets its own name, so a second compaction in the same
+	// second never replaces the first one's only copy of what it moved.
+	for n := 1; n <= maxArchiveNames; n++ {
+		archive := filepath.ToSlash(filepath.Join(".sandman", "task-history", taskArchiveName(req.Label, req.Now, n)))
+		path := filepath.Join(req.WorkDir, filepath.FromSlash(archive))
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		}
+		result := prompt.CompactTask(content, prompt.TaskCompaction{
+			Threshold:        threshold,
+			Target:           threshold * 3 / 4,
+			Force:            req.Force,
+			Anchors:          anchors,
+			ArchivePath:      archive,
+			UnboundedHistory: unbounded,
+		})
+		if !result.Compacted {
+			return result, nil
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return unchanged, fmt.Errorf("archive Task: %w", err)
+		}
+		err := write(path, []byte(content), 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return unchanged, fmt.Errorf("archive Task: %w", err)
+		}
+		return result, nil
 	}
-	if err := write(path, []byte(content), 0o644); err != nil {
-		return prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}, fmt.Errorf("archive Task: %w", err)
-	}
-	return result, nil
+	return unchanged, fmt.Errorf("archive Task: no free archive name after %d tries", maxArchiveNames)
 }
 
 // TaskCompactionSummary is the one-line account of a compaction for logs.
@@ -87,20 +110,25 @@ func TaskCompactionSummary(result prompt.TaskCompactionResult, err error) string
 	return ""
 }
 
-func taskArchiveName(label string, now time.Time) string {
-	stamp := now.UTC().Format("20060102T150405Z")
+func taskArchiveName(label string, now time.Time, n int) string {
+	name := now.UTC().Format("20060102T150405Z")
 	if label = strings.TrimSpace(label); label != "" {
-		return label + "-" + stamp + ".md"
+		name = label + "-" + name
 	}
-	return stamp + ".md"
+	if n > 1 {
+		name += fmt.Sprintf("-%d", n)
+	}
+	return name + ".md"
 }
 
 // taskAnchors returns the recorded anchors of the worktree's Task, or the
-// template's headings for a Task rendered before anchors were recorded.
-func taskAnchors(workDir string, template prompt.RenderConfig) []string {
+// template's headings for a Task rendered before anchors were recorded. The
+// fallback is unbounded when the template ends with the issue body: nothing
+// then separates the issue's own sections from agent history.
+func taskAnchors(workDir string, template prompt.RenderConfig) ([]string, bool) {
 	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile))
 	if err != nil {
-		return prompt.TemplateHeadings(template)
+		return prompt.TemplateHeadings(template), prompt.TemplateEndsWithIssueBody(template)
 	}
 	var anchors []string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -108,7 +136,7 @@ func taskAnchors(workDir string, template prompt.RenderConfig) []string {
 			anchors = append(anchors, line)
 		}
 	}
-	return anchors
+	return anchors, false
 }
 
 // recordTaskAnchors stores a fresh implementation Task's headings, which are
@@ -140,12 +168,11 @@ func (r *AgentRun) compactsTask() bool {
 // compactTask compacts an implementation launch's composed Task and records
 // the outcome in the run log. Any failure launches the Task unchanged.
 func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig) string {
-	// The archive goes through the launch's Task writer so that its order
-	// before the Task write is observable and its failure injectable; the
-	// anchors file is outside that sequence.
+	// The archive has its own writer, which never replaces a file; the Task
+	// writer replaces the Task afterwards.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
 		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
-		Template: renderCfg, Now: r.runtimeNow(), Write: r.taskWriter,
+		Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
 	})
 	if summary := TaskCompactionSummary(result, err); summary != "" {
 		r.logRunLine(summary)

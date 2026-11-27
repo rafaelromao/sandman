@@ -714,10 +714,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return err
 				}
 			}
-			if compactFlag {
-				compactContinuedTasks(cmd, cfg, &req, continueIssues, continuedWorktrees, sandmanDir, composeContinuation)
-			}
-
 			req.PhaseWriter = phaseWriter
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -834,6 +830,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			req.RepoRoot = absRepoRoot
 
 			warnOpencodeVersionMismatch(cmd, agentName, sandboxMode, repoRoot, cfg)
+
+			if compactFlag {
+				// After every startup check, so a refused start leaves each
+				// Task as it was; only the continued issues the operator
+				// selected, never rows added as ready continuations or
+				// dependencies.
+				compactContinuedTasks(cmd, cfg, &req, selectedIssues(continueIssues, issues), continuedWorktrees, sandmanDir, composeContinuation)
+			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {

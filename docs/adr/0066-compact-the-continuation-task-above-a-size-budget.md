@@ -30,26 +30,35 @@ updates it.
   other values must be at least 32 KiB because the built-in template alone is
   about 24 KB. A useful guide is about 0.2 bytes per token of context window.
 - **Deterministic and lossless.** Sandman never asks an agent to summarise the
-  Task. It writes the complete Task to `.sandman/task-history/` in the
-  worktree before writing the compacted one, and names that file in a
-  `## Sandman Task History` section. An archive failure launches the Task
-  unchanged.
+  Task. It writes the complete Task to a new file under
+  `.sandman/task-history/` in the worktree before writing the compacted one,
+  and names that file in a `## Sandman Task History` section. An archive never
+  replaces an existing file; a second compaction in the same second takes the
+  next free name. The section ends with a marker, so a later compaction
+  replaces only what Sandman wrote and treats text after it as the agent's.
+  An archive failure launches the Task unchanged.
 - **Structure is recorded, not inferred.** A fresh implementation render
   records its H2 headings in `.sandman/task-anchors`. Those headings (template
   and issue text) are the Task's structure. Sandman's own sections are never
   anchors. Tasks rendered before this decision fall back to the template's
-  headings.
+  headings. If that template ends with the issue body, nothing marks where the
+  issue's own sections end, so nothing after the last template heading moves.
 - **What moves.** Sections the agent added after the last anchor are history,
   kept newest first while the Task fits. `## Next Step` and what the agent
-  attached to it keep their first 4 KiB. Anchored sections, every `## Plan`,
+  attached to it keep their first 4 KiB, a prefix that never resumes past the
+  cut. A section that holds a kept heading inside a code block the agent left
+  open is kept whole. Anchored sections, every `## Plan`,
   status lines and Sandman's sections are kept byte for byte. A Task that
   cannot shrink is launched unchanged and the run log says why.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
   are never compacted.
-- **On request.** `sandman run --continue --compact` compacts each continued
-  issue's Task before the batch starts, even under the threshold. The CLI
+- **On request.** `sandman run --continue --compact` compacts the Task of each
+  continued issue the operator selected, even under the threshold. It runs
+  after every startup check, just before the batch starts, so a refused start
+  changes no Task. Ready continuations and dependencies added to the batch are
+  left to the automatic rule. The CLI
   becomes a second writer of the Task; like `--continue` itself, it does not
   guard against an agent that is still running for that row.
 - **At the source.** Review evidence stores each long repeated string once,

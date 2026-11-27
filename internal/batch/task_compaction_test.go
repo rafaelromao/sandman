@@ -79,6 +79,10 @@ func launchInWorktree(t *testing.T, root string, renderCfg prompt.RenderConfig, 
 		launch.writes = append(launch.writes, path)
 		return atomicfs.WriteAtomic(path, data, mode)
 	}
+	run.archiveWriter = func(path string, data []byte, mode os.FileMode) error {
+		launch.writes = append(launch.writes, path)
+		return atomicfs.WriteAtomicNew(path, data, mode)
+	}
 	for _, apply := range customize {
 		apply(run)
 	}
@@ -195,13 +199,7 @@ func TestImplementationLaunch_ArchiveFailureLaunchesTheTaskUnchanged(t *testing.
 	task := checkpointTask(30)
 
 	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
-		write := run.taskWriter
-		run.taskWriter = func(path string, data []byte, mode os.FileMode) error {
-			if strings.Contains(path, "task-history") {
-				return errors.New("disk full")
-			}
-			return write(path, data, mode)
-		}
+		run.archiveWriter = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
 	})
 
 	if !strings.Contains(launch.stdin, "## Checkpoint 1\n") || strings.Contains(launch.stdin, "## Sandman Task History") {
@@ -287,5 +285,65 @@ func TestRunSession_PassesTheConfiguredTaskCompactThreshold(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Two compactions of one Run in the same second, as a launch and its prompt
+// retry can be, each keep their own archive and pointer.
+func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T) {
+	workDir := t.TempDir()
+	now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	compact := func(content string) prompt.TaskCompactionResult {
+		t.Helper()
+		result, err := CompactWorktreeTask(content, TaskCompactionRequest{WorkDir: workDir, Label: "run-1", Threshold: testTaskCompactBytes, Now: now})
+		if err != nil || !result.Compacted {
+			t.Fatalf("compacted = %t, reason %q, err %v", result.Compacted, result.Reason, err)
+		}
+		return result
+	}
+	first := checkpointTask(30)
+	once := compact(first)
+	second := once.Content + checkpointTask(30)[len(prompt.DefaultPrompt()):]
+	twice := compact(second)
+
+	archives := map[string]string{
+		".sandman/task-history/run-1-20261127T100000Z.md":   first,
+		".sandman/task-history/run-1-20261127T100000Z-2.md": second,
+	}
+	for rel, want := range archives {
+		got, err := os.ReadFile(filepath.Join(workDir, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s does not hold its original (%v)", rel, err)
+		}
+	}
+	if once.ArchivePath == twice.ArchivePath || !strings.Contains(twice.Content, "`"+twice.ArchivePath+"`") || !strings.Contains(second, "`"+once.ArchivePath+"`") {
+		t.Fatalf("pointers: first %q, second %q", once.ArchivePath, twice.ArchivePath)
+	}
+}
+
+// A Task rendered before anchors were recorded, from a template that ends
+// with the issue body, has no boundary between the issue's sections and
+// agent history, so none of them moves.
+func TestCompactWorktreeTask_KeepsIssueSectionsWhenTheTemplateEndsWithTheIssueBody(t *testing.T) {
+	dir := t.TempDir()
+	templatePath := filepath.Join(dir, "prompt.md")
+	template := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n"
+	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var task strings.Builder
+	task.WriteString(strings.Replace(template, "{{ISSUE_BODY}}", "## Acceptance criteria\n\n- [ ] keep me\n", 1))
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&task, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
+	}
+
+	result, err := CompactWorktreeTask(task.String(), TaskCompactionRequest{WorkDir: dir, Threshold: testTaskCompactBytes, Force: true,
+		Template: prompt.RenderConfig{PromptFile: templatePath}, Now: time.Now()})
+
+	if err != nil || result.Compacted || !strings.Contains(result.Content, "- [ ] keep me") {
+		t.Fatalf("compacted = %t, err %v", result.Compacted, err)
+	}
+	if !strings.Contains(result.Reason, "no safe history boundary") {
+		t.Fatalf("reason = %q", result.Reason)
 	}
 }

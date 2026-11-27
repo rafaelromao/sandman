@@ -1,6 +1,7 @@
 package atomicfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,5 +106,30 @@ func TestOpenAppend_CreatesAndAppends(t *testing.T) {
 	want := "first\nsecond\n"
 	if string(got) != want {
 		t.Fatalf("appended content = %q, want %q", got, want)
+	}
+}
+
+// An archive must never replace what is already at its path.
+func TestWriteAtomicNew_NeverReplacesAnExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history", "archive.md")
+
+	if err := WriteAtomicNew(path, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteAtomicNew(path, []byte("second"), 0o644)
+
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("err = %v, want os.ErrExist", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "first" {
+		t.Fatalf("content = %q, want the first write", got)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Fatalf("left temp files behind: %v", entries)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 {
+		t.Fatalf("mode = %v", info.Mode().Perm())
 	}
 }

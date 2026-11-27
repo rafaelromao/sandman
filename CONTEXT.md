@@ -453,7 +453,7 @@ Sandman's lossless shrinking of an oversized continuation Task (ADR-0066). Above
 _Avoid_: Summarising the Task, trimming the Task.
 
 **Task history archive**:
-The complete Task as it was before a compaction, written to `.sandman/task-history/<RunID>-<UTC timestamp>.md` in the worktree before the compacted Task, and named in the Task's `## Sandman Task History` section.
+The complete Task as it was before a compaction, written as a new file, never replacing one, to `.sandman/task-history/<RunID>-<UTC timestamp>.md` in the worktree (`-2`, `-3`, ... for later compactions in the same second) before the compacted Task, and named in the Task's `## Sandman Task History` section.
 
 **Task anchors**:
 The H2 headings of a fresh implementation Task render, recorded in `.sandman/task-anchors`. They identify the template and issue sections compaction keeps; Sandman's own sections are never anchors.

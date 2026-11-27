@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -47,4 +48,16 @@ func compactContinuedTasks(cmd *cobra.Command, cfg *config.Config, req *batch.Re
 		}
 		req.TaskPrompts[num] = compose(result.Content)
 	}
+}
+
+// selectedIssues returns the continued issues the operator selected, by
+// number, label, query or picker, in continuation order.
+func selectedIssues(continued, selected []int) []int {
+	var out []int
+	for _, num := range continued {
+		if slices.Contains(selected, num) {
+			out = append(out, num)
+		}
+	}
+	return out
 }

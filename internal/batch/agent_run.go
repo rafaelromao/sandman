@@ -65,8 +65,11 @@ type AgentRun struct {
 	layout           paths.Layout
 	runFolder        string
 	taskWriter       func(string, []byte, os.FileMode) error
-	sessionWarning   io.Writer
-	now              func() time.Time
+	// archiveWriter creates Task history archives without replacing any
+	// file; nil means atomicfs.WriteAtomicNew.
+	archiveWriter  func(string, []byte, os.FileMode) error
+	sessionWarning io.Writer
+	now            func() time.Time
 	// credentials reconciles rotating agent credentials between the host and
 	// the batch config snapshot around every launch; nil for none.
 	credentials *credentialSync

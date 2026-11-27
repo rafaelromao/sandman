@@ -327,3 +327,44 @@ func TestCompactTask_KeepsAHistorySectionThatSwallowedThePlan(t *testing.T) {
 		t.Error("the checkpoints before the open fence were kept")
 	}
 }
+
+// The history pointer ends with a marker, so a note written after it is the
+// agent's, whether the pointer ends the Task or another section follows it.
+func TestCompactTask_KeepsANoteWrittenAfterThePointer(t *testing.T) {
+	for name, after := range map[string]string{"pointer at the end": "", "pointer before a section": "\n" + continuationFreshnessGuardHeading + "\n\nguard\n"} {
+		t.Run(name, func(t *testing.T) {
+			huge := []string{checkpoint(1, 9000)}
+			once := compact(structuredTask(huge...)+after, false)
+			if !once.Compacted || strings.Contains(once.Content, "## Checkpoint 1\n") {
+				t.Fatalf("setup: compacted = %t", once.Compacted)
+			}
+			noted := strings.Replace(once.Content, taskHistoryEnd+"\n", taskHistoryEnd+"\n\n### Late note\n\nthe newest finding\n", 1)
+			grown := strings.Replace(noted, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 4200), 1)
+
+			twice := compact(grown, true)
+
+			if !twice.Compacted || !strings.Contains(twice.Content, "the newest finding") {
+				t.Fatalf("compacted = %t; the note was dropped:\n%s", twice.Compacted, twice.Content)
+			}
+			if strings.Count(twice.Content, TaskHistoryHeading) != 1 || strings.Count(twice.Content, taskHistoryEnd) != 1 {
+				t.Fatalf("pointer not replaced exactly once:\n%s", twice.Content)
+			}
+		})
+	}
+}
+
+// Next Step keeps a prefix: once it is cut, a later attached section moves
+// even if it would fit in what is left of the limit.
+func TestCompactTask_NextStepKeepsAPrefixNotFragments(t *testing.T) {
+	step := "Implement the first slice.\n" + strings.Repeat("x", 5000) + "\n\n## Attached note\n\nbeyond the limit\n"
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	got := compact(task, false)
+
+	if !got.Compacted || strings.Contains(got.Content, "beyond the limit") {
+		t.Fatalf("compacted = %t; kept text from beyond the first 4 KiB", got.Compacted)
+	}
+	if !strings.Contains(got.Content, "Implement the first slice.") {
+		t.Fatal("lost the beginning of Next Step")
+	}
+}
