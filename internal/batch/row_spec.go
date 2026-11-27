@@ -68,24 +68,24 @@ func runSpecFromRow(row RowSpec) (RunSpec, ContinuationCursor) {
 	}
 	continuationKey := rowContinuationKey(row.IssueNumber, row.Review)
 	return RunSpec{
-			RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
-			BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
-			RunTS: row.RunTS, RunShortID: row.RunShortID, BatchTS: row.BatchTS,
-			BatchShortID: row.BatchShortID, UserProvidedRunID: row.UserProvidedRunID,
-			details: &runSpecDetails{
-				externalBlockers: append([]int(nil), row.ExternalBlockers...),
-				renderCfg:        cloneRowRenderConfig(row.RenderCfg), outputWriter: row.OutputWriter, review: row.Review,
-				reviewHeadSHA: row.ReviewHeadSHA, prNumber: row.PRNumber, reviewFocus: row.ReviewFocus,
-				portalHidden: row.PortalHidden, qualityRulesFile: row.QualityRulesFile,
-			},
-		}, ContinuationCursor{
-			Mode: row.Mode, ReuseSession: row.ReuseSession,
-			PreviousRunID:      row.PreviousRunIDs[continuationKey],
-			PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
-			quotaAllowance:     row.quotaAllowance,
-			feedbackAllowance:  new(reviewFeedbackAllowance),
-			compactTask:        row.compactTask,
-		}
+		RunID: row.RunID, IssueNumber: row.IssueNumber, BatchID: row.BatchID,
+		BatchDir: row.BatchDir, Branch: branch, BaseBranch: row.BaseBranch,
+		RunTS: row.RunTS, RunShortID: row.RunShortID, BatchTS: row.BatchTS,
+		BatchShortID: row.BatchShortID, UserProvidedRunID: row.UserProvidedRunID,
+		details: &runSpecDetails{
+			externalBlockers: append([]int(nil), row.ExternalBlockers...),
+			renderCfg:        cloneRowRenderConfig(row.RenderCfg), outputWriter: row.OutputWriter, review: row.Review,
+			reviewHeadSHA: row.ReviewHeadSHA, prNumber: row.PRNumber, reviewFocus: row.ReviewFocus,
+			portalHidden: row.PortalHidden, qualityRulesFile: row.QualityRulesFile,
+		},
+	}, ContinuationCursor{
+		Mode: row.Mode, ReuseSession: row.ReuseSession,
+		PreviousRunID:      row.PreviousRunIDs[continuationKey],
+		PreviousRunBatchID: row.PreviousRunBatchIDs[continuationKey],
+		quotaAllowance:     row.quotaAllowance,
+		feedbackAllowance:  new(reviewFeedbackAllowance),
+		compactTask:        row.compactTask,
+	}
 }
 
 func rowContinuationKey(issueNumber int, review bool) int {
@@ -364,9 +364,10 @@ func (e *runExecutor) executeRow(ctx context.Context, row RowSpec) (AgentRunResu
 			// The estimate does not veto the final quota probe or the
 			// configured ordinary retry path. Poll accounting governs waits.
 		}
-		return s.execute(ctx)
 	}
-	return s.execute(ctx)
+	result, started := s.execute(ctx)
+	result.launcherStarted = result.launcherStarted || row.compactTask && !s.compactTask
+	return result, started
 }
 
 // newRunSession builds a runSession from the elevated seam's inputs. It

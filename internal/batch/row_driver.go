@@ -407,7 +407,7 @@ func (d *rowDriver) drive(ctx context.Context, run RunSpec, state *rowDriverStat
 		var started bool
 		result, started = d.executor.ExecuteRun(ctx, run, state.cursor)
 		state.started = state.started || started
-		if started {
+		if result.launcherStarted {
 			// A forced compaction applies to the first launch only.
 			state.cursor.compactTask = false
 		}

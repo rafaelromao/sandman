@@ -209,6 +209,7 @@ type AgentRunResult struct {
 	UsageLimitDeadline time.Time `json:"-"`
 	UsageLimitResetAt  time.Time `json:"-"`
 	ciRerunAction      *ciRerunActionEvidence
+	launcherStarted    bool
 	IssueNumber        int
 	Issue              *int
 	Status             string

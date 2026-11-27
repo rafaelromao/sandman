@@ -3949,7 +3949,7 @@ loop:
 				agentRun.now = s.runtimeNow
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
 				agentRun.taskCompactBytes = s.cfg.EffectiveTaskCompactBytes()
-				agentRun.forceTaskCompaction, s.compactTask = s.compactTask, false
+				agentRun.forceTaskCompaction = s.compactTask
 				if s.opts.taskWriter != nil {
 					agentRun.taskWriter = s.opts.taskWriter
 				}
@@ -3996,6 +3996,9 @@ loop:
 					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
 				})
 			})
+			if result.launcherStarted {
+				s.compactTask = false
+			}
 			if result.Issue == nil && s.issueNumber > 0 {
 				result.Issue = issueRef(s.issueNumber)
 			}

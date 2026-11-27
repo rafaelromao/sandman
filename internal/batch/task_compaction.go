@@ -43,8 +43,9 @@ type TaskCompactionRequest struct {
 	Force bool
 	// Template locates the template a Task without recorded anchors would
 	// be rendered from.
-	Template prompt.RenderConfig
-	Now      time.Time
+	Template  prompt.RenderConfig
+	IssueBody string
+	Now       time.Time
 	// Write creates the archive atomically and must never replace an
 	// existing file, failing with an error wrapping os.ErrExist instead;
 	// nil means atomicfs.WriteAtomicNew.
@@ -66,7 +67,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		write = atomicfs.WriteAtomicNew
 	}
 	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
-	structure := taskAnchors(req.WorkDir, req.Template, content)
+	structure := taskAnchors(req.WorkDir, req.Template, content, req.IssueBody)
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.
 	for n := 1; n <= maxArchiveNames; n++ {
@@ -145,7 +146,7 @@ type taskStructure struct {
 // taskAnchors returns the recorded structure of the worktree's Task, or the
 // template's for a Task rendered before anchors were recorded. The fallback
 // is unbounded when the template ends with the issue body.
-func taskAnchors(workDir string, template prompt.RenderConfig, content string) taskStructure {
+func taskAnchors(workDir string, template prompt.RenderConfig, content, issueBody string) taskStructure {
 	data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile))
 	if err != nil {
 		if !prompt.MatchesTaskTemplate(template, content) {
@@ -154,7 +155,7 @@ func taskAnchors(workDir string, template prompt.RenderConfig, content string) t
 		return taskStructure{
 			anchors:      prompt.TemplateHeadings(template),
 			unbounded:    prompt.TemplateEndsWithIssueBody(template),
-			nextStep:     -1, // A verified footer does not prove where the original issue body was inserted.
+			nextStep:     prompt.DefaultLegacyNextStep(template, content, issueBody),
 			footerDigest: prompt.LegacyTaskFooterDigest(template),
 		}
 	}
@@ -215,6 +216,7 @@ func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log i
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
 		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
 		Force: r.forceTaskCompaction, Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
+		IssueBody: r.issueData().Body,
 	})
 	summary := TaskCompactionSummary(result, err)
 	if err != nil || !result.Compacted {

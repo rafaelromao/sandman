@@ -341,8 +341,8 @@ func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
 // section. That section is kept rather than moving the plan.
 func TestCompactTask_KeepsAHistorySectionThatSwallowedThePlan(t *testing.T) {
 	history := checkpoints(10, 1000)
-	history[2] += "```\ntruncated log\n"
-	firstPlan := "\n## Plan\n\n```go\nfunc slice() {}\n```\n\nThe plan's prose.\n"
+	history[2] += "```text\ntruncated log\n"
+	firstPlan := "\n## Plan\n\n- [ ] Verify the output.\n\n```\noutput\n```\n\nThe plan's prose.\n"
 	task := structuredTask(history...) + firstPlan + "\n## Plan\n\nA separate plan.\n"
 
 	got := compact(task, true)

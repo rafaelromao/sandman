@@ -76,6 +76,7 @@ type AgentRun struct {
 	// forceTaskCompaction compacts this launch's Task whatever its size, as
 	// `sandman run --continue --compact` requests for a row's first launch.
 	forceTaskCompaction bool
+	launcherStarted     bool
 	env                 map[string]string
 	outputWriter        io.Writer
 	layout              paths.Layout
@@ -254,6 +255,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 // repo's `.sandman/`. The path is intentionally literal because the
 // worktree has its own `.sandman/` directory that the layout does not own.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	r.launcherStarted = false
 	r.ciRerunAction = nil
 	r.usageLimitResetAt = time.Time{}
 	renderedPromptFile := renderCfg.RenderedPromptFile
@@ -401,6 +403,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		reportCompaction = sync.OnceFunc(func() { r.logCompaction(logFile, compactionSummary) })
 	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
+	r.launcherStarted = !errors.Is(execErr, sandbox.ErrExecNotStarted)
 	if errors.Is(execErr, sandbox.ErrExecNotStarted) && archivePath != "" {
 		var rollbackErr error
 		if os.IsNotExist(originalTaskErr) {
@@ -614,6 +617,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		CleanupError:      r.cleanupError,
 		OperationalError:  r.operationalError,
 		ciRerunAction:     r.ciRerunAction,
+		launcherStarted:   r.launcherStarted,
 	}
 }
 

@@ -225,6 +225,19 @@ func TestCompactWorktreeTask_VerifiedLegacyFooterDoesNotAuthorizeStepCut(t *test
 	}
 }
 
+func TestImplementationLaunch_CapsVerifiedDefaultLegacyStep(t *testing.T) {
+	issue := "## Goal\n\nKeep the goal.\n\n## Acceptance criteria\n\nKeep every criterion."
+	task := strings.Replace(checkpointTask(30), "{{ISSUE_BODY}}", issue, 1)
+	task = strings.Replace(task, "## Next Step\n", "## Next Step\n\nCurrent checkpoint.\n"+strings.Repeat("Obsolete step.\n", 1000), 1)
+	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
+		run.issue.Body = issue
+	})
+	if len(launch.stdin) >= testTaskCompactBytes || !strings.Contains(launch.stdin, issue) ||
+		!strings.Contains(launch.stdin, "Current checkpoint.") || strings.Count(launch.stdin, "Obsolete step.") >= 300 {
+		t.Fatalf("legacy launch did not retain the issue and cap the step: %d bytes", len(launch.stdin))
+	}
+}
+
 func TestCompactWorktreeTask_KeepsChecklistAndMovesFencedExample(t *testing.T) {
 	cfg := prompt.RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep this footer.\n"}
 	checklist := "## Execution Checklist\n\n- [x] Plan\n- [ ] Verify\n"
@@ -561,11 +574,20 @@ func TestCompactWorktreeTask_LegacyNextStepPreservesEmbeddedIssueAndMovesHistory
 // The row driver hands a forced compaction to the first execution only;
 // re-entry after a wait launches without it.
 func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {
+	for _, launcherStarted := range []bool{false, true} {
+		t.Run(fmt.Sprint(launcherStarted), func(t *testing.T) {
+			testRowDriverForcesCompactionOnlyAtTheFirstLaunch(t, launcherStarted)
+		})
+	}
+}
+
+func testRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T, launcherStarted bool) {
+	t.Helper()
 	run := RunSpec{RunID: "run-42", IssueNumber: 42, BatchID: "batch-a", Branch: "42-fix", BaseBranch: "main"}
 	executor := &rowDriverExecutorFake{
 		started: true,
 		results: []AgentRunResult{
-			{IssueNumber: 42, RunID: run.RunID, Branch: run.Branch, Status: "await"},
+			{IssueNumber: 42, RunID: run.RunID, Branch: run.Branch, Status: "await", launcherStarted: launcherStarted},
 			{IssueNumber: 42, RunID: run.RunID, Branch: run.Branch, Status: "success"},
 		},
 		observations: []lifecycleVerdict{{Action: lifecycleResume}, {Action: lifecycleResume}},
@@ -576,7 +598,7 @@ func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {
 		PollInterval:         func(int) time.Duration { return time.Nanosecond },
 	})
 
-	if len(executor.cursors) != 2 || !executor.cursors[0].compactTask || executor.cursors[1].compactTask {
+	if len(executor.cursors) != 2 || !executor.cursors[0].compactTask || executor.cursors[1].compactTask == launcherStarted {
 		t.Fatalf("compactTask per execution = %v", compactFlags(executor.cursors))
 	}
 }

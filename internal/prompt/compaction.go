@@ -289,6 +289,32 @@ func RecordedTaskFooter(content string, nextStep int) string {
 	return TaskFooterDigest(content)
 }
 
+// DefaultLegacyNextStep verifies the current issue body against the saved
+// default Task before allowing a legacy step to be shortened.
+func DefaultLegacyNextStep(cfg RenderConfig, task, issueBody string) int {
+	template, err := loadTemplate(cfg)
+	body := strings.TrimSpace(NeutraliseBodyPlaceholders(issueBody))
+	if err != nil || template != defaultPrompt || body == "" {
+		return -1
+	}
+	issueBlock := "## Issue Context\n\n" + body + "\n\n## Runtime Context\n"
+	if strings.Count(task, body) != 1 || !strings.Contains(task, issueBlock) {
+		return -1
+	}
+	occurrence := 0
+	for _, section := range splitTaskSections(task) {
+		if section.heading == nextStepHeading {
+			occurrence++
+		}
+	}
+	// A duplicate can be classified as history by the verified footer, but
+	// does not independently establish which legacy step is editable.
+	if occurrence != 1 {
+		return -1
+	}
+	return 1
+}
+
 // LegacyTaskFooterDigest verifies a static template footer against the Task.
 func LegacyTaskFooterDigest(cfg RenderConfig) string {
 	template, err := loadTemplate(cfg)
@@ -672,11 +698,13 @@ func swallowsKeptHeading(text string, anchors []string, topLevel map[string]bool
 	_, body, _ := strings.Cut(text, "\n")
 	var open fence
 	exampleHeading := false
+	atExampleStart := false
 	for line := range strings.SplitSeq(body, "\n") {
 		if marker, ok := parseFence(strings.TrimRight(line, "\r")); ok {
 			switch {
 			case open.char == 0:
 				open = marker
+				atExampleStart = true
 			case marker.closes(open):
 				open, exampleHeading = fence{}, false
 			case exampleHeading:
@@ -691,11 +719,12 @@ func swallowsKeptHeading(text string, anchors []string, topLevel map[string]bool
 			continue
 		}
 		if runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading) {
-			if !open.info || !topLevel[heading] {
+			if !open.info || !atExampleStart || !topLevel[heading] {
 				return true
 			}
 			exampleHeading = true
 		}
+		atExampleStart = false
 	}
 	return exampleHeading
 }

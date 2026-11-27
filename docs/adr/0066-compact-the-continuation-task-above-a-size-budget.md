@@ -46,7 +46,8 @@ updates it.
   Tasks rendered before this decision are compacted only if the current
   template's structural headings match the Task in order and its static
   footer can be verified. A verified legacy footer authorizes moving history,
-  but the Next Step remains uncapped without recorded render ownership.
+  but the Next Step remains uncapped unless its ownership was recorded at
+  render or the built-in layout and unchanged issue body establish it.
   Fresh renders record the footer fingerprint, so a
   later checkpoint with the same heading cannot displace it. If the template has no heading
   after the issue body other than Sandman's, nothing marks where the issue's
