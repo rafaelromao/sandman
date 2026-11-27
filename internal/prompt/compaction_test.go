@@ -1,0 +1,183 @@
+package prompt
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+const (
+	testThreshold = 8 * 1024
+	testTarget    = 6 * 1024
+)
+
+func paragraph(label string, size int) string {
+	return strings.Repeat(label+" ", size/(len(label)+1)) + "\n"
+}
+
+// structuredTask is a small Task with the default template's shape: issue
+// context holding its own H2 sections, runtime context, checklist, Next Step
+// and the guidance sections, followed by sections an agent appended.
+func structuredTask(history ...string) string {
+	var b strings.Builder
+	b.WriteString("# Task\n\n## Issue Context\n\nIssue body.\n\n## Acceptance criteria\n\n- [ ] keep me\n\n")
+	b.WriteString("## Runtime Context\n\n- Base branch: `main`\n\n## Execution Checklist\n\n- [x] Create branch\n- [ ] Implement\n\n")
+	b.WriteString("## Next Step\n\nImplement the first slice.\n\n## Required Order\n\n" + paragraph("order", 1500) + "\n")
+	for _, section := range history {
+		b.WriteString(section)
+	}
+	return b.String()
+}
+
+var structuredAnchors = []string{"## Issue Context", "## Runtime Context", "## Execution Checklist", "## Next Step", "## Required Order"}
+
+func checkpoint(n, size int) string {
+	return fmt.Sprintf("\n## Checkpoint %d\n\n%s", n, paragraph(fmt.Sprintf("c%d", n), size))
+}
+
+func checkpoints(count, size int) []string {
+	sections := make([]string, 0, count)
+	for i := 1; i <= count; i++ {
+		sections = append(sections, checkpoint(i, size))
+	}
+	return sections
+}
+
+func compact(content string, force bool) TaskCompactionResult {
+	return CompactTask(content, TaskCompaction{Threshold: testThreshold, Target: testTarget, Force: force,
+		Anchors: structuredAnchors, ArchivePath: ".sandman/task-history/a.md"})
+}
+
+func TestCompactTask_KeepsTheTaskStructureAndTheNewestHistory(t *testing.T) {
+	task := structuredTask(checkpoints(12, 1000)...)
+
+	got := compact(task, false)
+
+	if !got.Compacted || got.After > testTarget {
+		t.Fatalf("compacted = %t, after = %d", got.Compacted, got.After)
+	}
+	for _, kept := range []string{"## Acceptance criteria\n\n- [ ] keep me", "- [x] Create branch\n- [ ] Implement", "## Required Order", "## Checkpoint 12\n"} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept)
+		}
+	}
+	if strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Error("kept the oldest checkpoint")
+	}
+	if !strings.Contains(got.Content, TaskHistoryHeading) || !strings.Contains(got.Content, "- Checkpoint 1\n") {
+		t.Errorf("pointer missing or incomplete:\n%s", got.Content[strings.Index(got.Content, TaskHistoryHeading):])
+	}
+}
+
+func TestCompactTask_LeavesATaskAtTheThresholdAlone(t *testing.T) {
+	task := structuredTask(checkpoints(2, 1000)...)
+	task += strings.Repeat("x", testThreshold-len(task))
+
+	if got := compact(task, false); got.Compacted || got.Content != task {
+		t.Fatal("a Task at the threshold changed")
+	}
+}
+
+func TestCompactTask_ProtectsPlansStatusLinesAndFencedHeadings(t *testing.T) {
+	fenced := "\n## Notes\n\n```md\n## Not a heading\n" + paragraph("fenced", 2000) + "```\n"
+	task := structuredTask(append(checkpoints(10, 1000),
+		"\n## Plan\n\n### Behaviors to test\n\n1. keep the plan\n",
+		"\n## Status: already resolved\n",
+		fenced)...)
+
+	got := compact(task, false)
+
+	for _, kept := range []string{"## Plan\n\n### Behaviors to test\n\n1. keep the plan", "## Status: already resolved", "## Not a heading\n" + paragraph("fenced", 2000) + "```"} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept[:min(len(kept), 40)])
+		}
+	}
+}
+
+func TestCompactTask_TreatsExtraOccurrencesOfAnAnchorAsHistory(t *testing.T) {
+	task := structuredTask(append(checkpoints(10, 1000), "\n## Next Step\n\nnewest step\n")...)
+
+	got := compact(task, false)
+
+	if strings.Count(got.Content, "## Next Step\n") != 2 || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatalf("a later Next Step anchored the checkpoints:\n%s", got.Content)
+	}
+}
+
+func TestCompactTask_CapsNextStepKeepingItsBeginning(t *testing.T) {
+	task := strings.Replace(structuredTask(checkpoints(4, 1000)...), "Implement the first slice.\n",
+		"Implement the first slice.\n"+paragraph("older", 3000)+paragraph("oldest", 3000), 1)
+
+	got := compact(task, false)
+
+	start := strings.Index(got.Content, "## Next Step")
+	end := strings.Index(got.Content, "## Required Order")
+	if !strings.Contains(got.Content[start:end], "Implement the first slice.") || end-start > 4096 {
+		t.Fatalf("Next Step group is %d bytes:\n%s", end-start, got.Content[start:end])
+	}
+	if strings.Contains(got.Content, "oldest") {
+		t.Fatal("kept the end of Next Step")
+	}
+}
+
+func TestCompactTask_IsIdempotent(t *testing.T) {
+	once := compact(structuredTask(checkpoints(12, 1000)...), false)
+
+	if again := compact(once.Content, true); again.Compacted || again.Content != once.Content || again.Reason != "already compact" {
+		t.Fatalf("second compaction changed the Task (reason %q)", again.Reason)
+	}
+}
+
+func TestCompactTask_ReplacesThePointerInsteadOfAddingOne(t *testing.T) {
+	once := compact(structuredTask(checkpoints(12, 1000)...), false)
+	grown := once.Content + strings.Join(checkpoints(10, 1000), "")
+
+	twice := compact(grown, false)
+
+	if strings.Count(twice.Content, TaskHistoryHeading) != 1 {
+		t.Fatalf("pointer sections = %d", strings.Count(twice.Content, TaskHistoryHeading))
+	}
+}
+
+func TestCompactTask_LeavesTasksItCannotShrinkAlone(t *testing.T) {
+	for name, tc := range map[string]struct {
+		task    string
+		anchors []string
+		reason  string
+	}{
+		"protected content over the target": {structuredTask() + "\n## Plan\n\n" + paragraph("plan", 9000), structuredAnchors, "protected content exceeds the target"},
+		"no recognised structure":           {"## Stage: implement\n\n" + paragraph("legacy", 9000), structuredAnchors, "no recognised Task structure"},
+		"only Sandman sections recorded":    {structuredTask(checkpoints(12, 1000)...), []string{reviewEvidenceHeading, continuationFreshnessGuardHeading}, "no recognised Task structure"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := CompactTask(tc.task, TaskCompaction{Threshold: testThreshold, Target: testTarget, Anchors: tc.anchors})
+
+			if got.Compacted || got.Content != tc.task || got.Reason != tc.reason {
+				t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
+			}
+		})
+	}
+}
+
+func TestTemplateHeadings_AnchorAnIssueBodysOwnSectionsToIssueContext(t *testing.T) {
+	task := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "## Goal\n\nShip it.\n\n## Acceptance criteria\n\n- [ ] works\n", 1)
+	for i := 1; i <= 40; i++ {
+		task += checkpoint(i, 1000)
+	}
+
+	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, Anchors: TemplateHeadings(RenderConfig{})})
+
+	if !got.Compacted || !strings.Contains(got.Content, "## Acceptance criteria\n\n- [ ] works") {
+		t.Fatalf("compacted = %t; issue body sections lost", got.Compacted)
+	}
+}
+
+func TestTaskHeadings_IgnoreHeadingsInFencedCode(t *testing.T) {
+	content := "# Task\n\n## Issue Context\n\n```md\n## Next Step\n```\n\n   ~~~\n## Plan\n   ~~~\n\n## Next Step\n\ntext ## not a heading\n"
+
+	got := TaskHeadings(content)
+
+	if want := []string{"## Issue Context", "## Next Step"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("headings = %q, want %q", got, want)
+	}
+}

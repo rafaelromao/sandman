@@ -111,6 +111,28 @@ func taskAnchors(workDir string, template prompt.RenderConfig) []string {
 	return anchors
 }
 
+// recordTaskAnchors stores a fresh implementation Task's headings, which are
+// template, issue and Sandman text only. A failure is reported and leaves
+// later compaction to the template's headings.
+func (r *AgentRun) recordTaskAnchors(rendered string) {
+	if r.issue == nil || r.review {
+		return
+	}
+	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
+	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n"
+	write := r.taskWriter
+	if write == nil {
+		write = atomicfs.WriteAtomic
+	}
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err == nil {
+		err = write(path, []byte(data), 0o644)
+	}
+	if err != nil && r.warningWriter() != nil {
+		fmt.Fprintf(r.warningWriter(), "warning: record Task anchors: %v\n", err)
+	}
+}
+
 // compactsTask reports whether this launch's continuation Task is compacted:
 // implementation launches only. Reviews and prompt-only runs such as quota
 // probes and health repairs serve no issue.

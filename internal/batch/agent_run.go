@@ -114,6 +114,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
+	r.recordTaskAnchors(rendered)
 	return nil
 }
 

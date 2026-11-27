@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,8 +42,20 @@ type compactionLaunch struct {
 
 func launchWithCompaction(t *testing.T, task string, threshold int) compactionLaunch {
 	t.Helper()
-	root := t.TempDir()
-	initGitRepo(t, root)
+	return launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, threshold, nil)
+}
+
+// launchInWorktree launches in root's "compaction" worktree, creating the
+// repository on first use, and renders the Task with renderer when the
+// configuration carries no Task.
+func launchInWorktree(t *testing.T, root string, renderCfg prompt.RenderConfig, threshold int, renderer prompt.IssueRenderer, customize ...func(*AgentRun)) compactionLaunch {
+	t.Helper()
+	if renderer == nil {
+		renderer = &spyRenderer{}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		initGitRepo(t, root)
+	}
 	out, bin := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte(fakePromptCLI), 0o755); err != nil {
 		t.Fatal(err)
@@ -50,7 +63,8 @@ func launchWithCompaction(t *testing.T, task string, threshold int) compactionLa
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("SANDMAN_TEST_OUT", out)
 	sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, ".sandman", "worktrees"), "compaction", "main")
-	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+	_, statErr := os.Stat(sb.WorkDir())
+	if err := sb.Start(sandbox.SandboxStart{Continue: statErr == nil}); err != nil {
 		t.Fatal(err)
 	}
 	launch := compactionLaunch{workDir: sb.WorkDir(), runFolder: filepath.Join(root, "run")}
@@ -63,8 +77,11 @@ func launchWithCompaction(t *testing.T, task string, threshold int) compactionLa
 		launch.writes = append(launch.writes, path)
 		return atomicfs.WriteAtomic(path, data, mode)
 	}
+	for _, apply := range customize {
+		apply(run)
+	}
 
-	launch.result = run.Run(context.Background(), &spyRenderer{}, config.BuiltInAgentPresets["opencode-v2"].Command, prompt.RenderConfig{TaskPrompt: task})
+	launch.result = run.Run(context.Background(), renderer, config.BuiltInAgentPresets["opencode-v2"].Command, renderCfg)
 
 	if launch.result.Status != "success" {
 		t.Fatalf("launch failed: %+v\n%s", launch.result, run.outputWriter)
@@ -135,5 +152,91 @@ func TestImplementationLaunch_LeavesATaskUnderTheThresholdAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(launch.workDir, ".sandman", "task-history")); !os.IsNotExist(err) {
 		t.Fatalf("archive directory exists: %v", err)
+	}
+}
+
+// A fresh render records its headings. Sandman's own sections in that render
+// must not anchor the checkpoints an agent appends later, or nothing would
+// ever count as history.
+func TestFreshRenderAnchorsTheTaskForLaterCompaction(t *testing.T) {
+	root := t.TempDir()
+	fresh := launchInWorktree(t, root, prompt.RenderConfig{}, testTaskCompactBytes, &prompt.Engine{})
+	anchors, err := os.ReadFile(filepath.Join(fresh.workDir, ".sandman", "task-anchors"))
+	if err != nil {
+		t.Fatalf("fresh render recorded no anchors: %v", err)
+	}
+	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\n"; string(anchors) != want {
+		t.Fatalf("anchors =\n%s\nwant\n%s", anchors, want)
+	}
+	if strings.Contains(fresh.stdin, "## Sandman Task History") {
+		t.Fatal("a fresh render was compacted")
+	}
+
+	var task strings.Builder
+	task.WriteString(fresh.stdin)
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&task, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat("detail. ", 250))
+	}
+	continued := prompt.ContinuationTaskPromptWithReviewSettings(task.String(), "/sandman review", true, 1800)
+
+	launch := launchInWorktree(t, root, prompt.RenderConfig{TaskPrompt: continued}, testTaskCompactBytes, nil)
+
+	if strings.Contains(launch.stdin, "## Checkpoint 1\n") || !strings.Contains(launch.stdin, "## Checkpoint 30\n") {
+		t.Fatal("checkpoints were not treated as history")
+	}
+	if len(launch.stdin) > testTaskCompactBytes*3/4 {
+		t.Fatalf("launched Task is %d bytes", len(launch.stdin))
+	}
+}
+
+func TestImplementationLaunch_ArchiveFailureLaunchesTheTaskUnchanged(t *testing.T) {
+	task := checkpointTask(30)
+
+	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
+		write := run.taskWriter
+		run.taskWriter = func(path string, data []byte, mode os.FileMode) error {
+			if strings.Contains(path, "task-history") {
+				return errors.New("disk full")
+			}
+			return write(path, data, mode)
+		}
+	})
+
+	if !strings.Contains(launch.stdin, "## Checkpoint 1\n") || strings.Contains(launch.stdin, "## Sandman Task History") {
+		t.Fatal("the Task was compacted without an archive")
+	}
+	log, _ := os.ReadFile(filepath.Join(launch.runFolder, "run.log"))
+	if !strings.Contains(string(log), "task not compacted:") || !strings.Contains(string(log), "disk full") {
+		t.Fatalf("run.log does not explain the failure:\n%s", log)
+	}
+}
+
+func TestOnlyImplementationLaunchesAreCompacted(t *testing.T) {
+	task := checkpointTask(30)
+	for name, customize := range map[string]func(*AgentRun){
+		"review":                      func(run *AgentRun) { run.review = true },
+		"prompt-only (probe, repair)": func(run *AgentRun) { run.issue = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, customize)
+
+			if strings.Contains(launch.stdin, "## Sandman Task History") || !strings.Contains(launch.stdin, "## Checkpoint 1\n") {
+				t.Fatal("compacted a launch that serves no implementation")
+			}
+		})
+	}
+}
+
+func TestImplementationLaunch_LogsATaskItCannotShrink(t *testing.T) {
+	task := prompt.DefaultPrompt() + "\n## Plan\n\n" + strings.Repeat("a long plan line\n", 4000)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	log, _ := os.ReadFile(filepath.Join(launch.runFolder, "run.log"))
+	if strings.Count(string(log), "task not compacted:") != 1 || !strings.Contains(string(log), "protected content exceeds the target") {
+		t.Fatalf("run.log =\n%s", log)
+	}
+	if !strings.Contains(launch.stdin, "a long plan line") {
+		t.Fatal("the plan was changed")
 	}
 }
