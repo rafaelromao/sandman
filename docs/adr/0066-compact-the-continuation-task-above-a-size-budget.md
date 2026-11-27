@@ -43,9 +43,10 @@ updates it.
   and issue text) are the Task's structure. Sandman's own sections are never
   anchors. The render also records which `## Next Step` is the template's
   own, since an issue can carry one too; only the template's is capped. Tasks
-  rendered before this decision fall back to the template's headings and its
-  position relative to the issue body. If that template has no heading after
-  the issue body other than Sandman's, nothing marks where the issue's own
+  rendered before this decision fall back to the template's headings. If an
+  older Task has multiple `## Next Step` headings, compaction leaves them
+  uncapped because it cannot reliably identify the template's section. If the
+  template has no heading after the issue body other than Sandman's, nothing marks where the issue's own
   sections end, so nothing after the last template heading moves.
 - **What moves.** Sections the agent added after the last anchor are history.
   The fewest oldest of them move for the Task, with a pointer naming exactly

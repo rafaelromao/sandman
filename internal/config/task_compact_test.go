@@ -15,6 +15,8 @@ func TestLoad_TaskCompactBytes(t *testing.T) {
 	}{
 		{name: "unset uses the default", yaml: "", want: DefaultTaskCompactBytes},
 		{name: "zero disables", yaml: "task_compact_bytes: 0\n", want: 0},
+		{name: "fraction below one", yaml: "task_compact_bytes: 0.5\n", err: "task_compact_bytes must be an integer"},
+		{name: "fraction above minimum", yaml: "task_compact_bytes: 32768.5\n", err: "task_compact_bytes must be an integer"},
 		{name: "explicit", yaml: "task_compact_bytes: 65536\n", want: 65536},
 		{name: "minimum", yaml: "task_compact_bytes: 32768\n", want: 32768},
 		{name: "below the minimum", yaml: "task_compact_bytes: 32767\n", err: "task_compact_bytes must be 0 or at least 32768"},

@@ -383,7 +383,7 @@ func Load(path string) (*Config, error) {
 		WorktreeDir           string           `yaml:"worktree_dir"`
 		Sandbox               string           `yaml:"sandbox"`
 		CleanupWorktrees      *bool            `yaml:"cleanup_worktrees"`
-		TaskCompactBytes      *int             `yaml:"task_compact_bytes"`
+		TaskCompactBytes      yaml.Node        `yaml:"task_compact_bytes"`
 		Agents                map[string]Agent `yaml:"agents"`
 		Git                   struct {
 			BaseBranch   string  `yaml:"base_branch"`
@@ -411,7 +411,6 @@ func Load(path string) (*Config, error) {
 		WorktreeDir:           raw.WorktreeDir,
 		Sandbox:               raw.Sandbox,
 		CleanupWorktrees:      raw.CleanupWorktrees,
-		TaskCompactBytes:      raw.TaskCompactBytes,
 		Agents:                raw.Agents,
 		Git:                   GitConfig{BaseBranch: raw.Git.BaseBranch},
 	}
@@ -434,10 +433,15 @@ func Load(path string) (*Config, error) {
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
 	}
-	if cfg.TaskCompactBytes != nil {
-		if err := ValidateTaskCompactBytes(*cfg.TaskCompactBytes); err != nil {
+	if node := raw.TaskCompactBytes; node.Kind != 0 && node.Tag != "!!null" {
+		value, err := strconv.Atoi(node.Value)
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || err != nil {
+			return nil, fmt.Errorf("validate config: task_compact_bytes must be an integer")
+		}
+		if err := ValidateTaskCompactBytes(value); err != nil {
 			return nil, fmt.Errorf("validate config: %w", err)
 		}
+		cfg.TaskCompactBytes = &value
 	}
 	if raw.RunIdleTimeout == nil {
 		cfg.RunIdleTimeout = DefaultRunIdleTimeout

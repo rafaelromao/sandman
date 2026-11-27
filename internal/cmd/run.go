@@ -289,6 +289,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			issueSelectionProvided := len(args) > 0 || label != "" || query != ""
+			if compactFlag && overridePrompt && !issueSelectionProvided && !promptNeedsIssueSelection {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			if overridePrompt && !issueSelectionProvided {
 				readyContinuations = nil
 			}

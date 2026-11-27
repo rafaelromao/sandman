@@ -148,10 +148,10 @@ func taskAnchors(workDir string, template prompt.RenderConfig, content string) t
 		return taskStructure{
 			anchors:   prompt.TemplateHeadings(template),
 			unbounded: prompt.TemplateEndsWithIssueBody(template),
-			nextStep:  prompt.TemplateNextStep(template, content),
+			nextStep:  prompt.LegacyTemplateNextStep(template, content),
 		}
 	}
-	var structure taskStructure
+	structure := taskStructure{nextStep: prompt.LegacyTemplateNextStep(template, content)}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if value, ok := strings.CutPrefix(line, nextStepAnchorPrefix); ok {

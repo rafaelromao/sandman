@@ -3,6 +3,7 @@ package prompt
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -80,7 +81,8 @@ type taskSection struct {
 	text    string
 	// afterPointer marks text an agent wrote after a history pointer's end
 	// marker, before the next heading.
-	afterPointer bool
+	afterPointer     bool
+	generatedPointer bool
 }
 
 // label names a section in the history pointer's list of moved sections.
@@ -97,10 +99,13 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 	var out []taskSection
 	for _, section := range sections {
 		if section.heading == TaskHistoryHeading {
-			if at := strings.Index(section.text, taskHistoryEnd+"\n"); at >= 0 {
-				end := at + len(taskHistoryEnd) + 1
+			if at := strings.Index(section.text, "\n"+taskHistoryEnd+"\n"); at >= 0 &&
+				strings.HasPrefix(section.text, TaskHistoryHeading+"\n\nSandman moved ") {
+				end := at + len(taskHistoryEnd) + 2
+				section.generatedPointer = true
 				if tail := section.text[end:]; strings.TrimSpace(tail) != "" {
-					out = append(out, taskSection{heading: section.heading, text: section.text[:end]}, taskSection{text: tail, afterPointer: true})
+					section.text = section.text[:end]
+					out = append(out, section, taskSection{text: tail, afterPointer: true})
 					continue
 				}
 			}
@@ -206,7 +211,6 @@ func TaskHeadings(content string) []string {
 // fallback structure for Tasks rendered before Sandman recorded their anchors.
 func TemplateHeadings(cfg RenderConfig) []string {
 	headings := TaskHeadings(defaultPrompt)
-	cfg.PromptFlag = ""
 	if template, err := loadTemplate(cfg); err == nil && template != defaultPrompt {
 		headings = mergeHeadingCounts(headings, TaskHeadings(template))
 	}
@@ -219,7 +223,6 @@ func TemplateHeadings(cfg RenderConfig) []string {
 // recorded anchors nothing marks where they end and agent history begins.
 func TemplateEndsWithIssueBody(cfg RenderConfig) bool {
 	templates := []string{defaultPrompt}
-	cfg.PromptFlag = ""
 	if template, err := loadTemplate(cfg); err == nil {
 		templates = append(templates, template)
 	}
@@ -247,7 +250,6 @@ func isAnchorHeading(heading string) bool {
 // body can carry its own `## Next Step`; the template's is told apart by
 // where the template places it relative to the issue body.
 func TemplateNextStep(cfg RenderConfig, task string) int {
-	cfg.PromptFlag = ""
 	template, err := loadTemplate(cfg)
 	if err != nil {
 		template = defaultPrompt
@@ -264,6 +266,15 @@ func TemplateNextStep(cfg RenderConfig, task string) int {
 		return -1
 	}
 	return max(1, countHeading(task, nextStepHeading)-trailing+1)
+}
+
+// LegacyTemplateNextStep declines to edit a section when an older Task has
+// several candidates and no record of which one the template supplied.
+func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
+	if countHeading(task, nextStepHeading) != 1 {
+		return -1
+	}
+	return TemplateNextStep(cfg, task)
 }
 
 func countHeading(content, heading string) int {
@@ -366,16 +377,40 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	// Move the fewest oldest history sections for the Task, with the pointer
 	// naming exactly what moves, to fit the target; if none fits, move all.
 	keepFrom := len(history)
+	keptSize := fixed + historyBytes(sections, history)
+	listed := append([]string(nil), moved[:min(len(moved), movedHeadingsListed)]...)
+	listedBytes := 0
+	for _, heading := range listed {
+		listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
+	}
+	const pointerSeparator = "\n\n"
+	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(pointerSeparator)
 	for n := 0; n <= len(history); n++ {
+		if n > 0 {
+			section := sections[history[n-1]]
+			keptSize -= len(section.text)
+			if len(listed) < movedHeadingsListed {
+				heading := section.label()
+				listed = append(listed, heading)
+				listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
+			}
+		}
 		if n == 0 && !changed {
-			if fixed+historyBytes(sections, history) <= opts.Target {
+			if len(content) <= opts.Target {
 				keepFrom = 0
 				break
 			}
 			continue
 		}
-		pointer := historyPointer(opts, len(content), append(append([]string(nil), moved...), headingsOf(sections, history[:n])...))
-		if fixed+historyBytes(sections, history[n:])+len(pointer)+2 <= opts.Target {
+		pointerSize := basePointerSize + len(strconv.Itoa(len(content)-keptSize))
+		count := len(moved) + n
+		if count > 0 {
+			pointerSize += len(movedSectionsHeading) + listedBytes
+		}
+		if more := count - len(listed); more > 0 {
+			pointerSize += len("- and  more\n") + len(strconv.Itoa(more))
+		}
+		if keptSize+pointerSize <= opts.Target {
 			keepFrom = n
 			break
 		}
@@ -397,29 +432,26 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 
-	keptBytes := 0
 	insertAt := len(sections)
 	for i := range sections {
-		keptBytes += len(kept[i])
 		if i > last && kept[i] != "" && insertAt == len(sections) {
 			insertAt = i
 		}
 	}
 	// The pointer goes after the Task's structure, not at the end, so text
 	// the agent appends later never becomes part of it.
-	pointer := historyPointer(opts, len(content)-keptBytes, moved)
+	pointer := pointerSeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved))
 	var b strings.Builder
 	for i := range sections {
 		if i == insertAt {
-			b.WriteString(pointer + "\n")
+			b.WriteString(pointer)
 		}
 		b.WriteString(kept[i])
 	}
-	compacted := trimTrailingNewlines(b.String())
 	if insertAt == len(sections) {
-		compacted += "\n\n" + trimTrailingNewlines(pointer)
+		b.WriteString(pointer)
 	}
-	compacted += "\n"
+	compacted := b.String()
 	if len(compacted) >= len(content) {
 		result.Reason = "protected content exceeds the target, and moving the rest would not shrink the Task"
 		return result
@@ -469,7 +501,7 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			roles[i] = roleHistory
 		case section.afterPointer:
 			roles[i] = group
-		case section.heading == TaskHistoryHeading:
+		case section.generatedPointer:
 			roles[i] = rolePointer
 		case nextStep:
 			group = roleNextStep
@@ -557,18 +589,19 @@ func cutOutsideFence(text string, limit int) string {
 	return text[:safe]
 }
 
-func historyPointer(opts TaskCompaction, movedBytes int, moved []string) string {
+const movedSectionsHeading = "\nMoved sections:\n\n"
+
+func renderHistoryPointer(opts TaskCompaction, movedBytes int, listed []string, movedCount int) string {
 	var b strings.Builder
 	b.WriteString(TaskHistoryHeading + "\n\n")
 	fmt.Fprintf(&b, "Sandman moved %d bytes of earlier Task content to `%s` to keep this Task near %d bytes. That file holds the complete Task as it was before. It is history: read it only when a detail you need is missing here and in the live repository, pull request and checks.\n", movedBytes, opts.ArchivePath, opts.Target)
-	if len(moved) > 0 {
-		b.WriteString("\nMoved sections:\n\n")
-		for i, heading := range moved {
-			if i == movedHeadingsListed {
-				fmt.Fprintf(&b, "- and %d more\n", len(moved)-i)
-				break
-			}
+	if movedCount > 0 {
+		b.WriteString(movedSectionsHeading)
+		for _, heading := range listed {
 			fmt.Fprintf(&b, "- %s\n", strings.TrimPrefix(heading, "## "))
+		}
+		if more := movedCount - len(listed); more > 0 {
+			fmt.Fprintf(&b, "- and %d more\n", more)
 		}
 	}
 	b.WriteString("\n" + taskHistoryEnd + "\n")

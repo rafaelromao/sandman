@@ -425,7 +425,7 @@ func TestCompactTask_BudgetsAgainstThePointerItWrites(t *testing.T) {
 	oldest := checkpoint(1, 5000)
 	opts := TaskCompaction{Threshold: 1, Target: testTarget, Force: true, Anchors: structuredAnchors, ArchivePath: ".sandman/task-history/a.md"}
 	estimate := base + oldest
-	pointer := historyPointer(opts, len(estimate)+testTarget, []string{"## Checkpoint 1"})
+	pointer := renderHistoryPointer(opts, len(estimate)+testTarget, []string{"## Checkpoint 1"}, 1)
 	heading := "\n## Checkpoint 2\n\n"
 	room := testTarget - len(base) - len(pointer) - 2 - 8
 	newest := heading + strings.Repeat("y", room-len(heading)-1) + "\n"
@@ -438,6 +438,32 @@ func TestCompactTask_BudgetsAgainstThePointerItWrites(t *testing.T) {
 	}
 	if again := CompactTask(got.Content, opts); again.Compacted || again.Content != got.Content {
 		t.Fatalf("forcing again changed the Task (reason %q)", again.Reason)
+	}
+	opts.Target = got.After
+	exact := CompactTask(task, opts)
+	if exact.After != opts.Target || !strings.Contains(exact.Content, "## Checkpoint 2\n") {
+		t.Fatalf("exact fit discarded newest checkpoint: %d bytes, moved %q", exact.After, exact.Moved)
+	}
+}
+
+func TestCompactTask_PreservesIssueSectionNamedLikeHistory(t *testing.T) {
+	issueSection := TaskHistoryHeading + "\n\nHistory provided by the issue author.\n"
+	task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Issue body.\n", issueSection, 1)
+	got := compact(task, true)
+	if !got.Compacted || !strings.Contains(got.Content, issueSection) {
+		t.Fatalf("compacted = %v; issue history was not preserved", got.Compacted)
+	}
+}
+
+func TestTemplateNextStep_InlineAndAmbiguousLegacy(t *testing.T) {
+	cfg := RenderConfig{PromptFlag: "## Next Step\n\nTemplate instructions.\n\n## Issue\n\n{{ISSUE_BODY}}\n"}
+	task := strings.Replace(cfg.PromptFlag, "{{ISSUE_BODY}}", "## Next Step\n\nIssue instructions.\n", 1)
+	if got := TemplateNextStep(cfg, task); got != 1 {
+		t.Fatalf("inline template Next Step = %d, want 1", got)
+	}
+	legacy := DefaultPrompt() + "\n## Next Step\n\nAgent checkpoint.\n"
+	if got := LegacyTemplateNextStep(RenderConfig{}, legacy); got != -1 {
+		t.Fatalf("ambiguous legacy Next Step = %d, want -1", got)
 	}
 }
 
