@@ -25,8 +25,12 @@ func compactContinuedTasks(cmd *cobra.Command, cfg *config.Config, req *batch.Re
 		workDir := worktrees[num]
 		taskPath := filepath.Join(workDir, ".sandman", "task.md")
 		content, exists, err := batch.ReadTaskContent(taskPath)
-		if err != nil || !exists {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: no readable Task at %s (%v)\n", num, taskPath, err)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: read %s: %v\n", num, taskPath, err)
+			continue
+		}
+		if !exists {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: no Task at %s\n", num, taskPath)
 			continue
 		}
 		result, err := batch.CompactWorktreeTask(content, batch.TaskCompactionRequest{

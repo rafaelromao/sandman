@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -71,31 +72,28 @@ type taskSection struct {
 // cannot swallow the sections after it.
 func splitTaskSections(content string) []taskSection {
 	lines := strings.SplitAfter(content, "\n")
-	ignored := map[int]bool{}
-	for {
-		sections, unclosed := splitTaskLines(lines, ignored)
-		if unclosed < 0 {
-			return sections
-		}
-		ignored[unclosed] = true
-	}
-}
-
-// splitTaskLines splits lines into sections and returns the index of a fence
-// opener still open at the end, or -1.
-func splitTaskLines(lines []string, ignored map[int]bool) ([]taskSection, int) {
 	headings := []string{""}
 	starts := []int{0}
 	var open fence
 	openedAt := -1
-	for i, line := range lines {
-		trimmed := strings.TrimRight(line, "\r\n")
+	ignored := map[int]bool{}
+	for i := 0; ; i++ {
+		if i == len(lines) {
+			if open.char == 0 {
+				break
+			}
+			// No heading was recorded while the fence was open, so parsing
+			// resumes at its opener, now read as text.
+			ignored[openedAt] = true
+			i, open = openedAt, fence{}
+		}
+		trimmed := strings.TrimRight(lines[i], "\r\n")
 		if f, ok := parseFence(trimmed); ok && !ignored[i] {
 			switch {
 			case open.char == 0:
 				open, openedAt = f, i
 			case f.closes(open):
-				open, openedAt = fence{}, -1
+				open = fence{}
 			}
 			continue
 		}
@@ -112,7 +110,7 @@ func splitTaskLines(lines []string, ignored map[int]bool) ([]taskSection, int) {
 		}
 		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
 	}
-	return sections, openedAt
+	return sections
 }
 
 // fence is a fenced code block delimiter: its character and length, and
@@ -350,8 +348,30 @@ func classifySections(sections []taskSection, anchors []string) ([]sectionRole, 
 		default:
 			roles[i] = group
 		}
+		if roles[i] != roleKeep && roles[i] != rolePointer && swallowsKeptHeading(section.text, anchors) {
+			roles[i] = roleKeep
+		}
 	}
 	return roles, last
+}
+
+// swallowsKeptHeading reports whether a section's body holds a heading line
+// compaction would keep: an anchor, a plan, a status line or one of Sandman's
+// sections. Such a line is inside a fenced block, typically one an agent left
+// open and a later fence closed, so the section is kept whole rather than
+// risk moving what it swallowed.
+func swallowsKeptHeading(text string, anchors []string) bool {
+	_, body, _ := strings.Cut(text, "\n")
+	for _, line := range strings.Split(body, "\n") {
+		heading := strings.TrimSpace(line)
+		if !strings.HasPrefix(heading, "## ") {
+			continue
+		}
+		if runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading) {
+			return true
+		}
+	}
+	return false
 }
 
 func headingsOf(sections []taskSection, indexes []int) []string {

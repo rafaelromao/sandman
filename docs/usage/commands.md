@@ -124,7 +124,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--agent` selects the agent preset for this run (built-in `opencode`, `opencode-v2`, or `claude`, or a custom provider under `agents` in config); if omitted, Sandman uses `agent` from config. In container mode the Dockerfile's `installed-agents` header must list the agent's preset
 - `--continue` cannot be combined with `--override`
 - `--reuse-session` requires `--continue`; it applies independently to each continued row and never to promoted or fresh rows
-- `--compact` requires `--continue` and is refused with `--run-id`; it compacts only rows that are continued, never promoted, fresh or automatically resumed rows, and prints one line per row
+- `--compact` requires `--continue` and is refused with `--run-id`; it compacts every row the command continues, including a ready continuation resumed alongside the named issues, never promoted or fresh rows, and prints one line per row
 - Runtime-owned re-entry after an external pull-request wait reuses the prior conversation automatically (the exact OpenCode session, or Claude Code's `--continue`); ordinary retries and context-rollover retries remain fresh
 - `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`. Each confirmed review trigger receives a full budget; retries and continuations of the same trigger keep its remaining time. Recorded reviewer quota pauses do not count for managed Sandman-daemon requests. Blind review has no delegated deadline.
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins

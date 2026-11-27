@@ -307,3 +307,23 @@ func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
 		t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
 	}
 }
+
+// A fence an agent left open is closed by the next bare fence, here the one
+// ending the plan's code block, so the plan heading lands inside the history
+// section. That section is kept rather than moving the plan.
+func TestCompactTask_KeepsAHistorySectionThatSwallowedThePlan(t *testing.T) {
+	history := checkpoints(10, 1000)
+	history[2] += "```\ntruncated log\n"
+	task := structuredTask(history...) + "\n## Plan\n\n```go\nfunc slice() {}\n```\n\nThe plan's prose.\n"
+
+	got := compact(task, true)
+
+	for _, kept := range []string{"## Plan\n", "The plan's prose.", "## Checkpoint 10\n"} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept)
+		}
+	}
+	if strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Error("the checkpoints before the open fence were kept")
+	}
+}
