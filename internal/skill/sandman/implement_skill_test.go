@@ -98,3 +98,28 @@ func TestReviewCycleSkillKeepsTheStandalonePollPlan(t *testing.T) {
 		t.Error("the managed default cadence must not leak into the standalone review cycle")
 	}
 }
+
+// Every continuation sends the Task back to the agent, so the skills ask for a
+// current-state checkpoint rather than an appended log.
+func TestSkillsKeepTheTaskACurrentStateCheckpoint(t *testing.T) {
+	for path, required := range map[string][]string{
+		"implement/SKILL.md": {
+			"Keep `.sandman/task.md` a current-state checkpoint",
+			"rewrite `## Next Step` in place",
+			"replace a superseded checkpoint instead of adding another section",
+			"do not paste logs, command output or review reports into it",
+			"`.sandman/task-history/`",
+		},
+		"run/SKILL.md": {"rewrite the registered `## Next Step` in place"},
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, phrase := range required {
+			if !strings.Contains(string(data), phrase) {
+				t.Errorf("%s is missing %q", path, phrase)
+			}
+		}
+	}
+}

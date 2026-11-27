@@ -62,7 +62,7 @@ Each checklist step is a skill-load directive. The agent MUST emit a `Skill "san
 
 Before moving on, check which checklist items are already complete in `.sandman/task.md`. If an item is already checked, treat it as complete and skip it instead of repeating the work.
 
-After checking off an item, atomically update `.sandman/task.md` and rewrite the registered `## Next Step` so it points at the next unchecked checklist item.
+After checking off an item, atomically update `.sandman/task.md` and rewrite the registered `## Next Step` in place so it points at the next unchecked checklist item. Keep the Task a current-state checkpoint, as `sandman-implement` describes.
 
 ## Next Step
 
