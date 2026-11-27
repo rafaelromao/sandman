@@ -305,6 +305,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	defer logFile.Close()
 
+	var archivePath string
+	var originalTask []byte
+	var originalTaskErr error
+	taskPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
 	if taskPrompt := renderCfg.TaskPrompt; taskPrompt != "" {
 		if ctx.Err() != nil {
 			r.status = "aborted"
@@ -315,7 +319,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
 		}
 		if r.compactsTask() {
-			taskPrompt = r.compactTask(taskPrompt, renderCfg, logFile)
+			originalTask, originalTaskErr = os.ReadFile(taskPath)
+			if originalTaskErr == nil || os.IsNotExist(originalTaskErr) {
+				taskPrompt, archivePath = r.compactTask(taskPrompt, renderCfg, logFile)
+			}
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			// Preserve the rollover cause so the ordinary retry uses the
@@ -366,6 +373,20 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile)
+	if errors.Is(execErr, sandbox.ErrExecNotStarted) && archivePath != "" {
+		var rollbackErr error
+		if os.IsNotExist(originalTaskErr) {
+			rollbackErr = os.Remove(taskPath)
+		} else {
+			rollbackErr = r.writeTaskPrompt(renderedPromptFile, string(originalTask))
+		}
+		if rollbackErr == nil {
+			rollbackErr = os.Remove(filepath.Join(r.sandbox.WorkDir(), filepath.FromSlash(archivePath)))
+		}
+		if rollbackErr != nil {
+			fmt.Fprintf(logFile, "restore Task after refused launch: %v\n", rollbackErr)
+		}
+	}
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {

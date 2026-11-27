@@ -201,7 +201,7 @@ func (r *AgentRun) compactsTask() bool {
 
 // compactTask compacts an implementation launch's composed Task and records
 // the outcome in the run log. Any failure launches the Task unchanged.
-func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) string {
+func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) (string, string) {
 	// The archive has its own writer, which never replaces a file; the Task
 	// writer replaces the Task afterwards.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
@@ -217,7 +217,7 @@ func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log i
 		_ = prefixed.Flush()
 	}
 	if err != nil {
-		return task
+		return task, ""
 	}
-	return result.Content
+	return result.Content, result.ArchivePath
 }

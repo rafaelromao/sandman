@@ -69,6 +69,9 @@ updates it.
   automatic rule. The CLI itself writes no Task. A restart before the first
   launch drops the request. Command and environment validation and opening the
   required run log all happen before the continuation Task or archive is written.
+  If the sandbox definitively refuses before spawning the launcher, Sandman
+  restores the previous Task and removes the unused archive. It retains the
+  archive if restoration fails or the launcher started.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

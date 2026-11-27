@@ -373,14 +373,14 @@ func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) 
 }
 
 func TestImplementationLaunch_RefusalLeavesTaskUnchanged(t *testing.T) {
-	for _, name := range []string{"invalid command", "cannot open log"} {
+	for _, name := range []string{"invalid command", "cannot open log", "cannot spawn shell"} {
 		t.Run(name, func(t *testing.T) {
-			testRefusedCompactionLaunch(t, name == "cannot open log")
+			testRefusedCompactionLaunch(t, name)
 		})
 	}
 }
 
-func testRefusedCompactionLaunch(t *testing.T, blockLog bool) {
+func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	t.Helper()
 	root := t.TempDir()
 	initGitRepo(t, root)
@@ -395,11 +395,15 @@ func testRefusedCompactionLaunch(t *testing.T, blockLog bool) {
 	run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
 	run.forceTaskCompaction = true
 	command := "fake-agent {{.Unknown}}"
-	if blockLog {
+	switch refusal {
+	case "cannot open log":
 		if err := os.Mkdir(filepath.Join(sb.WorkDir(), "run.log"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		command = "true"
+	case "cannot spawn shell":
+		command = "true"
+		t.Setenv("PATH", t.TempDir())
 	}
 	result := run.Run(context.Background(), &prompt.Engine{}, command, prompt.RenderConfig{TaskPrompt: task})
 	if result.Status != "failure" {
@@ -409,8 +413,8 @@ func testRefusedCompactionLaunch(t *testing.T, blockLog bool) {
 	if err != nil || string(got) != task {
 		t.Fatalf("the refused launch changed its Task: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(sb.WorkDir(), ".sandman", "task-history")); !os.IsNotExist(err) {
-		t.Fatalf("the refused launch created a history directory: %v", err)
+	if archives, err := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*.md")); err != nil || len(archives) != 0 {
+		t.Fatalf("the refused launch left archives: %v (%v)", archives, err)
 	}
 }
 
@@ -429,6 +433,19 @@ func TestCompactWorktreeTask_AmbiguousLegacyFooterPreservesIssueContent(t *testi
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
 	if err != nil || result.Compacted || result.Content != task {
 		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
+	}
+}
+
+func TestCompactWorktreeTask_LegacyNextStepPreservesEmbeddedIssueAndMovesHistory(t *testing.T) {
+	template := "# Task\n\n## Next Step\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep the footer.\n"
+	issue := strings.Repeat("Acceptance criterion.\n", 500)
+	rendered := strings.Replace(template, "{{ISSUE_BODY}}", issue, 1)
+	for _, extra := range []string{"", "\n## Next Step\n\nLatest checkpoint.\n"} {
+		task := rendered + "\n## Old checkpoint\n\n" + strings.Repeat("old detail.\n", 4000) + extra
+		result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
+		if err != nil || !result.Compacted || !strings.HasPrefix(result.Content, rendered) || strings.Contains(result.Content, "## Old checkpoint\n") {
+			t.Fatalf("protected content or history handled incorrectly: compacted=%v err=%v", result.Compacted, err)
+		}
 	}
 }
 

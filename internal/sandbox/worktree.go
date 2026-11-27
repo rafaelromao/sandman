@@ -666,7 +666,7 @@ func IsGitDir(path string) bool {
 func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	guardDir, err := s.AgentGitGuardPath()
 	if err != nil {
-		return fmt.Errorf("prepare agent Git guard: %w", err)
+		return fmt.Errorf("%w: prepare agent Git guard: %w", ErrExecNotStarted, err)
 	}
 	cmd := exec.Command("sh", "-c", guardedAgentShellCommand(guardDir), "_", command)
 	cmd.Dir = s.workDir
@@ -675,7 +675,7 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("exec start: %w", err)
+		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
 	}
 	s.mu.Lock()
 	s.cmd = cmd

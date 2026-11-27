@@ -212,11 +212,11 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	// Reapply container paths before every command so a later agent attempt
 	// still resolves the worktree's .git pointer inside the container.
 	if err := s.rewriteGitPaths(); err != nil {
-		return fmt.Errorf("rewrite git paths before exec: %w", err)
+		return fmt.Errorf("%w: rewrite git paths before exec: %w", ErrExecNotStarted, err)
 	}
 	guardDir, err := s.AgentGitGuardPath()
 	if err != nil {
-		return fmt.Errorf("prepare agent Git guard: %w", err)
+		return fmt.Errorf("%w: prepare agent Git guard: %w", ErrExecNotStarted, err)
 	}
 	pgidFile := s.newAgentPGIDFile()
 	cmd := ExecCommandFn(s.binary, s.agentExecArgs(pgidFile, guardDir, command)...)
@@ -224,7 +224,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("container exec start: %w", err)
+		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
 	}
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)

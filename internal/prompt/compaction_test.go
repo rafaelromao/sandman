@@ -107,6 +107,17 @@ func TestCompactTask_TreatsExtraOccurrencesOfAnAnchorAsHistory(t *testing.T) {
 	}
 }
 
+func TestCompactTask_KeepsRecordedFooterWhenAnInsertedHeadingShadowsIt(t *testing.T) {
+	footer := "## Required Order\n\nOriginal footer instructions.\n"
+	task := structuredTask()
+	start := strings.Index(task, "## Required Order\n")
+	task = task[:start] + "## Required Order\n\nInserted notes.\n\n" + footer + strings.Join(checkpoints(12, 1000), "")
+	got := compact(task, true)
+	if !got.Compacted || !strings.Contains(got.Content, footer) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatal("compaction did not preserve the original footer and remove old history")
+	}
+}
+
 func TestCompactTask_CapsNextStepKeepingItsBeginning(t *testing.T) {
 	task := strings.Replace(structuredTask(checkpoints(4, 1000)...), "Implement the first slice.\n",
 		"Implement the first slice.\n"+paragraph("older", 3000)+paragraph("oldest", 3000), 1)

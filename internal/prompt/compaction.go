@@ -281,6 +281,15 @@ func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
 	if countHeading(task, nextStepHeading) != 1 {
 		return -1
 	}
+	template, err := loadTemplate(cfg)
+	if err != nil {
+		return -1
+	}
+	for _, section := range splitTaskSections(template) {
+		if section.heading == nextStepHeading && strings.Contains(section.text, "{{ISSUE_BODY}}") {
+			return -1
+		}
+	}
 	return TemplateNextStep(cfg, task)
 }
 
@@ -336,11 +345,20 @@ func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
 	}
 	actual := TaskHeadings(content)
 	counts := make(map[string]int, len(actual))
-	for _, heading := range actual {
+	last := make(map[string]int, len(actual))
+	for i, heading := range actual {
 		counts[heading]++
+		last[heading] = i
 	}
 	for _, heading := range headings {
 		if counts[heading] > 1 {
+			footer := headings[len(headings)-1]
+			if heading == nextStepHeading && counts[footer] == 1 {
+				beforeFooter := slices.Index(actual[:last[footer]], nextStepHeading)
+				if beforeFooter >= 0 && !slices.Contains(actual[beforeFooter+1:last[footer]], nextStepHeading) {
+					continue
+				}
+			}
 			// An issue heading could otherwise be mistaken for the
 			// template's footer, making some issue text look like history.
 			return false
@@ -542,11 +560,16 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 	}
 	anchored := make([]bool, len(sections))
 	last := -1
+	nextSteps := 0
 	for i, section := range sections {
 		if section.heading != "" && remaining[section.heading] > 0 {
-			remaining[section.heading]--
-			anchored[i] = true
-			last = i
+			if section.heading != nextStepHeading || nextSteps < remaining[nextStepHeading] {
+				anchored[i] = true
+				last = i
+			}
+		}
+		if section.heading == nextStepHeading {
+			nextSteps++
 		}
 	}
 	if last < 0 {
@@ -555,6 +578,17 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 	editable := opts.NextStepOccurrence
 	if editable == 0 {
 		editable = 1
+	}
+	if nextSteps > remaining[nextStepHeading] && remaining[nextStepHeading] > 0 {
+		editable = -1
+		if sections[last].heading == nextStepHeading {
+			for i := last + 1; i < len(sections); i++ {
+				if sections[i].heading == nextStepHeading {
+					anchored[i] = true
+					last = i
+				}
+			}
+		}
 	}
 	occurrence := 0
 	roles := make([]sectionRole, len(sections))
