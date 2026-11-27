@@ -118,6 +118,21 @@ func TestCompactTask_KeepsRecordedFooterWhenAnInsertedHeadingShadowsIt(t *testin
 	}
 }
 
+func TestCompactTask_VerifiesRecordedFooterAndEditableSequence(t *testing.T) {
+	issue := "## Next Step\n\n" + paragraph("issue criteria", 5000)
+	rendered := "## Issue\n\n" + issue + "\n## Next Step\n\nDo the work.\n\n## Footer\n\nOriginal instructions.\n"
+	task := strings.Replace(rendered, "## Next Step\n\nDo the work.", "## Current Work\n\nDo the work.", 1) +
+		strings.Join(checkpoints(12, 1000), "") + "\n## Next Step\n\nNotes.\n\n## Footer\n\nMore notes.\n"
+	got := CompactTask(task, TaskCompaction{
+		Force: true, Target: 8 * 1024, Anchors: TaskHeadings(rendered),
+		NextStepOccurrence: 2, FooterDigest: TaskFooterDigest(rendered), ArchivePath: "archive.md",
+	})
+	if !got.Compacted || !strings.Contains(got.Content, issue) ||
+		!strings.Contains(got.Content, "Original instructions.") || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatal("compaction did not preserve the rendered instructions and move old history")
+	}
+}
+
 func TestCompactTask_CapsNextStepKeepingItsBeginning(t *testing.T) {
 	task := strings.Replace(structuredTask(checkpoints(4, 1000)...), "Implement the first slice.\n",
 		"Implement the first slice.\n"+paragraph("older", 3000)+paragraph("oldest", 3000), 1)

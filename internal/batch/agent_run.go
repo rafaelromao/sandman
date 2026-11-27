@@ -305,7 +305,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	defer logFile.Close()
 
-	var archivePath string
+	var archivePath, compactionSummary string
 	var originalTask []byte
 	var originalTaskErr error
 	taskPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
@@ -321,10 +321,14 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if r.compactsTask() {
 			originalTask, originalTaskErr = os.ReadFile(taskPath)
 			if originalTaskErr == nil || os.IsNotExist(originalTaskErr) {
-				taskPrompt, archivePath = r.compactTask(taskPrompt, renderCfg, logFile)
+				taskPrompt, archivePath, compactionSummary = r.compactTask(taskPrompt, renderCfg, logFile)
 			}
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
+			if archivePath != "" {
+				r.logCompaction(logFile, fmt.Sprintf("task not compacted: %v", err))
+				r.removeUnusedTaskArchive(logFile, archivePath)
+			}
 			// Preserve the rollover cause so the ordinary retry uses the
 			// unchanged checkpoint rather than a generic continuation prompt.
 			r.contextExhausted = renderCfg.ContextRecovery
@@ -380,12 +384,14 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		} else {
 			rollbackErr = r.writeTaskPrompt(renderedPromptFile, string(originalTask))
 		}
-		if rollbackErr == nil {
-			rollbackErr = os.Remove(filepath.Join(r.sandbox.WorkDir(), filepath.FromSlash(archivePath)))
-		}
 		if rollbackErr != nil {
 			fmt.Fprintf(logFile, "restore Task after refused launch: %v\n", rollbackErr)
+		} else {
+			r.logCompaction(logFile, "task not compacted: sandbox launcher did not start; previous Task restored")
+			r.removeUnusedTaskArchive(logFile, archivePath)
 		}
+	} else {
+		r.logCompaction(logFile, compactionSummary)
 	}
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)

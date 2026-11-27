@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"slices"
 	"strconv"
@@ -63,6 +64,8 @@ type TaskCompaction struct {
 	// an issue body can carry its own. 0 means the first; a negative value
 	// means the template has none. See TemplateNextStep.
 	NextStepOccurrence int
+	// FooterDigest verifies the original final structural section.
+	FooterDigest string
 }
 
 // TaskCompactionResult reports what CompactTask did.
@@ -285,12 +288,41 @@ func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
 	if err != nil {
 		return -1
 	}
+	inStep := false
 	for _, section := range splitTaskSections(template) {
-		if section.heading == nextStepHeading && strings.Contains(section.text, "{{ISSUE_BODY}}") {
+		if isAnchorHeading(section.heading) {
+			inStep = section.heading == nextStepHeading
+		}
+		if inStep && strings.Contains(section.text, "{{ISSUE_BODY}}") {
 			return -1
 		}
 	}
 	return TemplateNextStep(cfg, task)
+}
+
+// TaskFooterDigest fingerprints the last structural section, excluding
+// trailing whitespace that may change when another section is appended.
+func TaskFooterDigest(content string) string {
+	sections := splitTaskSections(content)
+	for i := len(sections) - 1; i >= 0; i-- {
+		if sections[i].heading != "" && isAnchorHeading(sections[i].heading) {
+			return footerDigest(sections[i].text)
+		}
+	}
+	return ""
+}
+
+func footerDigest(text string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimRight(text, " \t\r\n"))))
+}
+
+// LegacyTaskFooterDigest verifies a static template footer against the Task.
+func LegacyTaskFooterDigest(cfg RenderConfig) string {
+	template, err := loadTemplate(cfg)
+	if err != nil || TemplateEndsWithIssueBody(cfg) {
+		return ""
+	}
+	return TaskFooterDigest(template)
 }
 
 func countHeading(content, heading string) int {
@@ -572,12 +604,42 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			nextSteps++
 		}
 	}
+	if opts.FooterDigest != "" {
+		last = -1
+		for i, section := range sections {
+			if anchored[i] && footerDigest(section.text) == opts.FooterDigest {
+				if last >= 0 {
+					return nil, -1
+				}
+				last = i
+			}
+		}
+		for i := last + 1; i < len(anchored); i++ {
+			anchored[i] = false
+		}
+	}
 	if last < 0 {
 		return nil, -1
 	}
 	editable := opts.NextStepOccurrence
 	if editable == 0 {
 		editable = 1
+	}
+	if opts.FooterDigest != "" {
+		var expected, current []string
+		for _, heading := range opts.Anchors {
+			if isAnchorHeading(heading) {
+				expected = append(expected, heading)
+			}
+		}
+		for _, section := range sections[:last+1] {
+			if section.heading != "" && isAnchorHeading(section.heading) {
+				current = append(current, section.heading)
+			}
+		}
+		if !slices.Equal(expected, current) {
+			editable = -1
+		}
 	}
 	if nextSteps > remaining[nextStepHeading] && remaining[nextStepHeading] > 0 {
 		editable = -1
@@ -614,6 +676,9 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			roles[i] = group
 		case section.heading == "" || runtimeHeadings[section.heading] || isProtectedHeading(section.heading):
 			roles[i] = roleKeep
+			if runtimeHeadings[section.heading] {
+				group = roleKeep
+			}
 		case i > last && opts.UnboundedHistory:
 			roles[i] = roleKeep
 		case i > last:

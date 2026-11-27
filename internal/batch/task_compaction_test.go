@@ -171,7 +171,7 @@ func TestFreshRenderAnchorsTheTaskForLaterCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fresh render recorded no anchors: %v", err)
 	}
-	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\nnext-step 1\n"; string(anchors) != want {
+	if want := strings.Join(prompt.TaskHeadings(fresh.stdin), "\n") + "\nfooter-sha256 " + prompt.TaskFooterDigest(fresh.stdin) + "\nnext-step 1\n"; string(anchors) != want {
 		t.Fatalf("anchors =\n%s\nwant\n%s", anchors, want)
 	}
 	if strings.Contains(fresh.stdin, "## Sandman Task History") {
@@ -373,7 +373,7 @@ func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) 
 }
 
 func TestImplementationLaunch_RefusalLeavesTaskUnchanged(t *testing.T) {
-	for _, name := range []string{"invalid command", "cannot open log", "cannot spawn shell"} {
+	for _, name := range []string{"invalid command", "cannot open log", "cannot spawn shell", "cannot write Task"} {
 		t.Run(name, func(t *testing.T) {
 			testRefusedCompactionLaunch(t, name)
 		})
@@ -404,6 +404,9 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	case "cannot spawn shell":
 		command = "true"
 		t.Setenv("PATH", t.TempDir())
+	case "cannot write Task":
+		command = "true"
+		run.taskWriter = func(string, []byte, os.FileMode) error { return errors.New("write refused") }
 	}
 	result := run.Run(context.Background(), &prompt.Engine{}, command, prompt.RenderConfig{TaskPrompt: task})
 	if result.Status != "failure" {
@@ -415,6 +418,12 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	}
 	if archives, err := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*.md")); err != nil || len(archives) != 0 {
 		t.Fatalf("the refused launch left archives: %v (%v)", archives, err)
+	}
+	if refusal == "cannot spawn shell" || refusal == "cannot write Task" {
+		log, err := os.ReadFile(filepath.Join(sb.WorkDir(), "run.log"))
+		if err != nil || !strings.Contains(string(log), "task not compacted:") || strings.Contains(string(log), "task compacted:") {
+			t.Fatalf("incorrect compaction log: %s (%v)", log, err)
+		}
 	}
 }
 
@@ -436,8 +445,17 @@ func TestCompactWorktreeTask_AmbiguousLegacyFooterPreservesIssueContent(t *testi
 	}
 }
 
+func TestCompactWorktreeTask_ChangedLegacyFooterCannotMatchIssueHeading(t *testing.T) {
+	template := "## Issue\n\n{{ISSUE_BODY}}\n\n## Footer\n\nNew template instructions.\n"
+	task := "## Issue\n\n## Footer\n\nIssue notes.\n\n## Acceptance criteria\n\n" + strings.Repeat("Required.\n", 4000)
+	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
+	if err != nil || result.Compacted || result.Content != task {
+		t.Fatalf("unverified legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
+	}
+}
+
 func TestCompactWorktreeTask_LegacyNextStepPreservesEmbeddedIssueAndMovesHistory(t *testing.T) {
-	template := "# Task\n\n## Next Step\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep the footer.\n"
+	template := "# Task\n\n## Next Step\n\nCurrent step.\n\n## Sandman Runtime Context\n\n{{ISSUE_BODY}}\n\n## Footer\n\nKeep the footer.\n"
 	issue := strings.Repeat("Acceptance criterion.\n", 500)
 	rendered := strings.Replace(template, "{{ISSUE_BODY}}", issue, 1)
 	for _, extra := range []string{"", "\n## Next Step\n\nLatest checkpoint.\n"} {

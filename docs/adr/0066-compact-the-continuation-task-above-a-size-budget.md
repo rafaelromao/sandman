@@ -44,8 +44,9 @@ updates it.
   anchors. The render also records which `## Next Step` is the template's
   own. If that section contains substituted issue text, it is kept whole.
   Tasks rendered before this decision are compacted only if the current
-  template's structural headings match the Task in order without duplicates
-  that could be mistaken for template headings. If the template has no heading
+  template's structural headings match the Task in order and its static
+  footer can be verified. Fresh renders record the footer fingerprint, so a
+  later checkpoint with the same heading cannot displace it. If the template has no heading
   after the issue body other than Sandman's, nothing marks where the issue's
   own sections end, so nothing after the last template heading moves.
 - **What moves.** Sections the agent added after the last anchor are history.
@@ -71,7 +72,9 @@ updates it.
   required run log all happen before the continuation Task or archive is written.
   If the sandbox definitively refuses before spawning the launcher, Sandman
   restores the previous Task and removes the unused archive. It retains the
-  archive if restoration fails or the launcher started.
+  archive if restoration fails or the launcher started. A failed atomic Task
+  write also removes the unused archive; the run log reports success only once
+  the launch is no longer subject to this rollback.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

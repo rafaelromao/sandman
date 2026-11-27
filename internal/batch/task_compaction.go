@@ -83,6 +83,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 			ArchivePath:        archive,
 			UnboundedHistory:   structure.unbounded,
 			NextStepOccurrence: structure.nextStep,
+			FooterDigest:       structure.footerDigest,
 		})
 		if !result.Compacted {
 			return result, nil
@@ -137,7 +138,8 @@ type taskStructure struct {
 	unbounded bool
 	// nextStep is the template's `## Next Step` occurrence; see
 	// prompt.TaskCompaction.NextStepOccurrence.
-	nextStep int
+	nextStep     int
+	footerDigest string
 }
 
 // taskAnchors returns the recorded structure of the worktree's Task, or the
@@ -150,14 +152,19 @@ func taskAnchors(workDir string, template prompt.RenderConfig, content string) t
 			return taskStructure{nextStep: -1}
 		}
 		return taskStructure{
-			anchors:   prompt.TemplateHeadings(template),
-			unbounded: prompt.TemplateEndsWithIssueBody(template),
-			nextStep:  prompt.LegacyTemplateNextStep(template, content),
+			anchors:      prompt.TemplateHeadings(template),
+			unbounded:    prompt.TemplateEndsWithIssueBody(template),
+			nextStep:     prompt.LegacyTemplateNextStep(template, content),
+			footerDigest: prompt.LegacyTaskFooterDigest(template),
 		}
 	}
 	structure := taskStructure{nextStep: prompt.LegacyTemplateNextStep(template, content)}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "footer-sha256 "); ok {
+			structure.footerDigest = value
+			continue
+		}
 		if value, ok := strings.CutPrefix(line, nextStepAnchorPrefix); ok {
 			if n, err := strconv.Atoi(value); err == nil {
 				structure.nextStep = n
@@ -181,6 +188,7 @@ func (r *AgentRun) recordTaskAnchors(rendered string, nextStep int) {
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
 	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n" +
+		fmt.Sprintf("footer-sha256 %s\n", prompt.TaskFooterDigest(rendered)) +
 		fmt.Sprintf("%s%d\n", nextStepAnchorPrefix, nextStep)
 	// Not through the Task writer: the anchors are not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
@@ -201,14 +209,23 @@ func (r *AgentRun) compactsTask() bool {
 
 // compactTask compacts an implementation launch's composed Task and records
 // the outcome in the run log. Any failure launches the Task unchanged.
-func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) (string, string) {
+func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) (string, string, string) {
 	// The archive has its own writer, which never replaces a file; the Task
 	// writer replaces the Task afterwards.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
 		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
 		Force: r.forceTaskCompaction, Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
 	})
-	if summary := TaskCompactionSummary(result, err); summary != "" {
+	summary := TaskCompactionSummary(result, err)
+	if err != nil || !result.Compacted {
+		r.logCompaction(log, summary)
+		return task, "", ""
+	}
+	return result.Content, result.ArchivePath, summary
+}
+
+func (r *AgentRun) logCompaction(log io.Writer, summary string) {
+	if summary != "" {
 		if warnings := r.warningWriter(); warnings != nil {
 			fmt.Fprintln(warnings, summary)
 		}
@@ -216,8 +233,10 @@ func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log i
 		fmt.Fprintln(prefixed, summary)
 		_ = prefixed.Flush()
 	}
-	if err != nil {
-		return task, ""
+}
+
+func (r *AgentRun) removeUnusedTaskArchive(log io.Writer, path string) {
+	if err := os.Remove(filepath.Join(r.sandbox.WorkDir(), filepath.FromSlash(path))); err != nil {
+		r.logCompaction(log, fmt.Sprintf("remove unused Task archive: %v", err))
 	}
-	return result.Content, result.ArchivePath
 }
