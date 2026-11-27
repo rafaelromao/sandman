@@ -169,3 +169,22 @@ func TestRun_ContinueCompact_RefusedContinuationLeavesTheTaskAlone(t *testing.T)
 		t.Fatal("a refused continuation compacted the Task")
 	}
 }
+
+// Only continued rows are compacted: a row promoted to --override has no
+// preserved Task to compact and gets no --compact line.
+func TestRun_ContinueCompact_SkipsPromotedRows(t *testing.T) {
+	f := newCompactFixture(t, nil)
+	f.deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open"}}, prs: map[string]*github.PR{}}
+
+	out, err := f.run(t, "--continue", "--compact", "42", "43")
+
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "[--compact] #42: task compacted:") || strings.Contains(out, "[--compact] #43") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if f.spy.req.Mode[43] != batch.ModeOverride {
+		t.Fatalf("mode[43] = %v, want override", f.spy.req.Mode[43])
+	}
+}

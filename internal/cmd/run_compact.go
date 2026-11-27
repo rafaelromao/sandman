@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -13,24 +12,21 @@ import (
 )
 
 // compactContinuedTasks applies `--continue --compact`: each continued
-// issue's preserved Task is compacted, even under the threshold, and its
-// continuation prompt is composed from the result. The first launch rereads
-// the compacted Task from the worktree. A failure leaves that Task as it was.
-func compactContinuedTasks(cmd *cobra.Command, cfg *config.Config, req *batch.Request, issues []int, sandmanDir string, compose func(string) string) {
-	worktreeBase := strings.TrimSpace(cfg.WorktreeDir)
-	if worktreeBase == "" {
-		worktreeBase = ".sandman/worktrees"
-	}
+// issue's preserved Task, at the worktree the continuation resolved, is
+// compacted even under the threshold, and its continuation prompt is composed
+// from the result. The first launch rereads the compacted Task from the
+// worktree. A failure leaves that Task as it was.
+func compactContinuedTasks(cmd *cobra.Command, cfg *config.Config, req *batch.Request, issues []int, worktrees map[int]string, sandmanDir string, compose func(string) string) {
 	template := req.PromptConfig
 	if template.PromptFile == "" {
 		template.PromptFile = filepath.Join(sandmanDir, "prompt.md")
 	}
 	for _, num := range issues {
-		workDir := filepath.Join(worktreeBase, req.Branches[num])
+		workDir := worktrees[num]
 		taskPath := filepath.Join(workDir, ".sandman", "task.md")
 		content, exists, err := batch.ReadTaskContent(taskPath)
 		if err != nil || !exists {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: no readable Task at %s\n", num, taskPath)
+			fmt.Fprintf(cmd.ErrOrStderr(), "[--compact] #%d: task not compacted: no readable Task at %s (%v)\n", num, taskPath, err)
 			continue
 		}
 		result, err := batch.CompactWorktreeTask(content, batch.TaskCompactionRequest{

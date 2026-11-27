@@ -67,6 +67,8 @@ older checkpoint or move a newer one; the archive and the live repository
 cover both cases.
 
 The built-in template and a current review report are kept, so a Task with a
-large report can stay above the target: the replay of the 119 KB Task launches
-at about 46 KB. With session reuse, the agent's earlier conversation still
+large report can stay above the target. A replay with that Task's shape (98 KB
+once its review report is stored once) launches at about 46 KB. The real 119 KB
+Task would reach about 50 KB, above the threshold, so its later launches would
+log that it cannot shrink further until the report is answered. With session reuse, the agent's earlier conversation still
 holds the old Task; compaction shrinks only the file and the new prompt.

@@ -140,6 +140,9 @@ func (r *AgentRun) compactsTask() bool {
 // compactTask compacts an implementation launch's composed Task and records
 // the outcome in the run log. Any failure launches the Task unchanged.
 func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig) string {
+	// The archive goes through the launch's Task writer so that its order
+	// before the Task write is observable and its failure injectable; the
+	// anchors file is outside that sequence.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
 		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
 		Template: renderCfg, Now: r.runtimeNow(), Write: r.taskWriter,

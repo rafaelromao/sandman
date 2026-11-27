@@ -212,8 +212,8 @@ func TestCompactTask_IncidentReplay(t *testing.T) {
 
 	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, Anchors: anchors, ArchivePath: ".sandman/task-history/a.md"})
 
-	if !got.Compacted || got.After*2 > got.Before {
-		t.Fatalf("compacted = %t: %d -> %d bytes, want under half", got.Compacted, got.Before, got.After)
+	if !got.Compacted || got.After*2 > got.Before || got.After > 48*1024 {
+		t.Fatalf("compacted = %t: %d -> %d bytes, want under half and under the threshold", got.Compacted, got.Before, got.After)
 	}
 	for i := 1; i <= 22; i++ {
 		if strings.Contains(got.Content, fmt.Sprintf("## Checkpoint %d\n", i)) {
@@ -230,4 +230,80 @@ func TestCompactTask_IncidentReplay(t *testing.T) {
 		t.Error("kept the end of Next Step")
 	}
 	t.Logf("%d -> %d bytes", got.Before, got.After)
+}
+
+// A Next Step cut inside a code block would leave the fence open, and the
+// next compaction would read the rest of the Task as code.
+func TestCompactTask_NeverCutsNextStepInsideACodeBlock(t *testing.T) {
+	step := "Implement the first slice.\n" + paragraph("before", 3500) + "```bash\n" + paragraph("go test ./...", 1500) + "```\n" + paragraph("after", 3000)
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	once := compact(task, false)
+	again := compact(once.Content, true)
+
+	if strings.Count(once.Content, "```") != 0 {
+		t.Fatalf("the cut kept part of a code block:\n%s", once.Content)
+	}
+	if again.Compacted || again.Content != once.Content {
+		t.Fatal("a second compaction changed the Task")
+	}
+	for _, kept := range []string{"## Required Order", TaskHistoryHeading, "before before"} {
+		if !strings.Contains(again.Content, kept) {
+			t.Errorf("lost %q", kept)
+		}
+	}
+}
+
+// An agent's unclosed fence, such as a truncated log, must not swallow the
+// sections after it.
+func TestCompactTask_AnUnclosedFenceDoesNotSwallowLaterSections(t *testing.T) {
+	history := checkpoints(10, 1000)
+	history[2] += "```\ntruncated log\n"
+	task := structuredTask(history...) + "\n" + reviewEvidenceHeading + "\n\n- reason: REVIEW_INFORMAL_FEEDBACK\n"
+
+	got := compact(task, false)
+
+	for _, kept := range []string{reviewEvidenceHeading, "## Checkpoint 10\n"} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept)
+		}
+	}
+	if strings.Contains(got.Content, "## Checkpoint 3\n") {
+		t.Error("the section with the unclosed fence absorbed the newer checkpoints and was kept")
+	}
+}
+
+func TestTaskHeadings_OnlyAMatchingBareFenceClosesABlock(t *testing.T) {
+	content := "````go\n## A\n```\n## B\n````go\n## C\n````\n## D\n~~~\n## E\n```\n## F\n~~~~\n## G\n"
+
+	if got := TaskHeadings(content); strings.Join(got, "|") != "## D|## G" {
+		t.Fatalf("headings = %q", got)
+	}
+}
+
+// Text the agent appends after a compaction must not be swallowed by the
+// history pointer and lost at the next compaction.
+func TestCompactTask_TextAppendedAfterCompactionSurvivesTheNext(t *testing.T) {
+	task := structuredTask(checkpoints(12, 1000)...) + "\n" + continuationFreshnessGuardHeading + "\n\nguard\n"
+	once := compact(task, false)
+	grown := once.Content + "\n### Late note\n\nthe newest finding\n"
+
+	for _, section := range splitTaskSections(grown) {
+		if strings.Contains(section.text, "the newest finding") && section.heading == TaskHistoryHeading {
+			t.Fatalf("appended text became part of the history pointer:\n%s", section.text)
+		}
+	}
+}
+
+// Dropping a section attached to Next Step is a change even when no history
+// moves.
+func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
+	task := strings.Replace(structuredTask(), "## Required Order\n", "## Old notes\n\n"+paragraph("old note", 6000)+"\n## Required Order\n", 1)
+	task = strings.Replace(task, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 4050), 1)
+
+	got := compact(task, false)
+
+	if !got.Compacted || strings.Contains(got.Content, "old note") {
+		t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
+	}
 }

@@ -445,7 +445,7 @@ The instruction content passed to an Agent after template rendering. See `Task` 
 _Avoid_: Instructions, query.
 
 **Task**:
-The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. Its plan, checklist, and next action are agent-owned durable progress: runtime-owned re-entry rereads the latest worktree Task, never the batch-start snapshot. Missing or unreadable Tasks fail continuation before launch instead of falling back to stale or default instructions. Continuation refreshes the runtime-owned Review command, selected review mode, and effective timeout in Runtime Context from current settings while preserving the rest of the Task. It replaces `rendered-prompt.md` and subsumes the handoff document's role.
+The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. Its plan, checklist, and next action are agent-owned durable progress: runtime-owned re-entry rereads the latest worktree Task, never the batch-start snapshot. Missing or unreadable Tasks fail continuation before launch instead of falling back to stale or default instructions. Continuation refreshes the runtime-owned Review command, selected review mode, and effective timeout in Runtime Context from current settings while preserving the rest of the Task, except what Task compaction moves into the Task history archive (ADR-0066). It replaces `rendered-prompt.md` and subsumes the handoff document's role.
 _Avoid_: Prompt file, handoff doc.
 
 **Task compaction**:

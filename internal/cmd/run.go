@@ -539,6 +539,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			baseBranches := make(map[int]string)
 			taskPrompts := make(map[int]string)
 			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
+			continuedWorktrees := make(map[int]string)
+			continuationTimeout := cfg.EffectiveReviewTimeout()
+			if reviewTimeoutSet {
+				continuationTimeout = reviewTimeout
+			}
+			composeContinuation := func(content string) string {
+				return prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
+			}
 			if continueFlag {
 				modeEvents := []events.Event{}
 				if deps.EventLog != nil {
@@ -590,6 +598,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						continue
 					}
 					continueIssues = append(continueIssues, num)
+					continuedWorktrees[num] = worktreePath
 					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
 					content, err := readTaskPrompt(cmd, taskPath)
 					if err != nil {
@@ -599,11 +608,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					previousRunIDs[num] = lastRun.RunID
 					previousRunBatchIDs[num] = previousRunBatchID(lastRun)
 					reuseSessions[num] = reuseSessionFlag
-					continuationTimeout := cfg.EffectiveReviewTimeout()
-					if reviewTimeoutSet {
-						continuationTimeout = reviewTimeout
-					}
-					taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
+					taskPrompts[num] = composeContinuation(content)
 				}
 			}
 			var continuationReq batch.Request
@@ -710,13 +715,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 			if compactFlag {
-				continuationTimeout := cfg.EffectiveReviewTimeout()
-				if reviewTimeoutSet {
-					continuationTimeout = reviewTimeout
-				}
-				compactContinuedTasks(cmd, cfg, &req, continueIssues, sandmanDir, func(content string) string {
-					return prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
-				})
+				compactContinuedTasks(cmd, cfg, &req, continueIssues, continuedWorktrees, sandmanDir, composeContinuation)
 			}
 
 			req.PhaseWriter = phaseWriter

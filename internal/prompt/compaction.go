@@ -23,7 +23,7 @@ const movedHeadingsListed = 20
 // launch, so they are kept, and never anchor the agent's sections: a fresh
 // render already places some of them after the template.
 var runtimeHeadings = map[string]bool{
-	"## Sandman Runtime Context":      true,
+	reviewTimeoutContextHeading:       true,
 	reviewEvidenceHeading:             true,
 	continuationFreshnessGuardHeading: true,
 	contextRecoveryGuardHeading:       true,
@@ -66,39 +66,85 @@ type taskSection struct {
 }
 
 // splitTaskSections splits a Task at its H2 headings outside fenced code
-// blocks. Text before the first heading is the preamble section.
+// blocks. Text before the first heading is the preamble section. A fence left
+// open at the end of the Task (a truncated log, say) is treated as text, so it
+// cannot swallow the sections after it.
 func splitTaskSections(content string) []taskSection {
 	lines := strings.SplitAfter(content, "\n")
-	sections := []taskSection{{}}
-	var fence string
-	for _, line := range lines {
-		trimmed := strings.TrimRight(line, "\r\n")
-		if marker := fenceMarker(trimmed); marker != "" {
-			switch {
-			case fence == "":
-				fence = marker
-			case strings.HasPrefix(strings.TrimSpace(trimmed), fence):
-				fence = ""
-			}
-		} else if fence == "" && strings.HasPrefix(trimmed, "## ") {
-			sections = append(sections, taskSection{heading: strings.TrimSpace(trimmed)})
+	ignored := map[int]bool{}
+	for {
+		sections, unclosed := splitTaskLines(lines, ignored)
+		if unclosed < 0 {
+			return sections
 		}
-		sections[len(sections)-1].text += line
+		ignored[unclosed] = true
 	}
-	return sections
 }
 
-func fenceMarker(line string) string {
-	trimmed := strings.TrimLeft(line, " ")
-	if len(line)-len(trimmed) > 3 {
-		return ""
-	}
-	for _, marker := range []string{"```", "~~~"} {
-		if strings.HasPrefix(trimmed, marker) {
-			return marker
+// splitTaskLines splits lines into sections and returns the index of a fence
+// opener still open at the end, or -1.
+func splitTaskLines(lines []string, ignored map[int]bool) ([]taskSection, int) {
+	headings := []string{""}
+	starts := []int{0}
+	var open fence
+	openedAt := -1
+	for i, line := range lines {
+		trimmed := strings.TrimRight(line, "\r\n")
+		if f, ok := parseFence(trimmed); ok && !ignored[i] {
+			switch {
+			case open.char == 0:
+				open, openedAt = f, i
+			case f.closes(open):
+				open, openedAt = fence{}, -1
+			}
+			continue
+		}
+		if open.char == 0 && strings.HasPrefix(trimmed, "## ") {
+			headings = append(headings, strings.TrimSpace(trimmed))
+			starts = append(starts, i)
 		}
 	}
-	return ""
+	sections := make([]taskSection, len(starts))
+	for n, start := range starts {
+		end := len(lines)
+		if n+1 < len(starts) {
+			end = starts[n+1]
+		}
+		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
+	}
+	return sections, openedAt
+}
+
+// fence is a fenced code block delimiter: its character and length, and
+// whether an info string follows it.
+type fence struct {
+	char   byte
+	length int
+	info   bool
+}
+
+// parseFence recognises a fence line, indented by at most three spaces.
+func parseFence(line string) (fence, bool) {
+	trimmed := strings.TrimLeft(line, " ")
+	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 || trimmed[0] != '`' && trimmed[0] != '~' {
+		return fence{}, false
+	}
+	char := trimmed[0]
+	length := 0
+	for length < len(trimmed) && trimmed[length] == char {
+		length++
+	}
+	rest := trimmed[length:]
+	if length < 3 || char == '`' && strings.Contains(rest, "`") {
+		return fence{}, false
+	}
+	return fence{char: char, length: length, info: strings.TrimSpace(rest) != ""}, true
+}
+
+// closes reports whether f ends the block open started: the same character,
+// at least as long, and no info string.
+func (f fence) closes(open fence) bool {
+	return f.char == open.char && f.length >= open.length && !f.info
 }
 
 // TaskHeadings returns the H2 heading lines of a Task, one per occurrence,
@@ -146,8 +192,7 @@ func isProtectedHeading(heading string) bool {
 	if strings.HasPrefix(heading, "## Status:") {
 		return true
 	}
-	return heading == "## Plan" || heading == "## Plan Review" ||
-		strings.HasPrefix(heading, "## Plan ") || strings.HasPrefix(heading, "## Plan:")
+	return heading == "## Plan" || strings.HasPrefix(heading, "## Plan ") || strings.HasPrefix(heading, "## Plan:")
 }
 
 type sectionRole uint8
@@ -172,7 +217,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 	sections := splitTaskSections(content)
-	roles := classifySections(sections, opts.Anchors)
+	roles, last := classifySections(sections, opts.Anchors)
 	if roles == nil {
 		result.Reason = "no recognised Task structure"
 		return result
@@ -182,7 +227,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	var moved []string
 	fixed := 0
 	nextStep := 0
-	truncated := false
+	changed := false
 	for i, section := range sections {
 		switch roles[i] {
 		case roleKeep:
@@ -192,10 +237,11 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 			case len(section.text) <= remaining:
 				kept[i] = section.text
 			case remaining > len(section.heading):
-				kept[i] = cutAtLine(section.text, remaining)
-				truncated = true
-				moved = append(moved, section.heading+" (beyond the first 4 KiB)")
+				kept[i] = cutOutsideFence(section.text, remaining)
+				changed = true
+				moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.heading, nextStepLimit/1024))
 			default:
+				changed = true
 				moved = append(moved, section.heading)
 			}
 			nextStep += len(kept[i])
@@ -209,7 +255,9 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 			history = append(history, i)
 		}
 	}
-	reserve := len(historyPointer(opts, len(content), append(append([]string(nil), moved...), headingsOf(sections, history)...)))
+	// The pointer and its blank-line separator; it lists at most everything
+	// that could move.
+	reserve := len(historyPointer(opts, len(content), append(append([]string(nil), moved...), headingsOf(sections, history)...))) + 2
 	budget := opts.Target - fixed - reserve
 	keepFrom := len(history)
 	for keepFrom > 0 {
@@ -225,7 +273,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	}
 	moved = append(moved, headingsOf(sections, history[:keepFrom])...)
 
-	if keepFrom == 0 && !truncated {
+	if keepFrom == 0 && !changed {
 		if len(content) > opts.Target {
 			result.Reason = "protected content exceeds the target"
 		} else {
@@ -234,21 +282,37 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 
+	keptBytes := 0
+	insertAt := len(sections)
+	for i := range sections {
+		keptBytes += len(kept[i])
+		if i > last && kept[i] != "" && insertAt == len(sections) {
+			insertAt = i
+		}
+	}
+	// The pointer goes after the Task's structure, not at the end, so text
+	// the agent appends later never becomes part of it.
+	pointer := historyPointer(opts, len(content)-keptBytes, moved)
 	var b strings.Builder
 	for i := range sections {
+		if i == insertAt {
+			b.WriteString(pointer + "\n")
+		}
 		b.WriteString(kept[i])
 	}
 	compacted := trimTrailingNewlines(b.String())
-	movedBytes := len(content) - len(compacted)
-	compacted += "\n\n" + historyPointer(opts, movedBytes, moved)
+	if insertAt == len(sections) {
+		compacted += "\n\n" + trimTrailingNewlines(pointer)
+	}
+	compacted += "\n"
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
 }
 
-// classifySections assigns each section a role, or returns nil when no
-// section matches an anchor.
-func classifySections(sections []taskSection, anchors []string) []sectionRole {
+// classifySections assigns each section a role and returns the index of the
+// last anchored section, or nil when no section matches an anchor.
+func classifySections(sections []taskSection, anchors []string) ([]sectionRole, int) {
 	remaining := map[string]int{}
 	for _, heading := range anchors {
 		if !runtimeHeadings[heading] {
@@ -265,7 +329,7 @@ func classifySections(sections []taskSection, anchors []string) []sectionRole {
 		}
 	}
 	if last < 0 {
-		return nil
+		return nil, -1
 	}
 	roles := make([]sectionRole, len(sections))
 	group := roleKeep
@@ -287,7 +351,7 @@ func classifySections(sections []taskSection, anchors []string) []sectionRole {
 			roles[i] = group
 		}
 	}
-	return roles
+	return roles, last
 }
 
 func headingsOf(sections []taskSection, indexes []int) []string {
@@ -298,16 +362,33 @@ func headingsOf(sections []taskSection, indexes []int) []string {
 	return headings
 }
 
-// cutAtLine returns the longest prefix of text, ending at a line break, that
-// is at most limit bytes long.
-func cutAtLine(text string, limit int) string {
+// cutOutsideFence returns the longest prefix of text, ending at a line break
+// outside any fenced code block, that is at most limit bytes long. The text
+// starts outside a fence, as every section does.
+func cutOutsideFence(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	if cut := strings.LastIndexByte(text[:limit], '\n'); cut >= 0 {
-		return text[:cut+1]
+	safe, offset := 0, 0
+	var open fence
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if offset+len(line) > limit || !strings.HasSuffix(line, "\n") {
+			break
+		}
+		if f, ok := parseFence(strings.TrimRight(line, "\r\n")); ok {
+			switch {
+			case open.char == 0:
+				open = f
+			case f.closes(open):
+				open = fence{}
+			}
+		}
+		offset += len(line)
+		if open.char == 0 {
+			safe = offset
+		}
 	}
-	return ""
+	return text[:safe]
 }
 
 func historyPointer(opts TaskCompaction, movedBytes int, moved []string) string {
