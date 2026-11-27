@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -180,4 +181,53 @@ func TestTaskHeadings_IgnoreHeadingsInFencedCode(t *testing.T) {
 	if want := []string{"## Issue Context", "## Next Step"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("headings = %q, want %q", got, want)
 	}
+}
+
+// incidentTask rebuilds the shape of the 119 KB Task that motivated
+// compaction: the default template with an issue body carrying its own H2
+// sections, a plan, a 15 KB Next Step, 22 checkpoints and review evidence
+// holding the reviewer's 11 KB report.
+func incidentTask() (task, report string) {
+	body := "## Goal\n\nMake URLs portable.\n\n## Acceptance criteria\n\n- [ ] Analyze and Compare URLs survive a reload\n"
+	rendered := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", body, 1)
+	rendered = strings.Replace(rendered, "## Next Step\n", "## Next Step\n\n"+paragraph("newest step", 3000)+strings.Repeat(paragraph("older step", 1000), 11)+paragraph("oldest step", 1000), 1)
+	rendered += "\n## Plan\n\n### Behaviors to test\n\n" + paragraph("behavior", 4000)
+	for i := 1; i <= 22; i++ {
+		rendered += checkpoint(i, 1900)
+	}
+	report = "## Summary\n\n" + strings.Repeat("A finding with evidence. ", 460)
+	source := func() map[string]any {
+		return map[string]any{"top_level": []any{map[string]any{"body": report}}}
+	}
+	evidence := map[string]any{"reason": "REVIEW_INFORMAL_FEEDBACK", "review_request": map[string]any{
+		"classification":    map[string]any{"boundary_evidence": map[string]any{"sources": source()}, "sources": source()},
+		"informal_feedback": []any{map[string]any{"body": report}},
+	}}
+	return ContinuationTaskPromptWithReviewSettings(TaskWithReviewEvidence(rendered, evidence), "/sandman review", true, 1800), report
+}
+
+func TestCompactTask_IncidentReplay(t *testing.T) {
+	task, report := incidentTask()
+	anchors := TaskHeadings(EnsureManagedTaskContext(strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "## Goal\n\n## Acceptance criteria\n", 1)))
+
+	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, Anchors: anchors, ArchivePath: ".sandman/task-history/a.md"})
+
+	if !got.Compacted || got.After*2 > got.Before {
+		t.Fatalf("compacted = %t: %d -> %d bytes, want under half", got.Compacted, got.Before, got.After)
+	}
+	for i := 1; i <= 22; i++ {
+		if strings.Contains(got.Content, fmt.Sprintf("## Checkpoint %d\n", i)) {
+			t.Fatalf("checkpoint %d was kept", i)
+		}
+	}
+	escaped, _ := json.Marshal(report)
+	for _, kept := range []string{"- [ ] Analyze and Compare URLs survive a reload", "## Execution Checklist", "### Behaviors to test", "newest step", strings.Trim(string(escaped), `"`)} {
+		if !strings.Contains(got.Content, kept) {
+			t.Errorf("lost %q", kept[:min(len(kept), 40)])
+		}
+	}
+	if strings.Contains(got.Content, "oldest step") {
+		t.Error("kept the end of Next Step")
+	}
+	t.Logf("%d -> %d bytes", got.Before, got.After)
 }
