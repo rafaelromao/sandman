@@ -42,13 +42,12 @@ updates it.
   records its H2 headings in `.sandman/task-anchors`. Those headings (template
   and issue text) are the Task's structure. Sandman's own sections are never
   anchors. The render also records which `## Next Step` is the template's
-  own, since an issue can carry one too; only the template's is capped. Tasks
-  rendered before this decision are compacted only if the current template's
-  structural headings match the Task in order. If an
-  older Task has multiple `## Next Step` headings, compaction leaves them
-  uncapped because it cannot reliably identify the template's section. If the
-  template has no heading after the issue body other than Sandman's, nothing marks where the issue's own
-  sections end, so nothing after the last template heading moves.
+  own. If that section contains substituted issue text, it is kept whole.
+  Tasks rendered before this decision are compacted only if the current
+  template's structural headings match the Task in order without duplicates
+  that could be mistaken for template headings. If the template has no heading
+  after the issue body other than Sandman's, nothing marks where the issue's
+  own sections end, so nothing after the last template heading moves.
 - **What moves.** Sections the agent added after the last anchor are history.
   The fewest oldest of them move for the Task, with a pointer naming exactly
   what moved, to fit; a result that would not be smaller is not written. `## Next Step` and what the agent
@@ -68,7 +67,8 @@ updates it.
   then changes no Task, and retries and later re-entries follow the threshold.
   Ready continuations and dependencies added to the batch are left to the
   automatic rule. The CLI itself writes no Task. A restart before the first
-  launch drops the request.
+  launch drops the request. Command and environment validation and opening the
+  required run log all happen before the continuation Task or archive is written.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

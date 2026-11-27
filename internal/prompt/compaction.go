@@ -311,11 +311,10 @@ func renderedNextStep(template, body, rendered string) int {
 	for _, section := range splitTaskSections(rendered) {
 		if section.heading == nextStepHeading {
 			occurrence++
-			line, _, _ := strings.Cut(section.text, "\n")
 			for spanIndex < len(spans) && spans[spanIndex].end <= offset {
 				spanIndex++
 			}
-			if spanIndex == len(spans) || spans[spanIndex].start >= offset+len(line) {
+			if spanIndex == len(spans) || spans[spanIndex].start >= offset+len(section.text) {
 				return occurrence
 			}
 		}
@@ -335,7 +334,19 @@ func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
 	if len(headings) == 0 {
 		return false
 	}
-	for _, heading := range TaskHeadings(content) {
+	actual := TaskHeadings(content)
+	counts := make(map[string]int, len(actual))
+	for _, heading := range actual {
+		counts[heading]++
+	}
+	for _, heading := range headings {
+		if counts[heading] > 1 {
+			// An issue heading could otherwise be mistaken for the
+			// template's footer, making some issue text look like history.
+			return false
+		}
+	}
+	for _, heading := range actual {
 		if heading == headings[0] {
 			headings = headings[1:]
 			if len(headings) == 0 {

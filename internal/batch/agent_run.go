@@ -141,7 +141,12 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 // Execute propagates it through the returned error so Run can record it
 // on the AgentRunResult (issue #2605 acceptance criterion #4).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	return r.execute(ctx, command, stdout, stderr, nil, nil)
+	logFile, err := r.openRunLog()
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	return r.execute(ctx, command, stdout, stderr, nil, nil, logFile)
 }
 
 func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
@@ -149,24 +154,26 @@ func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
 	r.usageLimit = usageLimit
 }
 
-func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser) error {
+func (r *AgentRun) openRunLog() (*os.File, error) {
 	runFolder := r.runFolder
 	if runFolder == "" {
 		runFolder = r.sandbox.WorkDir()
 	}
 	if runFolder == "" {
-		return fmt.Errorf("runFolder not set")
+		return nil, fmt.Errorf("runFolder not set")
 	}
 	if err := os.MkdirAll(runFolder, 0755); err != nil {
-		return fmt.Errorf("create run folder: %w", err)
+		return nil, fmt.Errorf("create run folder: %w", err)
 	}
 	logPath := filepath.Join(runFolder, "run.log")
 	logFile, err := atomicfs.OpenAppend(logPath, 0644)
 	if err != nil {
-		return fmt.Errorf("create log file: %w", err)
+		return nil, fmt.Errorf("create log file: %w", err)
 	}
-	defer logFile.Close()
+	return logFile, nil
+}
 
+func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser, logFile *os.File) error {
 	if r.outputWriter != nil {
 		stdout = io.MultiWriter(stdout, r.outputWriter)
 		stderr = io.MultiWriter(stderr, r.outputWriter)
@@ -183,7 +190,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	warnings := combinedErr
 	touchLog := func() {
 		now := time.Now()
-		_ = os.Chtimes(logPath, now, now)
+		_ = os.Chtimes(logFile.Name(), now, now)
 	}
 	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
 		if observer, ok := parser.(progressObserver); ok {
@@ -291,6 +298,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 
+	logFile, err := r.openRunLog()
+	if err != nil {
+		r.status = "failure"
+		return r.Result()
+	}
+	defer logFile.Close()
+
 	if taskPrompt := renderCfg.TaskPrompt; taskPrompt != "" {
 		if ctx.Err() != nil {
 			r.status = "aborted"
@@ -301,7 +315,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
 		}
 		if r.compactsTask() {
-			taskPrompt = r.compactTask(taskPrompt, renderCfg)
+			taskPrompt = r.compactTask(taskPrompt, renderCfg, logFile)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			// Preserve the rollover cause so the ordinary retry uses the
@@ -351,7 +365,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			})
 		}
 	}
-	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
+	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile)
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {
@@ -393,7 +407,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
-				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr, logFile)
 				r.ciRerunAction = strategy.CIRerunAction(fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
@@ -415,7 +429,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if r.credentials != nil && attemptCtx.Err() == nil {
 			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
 			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
-			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr)
+			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr, logFile)
 			r.ciRerunAction = strategy.CIRerunAction(relaunchOut, relaunchErr)
 			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
 			parsedStdout, parsedStderr = relaunchOut, relaunchErr

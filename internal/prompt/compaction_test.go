@@ -481,6 +481,20 @@ func TestRenderWithTaskStructure_IdentifiesNextStepBetweenIssueCopies(t *testing
 	}
 }
 
+func TestRenderWithTaskStructure_ProtectsIssueProseInsideNextStep(t *testing.T) {
+	template := "# Task\n\n## Next Step\n\nTemplate step.\n\n{{ISSUE_BODY}}\n\n## Implementation Notes\n\nFooter.\n"
+	issue := strings.Repeat("Acceptance criterion.\n", 500)
+	rendered, editable, err := (&Engine{}).RenderWithTaskStructure(RenderConfig{PromptFlag: template}, IssueData{Body: issue})
+	if err != nil || editable != -1 {
+		t.Fatalf("editable section = %d, err = %v", editable, err)
+	}
+	task := rendered + strings.Join(checkpoints(12, 1000), "")
+	got := CompactTask(task, TaskCompaction{Force: true, Target: testTarget, Anchors: TaskHeadings(rendered), NextStepOccurrence: editable, ArchivePath: "archive.md"})
+	if !got.Compacted || !strings.HasPrefix(got.Content, rendered) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatal("compaction did not preserve the rendered Task and move old history")
+	}
+}
+
 func TestTemplateNextStep_InlineAndAmbiguousLegacy(t *testing.T) {
 	cfg := RenderConfig{PromptFlag: "## Next Step\n\nTemplate instructions.\n\n## Issue\n\n{{ISSUE_BODY}}\n"}
 	task := strings.Replace(cfg.PromptFlag, "{{ISSUE_BODY}}", "## Next Step\n\nIssue instructions.\n", 1)

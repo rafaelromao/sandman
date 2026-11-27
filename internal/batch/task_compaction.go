@@ -3,6 +3,7 @@ package batch
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -200,7 +201,7 @@ func (r *AgentRun) compactsTask() bool {
 
 // compactTask compacts an implementation launch's composed Task and records
 // the outcome in the run log. Any failure launches the Task unchanged.
-func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig) string {
+func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) string {
 	// The archive has its own writer, which never replaces a file; the Task
 	// writer replaces the Task afterwards.
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
@@ -208,32 +209,15 @@ func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig) strin
 		Force: r.forceTaskCompaction, Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
 	})
 	if summary := TaskCompactionSummary(result, err); summary != "" {
-		r.logRunLine(summary)
+		if warnings := r.warningWriter(); warnings != nil {
+			fmt.Fprintln(warnings, summary)
+		}
+		prefixed := NewLinePrefixWriter(r.prefixLabel(), log)
+		fmt.Fprintln(prefixed, summary)
+		_ = prefixed.Flush()
 	}
 	if err != nil {
 		return task
 	}
 	return result.Content
-}
-
-// logRunLine appends one Sandman line to the run log and the warning stream.
-func (r *AgentRun) logRunLine(line string) {
-	if w := r.warningWriter(); w != nil {
-		fmt.Fprintln(w, line)
-	}
-	runFolder := r.runFolder
-	if runFolder == "" {
-		runFolder = r.sandbox.WorkDir()
-	}
-	if runFolder == "" || os.MkdirAll(runFolder, 0o755) != nil {
-		return
-	}
-	logFile, err := atomicfs.OpenAppend(filepath.Join(runFolder, "run.log"), 0o644)
-	if err != nil {
-		return
-	}
-	defer logFile.Close()
-	prefixed := NewLinePrefixWriter(r.prefixLabel(), logFile)
-	fmt.Fprintln(prefixed, line)
-	_ = prefixed.Flush()
 }

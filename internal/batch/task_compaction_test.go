@@ -372,7 +372,16 @@ func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) 
 	}
 }
 
-func TestImplementationLaunch_InvalidCommandLeavesTaskUnchanged(t *testing.T) {
+func TestImplementationLaunch_RefusalLeavesTaskUnchanged(t *testing.T) {
+	for _, name := range []string{"invalid command", "cannot open log"} {
+		t.Run(name, func(t *testing.T) {
+			testRefusedCompactionLaunch(t, name == "cannot open log")
+		})
+	}
+}
+
+func testRefusedCompactionLaunch(t *testing.T, blockLog bool) {
+	t.Helper()
 	root := t.TempDir()
 	initGitRepo(t, root)
 	sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
@@ -385,7 +394,14 @@ func TestImplementationLaunch_InvalidCommandLeavesTaskUnchanged(t *testing.T) {
 	}
 	run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
 	run.forceTaskCompaction = true
-	result := run.Run(context.Background(), &prompt.Engine{}, "fake-agent {{.Unknown}}", prompt.RenderConfig{TaskPrompt: task})
+	command := "fake-agent {{.Unknown}}"
+	if blockLog {
+		if err := os.Mkdir(filepath.Join(sb.WorkDir(), "run.log"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		command = "true"
+	}
+	result := run.Run(context.Background(), &prompt.Engine{}, command, prompt.RenderConfig{TaskPrompt: task})
 	if result.Status != "failure" {
 		t.Fatalf("status = %s, want failure", result.Status)
 	}
@@ -401,6 +417,16 @@ func TestImplementationLaunch_InvalidCommandLeavesTaskUnchanged(t *testing.T) {
 func TestCompactWorktreeTask_UnknownLegacyTemplatePreservesIssueContent(t *testing.T) {
 	task := "# Task\n\n## Issue Context\n\n## Next Step\n\n" + strings.Repeat("Acceptance criteria.\n", 3000)
 	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true})
+	if err != nil || result.Compacted || result.Content != task {
+		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
+	}
+}
+
+func TestCompactWorktreeTask_AmbiguousLegacyFooterPreservesIssueContent(t *testing.T) {
+	template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Implementation Notes\n\nTemplate footer.\n"
+	issue := "## Implementation Notes\n\nIssue notes.\n\n## Acceptance criteria\n\n" + strings.Repeat("Acceptance criterion.\n", 3000)
+	task := strings.Replace(template, "{{ISSUE_BODY}}", issue, 1)
+	result, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: prompt.RenderConfig{PromptFlag: template}})
 	if err != nil || result.Compacted || result.Content != task {
 		t.Fatalf("ambiguous legacy Task was changed: compacted=%v err=%v", result.Compacted, err)
 	}
