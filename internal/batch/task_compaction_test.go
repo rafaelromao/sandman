@@ -152,11 +152,14 @@ func TestImplementationLaunch_CompactsAnOversizedTask(t *testing.T) {
 }
 
 func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T) {
-	for _, name := range []string{"legacy default", "recorded default", "recorded final Next Step"} {
+	for _, name := range []string{"legacy default", "legacy custom", "recorded default", "recorded final Next Step", "renamed final Next Step"} {
 		t.Run(name, func(t *testing.T) {
 			cfg := prompt.RenderConfig{}
-			if name == "recorded final Next Step" {
+			if strings.HasSuffix(name, "final Next Step") {
 				cfg.PromptFlag = "## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n"
+			}
+			if name == "legacy custom" {
+				cfg.PromptFlag = "## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n\n## Footer\n\nKeep this footer.\n"
 			}
 			issue := "## Goal\n\nKeep this goal.\n\n## Acceptance criteria\n\nKeep this criterion.\n"
 			rendered, editable, err := (&prompt.Engine{}).RenderWithTaskStructure(cfg, prompt.IssueData{Body: issue})
@@ -164,7 +167,7 @@ func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T
 				t.Fatal(err)
 			}
 			dir := t.TempDir()
-			if name != "legacy default" {
+			if !strings.HasPrefix(name, "legacy") {
 				anchors := strings.Join(prompt.TaskHeadings(rendered), "\n") +
 					fmt.Sprintf("\nfooter-sha256 %s\nnext-step %d\n", prompt.RecordedTaskFooter(rendered, editable), editable)
 				if err := os.Mkdir(filepath.Join(dir, ".sandman"), 0o755); err != nil {
@@ -179,7 +182,19 @@ func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T
 				task = strings.Replace(task, "old step detail.\n", "\n## Attached old notes\n\nold step detail.\n", 1)
 			}
 			task += "\n## Old checkpoint\n\n" + strings.Repeat("old history.\n", 4000)
+			if name == "renamed final Next Step" {
+				task = strings.Replace(task, "## Next Step", "## Current Work", 1)
+				task = strings.Replace(task, "## Acceptance criteria", "## Acceptance Criteria", 1)
+			} else {
+				task += "\n## Next Step\n\nLatest checkpoint.\n"
+			}
 			got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: dir, Force: true, Template: cfg})
+			if name == "renamed final Next Step" {
+				if err != nil || got.Compacted || got.Content != task {
+					t.Fatalf("unverified boundary authorized compaction: compacted=%v err=%v", got.Compacted, err)
+				}
+				return
+			}
 			if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) ||
 				strings.Count(got.Content, "old step detail.") > 250 || strings.Contains(got.Content, "## Old checkpoint\n") {
 				t.Fatalf("invalid compaction: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)

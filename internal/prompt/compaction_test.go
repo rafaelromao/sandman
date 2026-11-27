@@ -528,8 +528,8 @@ func TestTemplateNextStep_InlineAndAmbiguousLegacy(t *testing.T) {
 		t.Fatalf("inline template Next Step = %d, want 1", got)
 	}
 	legacy := DefaultPrompt() + "\n## Next Step\n\nAgent checkpoint.\n"
-	if got := LegacyTemplateNextStep(RenderConfig{}, legacy); got != -1 {
-		t.Fatalf("ambiguous legacy Next Step = %d, want -1", got)
+	if got := LegacyTemplateNextStep(RenderConfig{}, legacy); got != 1 {
+		t.Fatalf("legacy Next Step with a duplicate after the verified footer = %d, want 1", got)
 	}
 }
 

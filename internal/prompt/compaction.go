@@ -217,14 +217,14 @@ func TaskHeadings(content string) []string {
 }
 
 // TemplateHeadings returns the H2 heading lines of the template a Task would
-// be rendered from, plus those of the built-in default template. It is the
-// fallback structure for Tasks rendered before Sandman recorded their anchors.
+// be rendered from. It is the fallback structure for Tasks rendered before
+// Sandman recorded their anchors.
 func TemplateHeadings(cfg RenderConfig) []string {
-	headings := TaskHeadings(defaultPrompt)
-	if template, err := loadTemplate(cfg); err == nil && template != defaultPrompt {
-		headings = mergeHeadingCounts(headings, TaskHeadings(template))
+	template, err := loadTemplate(cfg)
+	if err != nil {
+		return nil
 	}
-	return headings
+	return TaskHeadings(template)
 }
 
 // TemplateEndsWithIssueBody reports whether a template a Task would be
@@ -281,6 +281,22 @@ func TemplateNextStep(cfg RenderConfig, task string) int {
 // LegacyTemplateNextStep declines to edit a section when an older Task has
 // several candidates and no record of which one the template supplied.
 func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
+	if digest := LegacyTaskFooterDigest(cfg); digest != "" {
+		offset, boundary := 0, -1
+		for _, section := range splitTaskSections(task) {
+			offset += len(section.text)
+			if section.heading != "" && footerDigest(section.text) == digest {
+				if boundary >= 0 {
+					return -1
+				}
+				boundary = offset
+			}
+		}
+		if boundary < 0 {
+			return -1
+		}
+		task = task[:boundary]
+	}
 	if countHeading(task, nextStepHeading) != 1 {
 		return -1
 	}
@@ -423,23 +439,6 @@ func MatchesTaskTemplate(cfg RenderConfig, content string) bool {
 		}
 	}
 	return false
-}
-
-// mergeHeadingCounts keeps, for each heading, the larger occurrence count.
-func mergeHeadingCounts(a, b []string) []string {
-	counts := map[string]int{}
-	for _, h := range a {
-		counts[h]++
-	}
-	seen := map[string]int{}
-	merged := append([]string(nil), a...)
-	for _, h := range b {
-		seen[h]++
-		if seen[h] > counts[h] {
-			merged = append(merged, h)
-		}
-	}
-	return merged
 }
 
 func isProtectedHeading(heading string) bool {
@@ -656,10 +655,13 @@ func classifySections(sections []taskSection, opts TaskCompaction) ([]sectionRol
 			}
 		}
 		if !slices.Equal(expected, current) {
+			if opts.FooterDigest == "editable" {
+				return nil, -1
+			}
 			editable = -1
 		}
 	}
-	if nextSteps > remaining[nextStepHeading] && remaining[nextStepHeading] > 0 {
+	if opts.FooterDigest == "" && nextSteps > remaining[nextStepHeading] && remaining[nextStepHeading] > 0 {
 		editable = -1
 		if sections[last].heading == nextStepHeading {
 			for i := last + 1; i < len(sections); i++ {
