@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
@@ -238,5 +240,52 @@ func TestImplementationLaunch_LogsATaskItCannotShrink(t *testing.T) {
 	}
 	if !strings.Contains(launch.stdin, "a long plan line") {
 		t.Fatal("the plan was changed")
+	}
+}
+
+type capturingRunnableFactory struct {
+	sandbox sandbox.Sandbox
+	runs    []*AgentRun
+}
+
+func (f *capturingRunnableFactory) NewRunnable(issue *github.Issue, branch string, _ sandbox.Sandbox) Runnable {
+	run := NewAgentRun(issue, branch, f.sandbox)
+	f.runs = append(f.runs, run)
+	return run
+}
+
+// Every implementation launch of a Run receives the configured threshold.
+func TestRunSession_PassesTheConfiguredTaskCompactThreshold(t *testing.T) {
+	forty := 40000
+	zero := 0
+	for name, tc := range map[string]struct {
+		configured *int
+		want       int
+	}{"default": {nil, config.DefaultTaskCompactBytes}, "configured": {&forty, 40000}, "disabled": {&zero, 0}} {
+		t.Run(name, func(t *testing.T) {
+			workDir := t.TempDir()
+			t.Chdir(workDir)
+			sb := &cleanupErrorSandbox{workDir: filepath.Join(workDir, "worktree"), cleanupFn: func() error { return nil }}
+			factory := &capturingRunnableFactory{sandbox: sb}
+			client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Threshold", State: "closed"}}}
+			o := NewOrchestrator(client, &retryRenderer{result: "# Task\n\nInitial task."}, nil,
+				&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
+				WithErrorLog(io.Discard), WithSandboxFactory(&cleanupErrorSandboxFactory{sandbox: sb}), WithRunnableFactory(factory))
+			cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}, TaskCompactBytes: tc.configured}
+			bc := BatchConfig{Cfg: cfg, AgentName: "opencode", AgentCfg: config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+				IdentityResolver: noopIdentityResolver()}
+			row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: "42-threshold"}, BaseBranch: "main", RunTS: "260814071754", RunShortID: "5d21"}
+
+			o.newRunExecutor(context.Background(), bc, &cleanupErrorSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+
+			if len(factory.runs) == 0 {
+				t.Fatal("nothing was launched")
+			}
+			for i, run := range factory.runs {
+				if run.taskCompactBytes != tc.want {
+					t.Errorf("launch %d: threshold = %d, want %d", i+1, run.taskCompactBytes, tc.want)
+				}
+			}
+		})
 	}
 }

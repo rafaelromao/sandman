@@ -120,13 +120,10 @@ func (r *AgentRun) recordTaskAnchors(rendered string) {
 	}
 	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
 	data := strings.Join(prompt.TaskHeadings(rendered), "\n") + "\n"
-	write := r.taskWriter
-	if write == nil {
-		write = atomicfs.WriteAtomic
-	}
+	// Not through the Task writer: the anchors are not the Task.
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err == nil {
-		err = write(path, []byte(data), 0o644)
+		err = atomicfs.WriteAtomic(path, []byte(data), 0o644)
 	}
 	if err != nil && r.warningWriter() != nil {
 		fmt.Fprintf(r.warningWriter(), "warning: record Task anchors: %v\n", err)

@@ -3946,6 +3946,7 @@ loop:
 				agentRun.preset = s.agentCfg.Preset
 				agentRun.now = s.runtimeNow
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
+				agentRun.taskCompactBytes = s.cfg.EffectiveTaskCompactBytes()
 				if s.opts.taskWriter != nil {
 					agentRun.taskWriter = s.opts.taskWriter
 				}
