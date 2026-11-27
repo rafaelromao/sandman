@@ -154,11 +154,11 @@ func taskAnchors(workDir string, template prompt.RenderConfig, content string) t
 		return taskStructure{
 			anchors:      prompt.TemplateHeadings(template),
 			unbounded:    prompt.TemplateEndsWithIssueBody(template),
-			nextStep:     prompt.LegacyTemplateNextStep(template, content),
+			nextStep:     -1, // A verified footer does not prove where the original issue body was inserted.
 			footerDigest: prompt.LegacyTaskFooterDigest(template),
 		}
 	}
-	structure := taskStructure{nextStep: prompt.LegacyTemplateNextStep(template, content)}
+	structure := taskStructure{nextStep: -1}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if value, ok := strings.CutPrefix(line, "footer-sha256 "); ok {

@@ -62,7 +62,7 @@ type TaskCompaction struct {
 	// NextStepOccurrence says which `## Next Step` section, counting from 1,
 	// is the template's own, the one the agent rewrites and compaction caps;
 	// an issue body can carry its own. 0 means the first; a negative value
-	// means the template has none. See TemplateNextStep.
+	// means ownership could not be established or the template has none.
 	NextStepOccurrence int
 	// FooterDigest verifies the original final structural section.
 	FooterDigest string
@@ -255,69 +255,6 @@ func isAnchorHeading(heading string) bool {
 	return !runtimeHeadings[heading]
 }
 
-// TemplateNextStep returns which `## Next Step` section of task, counting
-// from 1, is the template's own, or -1 when the template has none. An issue
-// body can carry its own `## Next Step`; the template's is told apart by
-// where the template places it relative to the issue body.
-func TemplateNextStep(cfg RenderConfig, task string) int {
-	template, err := loadTemplate(cfg)
-	if err != nil {
-		template = defaultPrompt
-	}
-	before, after := template, ""
-	if at := strings.Index(template, "{{ISSUE_BODY}}"); at >= 0 {
-		before, after = template[:at], template[at:]
-	}
-	if countHeading(before, nextStepHeading) > 0 {
-		return 1
-	}
-	trailing := countHeading(after, nextStepHeading)
-	if trailing == 0 {
-		return -1
-	}
-	return max(1, countHeading(task, nextStepHeading)-trailing+1)
-}
-
-// LegacyTemplateNextStep declines to edit a section when an older Task has
-// several candidates and no record of which one the template supplied.
-func LegacyTemplateNextStep(cfg RenderConfig, task string) int {
-	digest := LegacyTaskFooterDigest(cfg)
-	if digest == "" {
-		return -1
-	}
-	offset, boundary := 0, -1
-	for _, section := range splitTaskSections(task) {
-		offset += len(section.text)
-		if section.heading != "" && footerDigest(section.text) == digest {
-			if boundary >= 0 {
-				return -1
-			}
-			boundary = offset
-		}
-	}
-	if boundary < 0 {
-		return -1
-	}
-	task = task[:boundary]
-	if countHeading(task, nextStepHeading) != 1 {
-		return -1
-	}
-	template, err := loadTemplate(cfg)
-	if err != nil {
-		return -1
-	}
-	inStep := false
-	for _, section := range splitTaskSections(template) {
-		if isAnchorHeading(section.heading) {
-			inStep = section.heading == nextStepHeading
-		}
-		if inStep && strings.Contains(section.text, "{{ISSUE_BODY}}") {
-			return -1
-		}
-	}
-	return TemplateNextStep(cfg, task)
-}
-
 // TaskFooterDigest fingerprints the last structural section, excluding
 // trailing whitespace that may change when another section is appended.
 func TaskFooterDigest(content string) string {
@@ -359,16 +296,6 @@ func LegacyTaskFooterDigest(cfg RenderConfig) string {
 		return ""
 	}
 	return TaskFooterDigest(template)
-}
-
-func countHeading(content, heading string) int {
-	n := 0
-	for _, h := range TaskHeadings(content) {
-		if h == heading {
-			n++
-		}
-	}
-	return n
 }
 
 func renderedNextStep(template, body, rendered string) int {
@@ -743,16 +670,34 @@ func historyBytes(sections []taskSection, indexes []int) int {
 // risk moving what it swallowed.
 func swallowsKeptHeading(text string, anchors []string, topLevel map[string]bool) bool {
 	_, body, _ := strings.Cut(text, "\n")
-	for _, line := range strings.Split(body, "\n") {
+	var open fence
+	exampleHeading := false
+	for line := range strings.SplitSeq(body, "\n") {
+		if marker, ok := parseFence(strings.TrimRight(line, "\r")); ok {
+			switch {
+			case open.char == 0:
+				open = marker
+			case marker.closes(open):
+				open, exampleHeading = fence{}, false
+			case exampleHeading:
+				// A fence inside the apparent example could be the
+				// opening fence of an actual swallowed plan.
+				return true
+			}
+			continue
+		}
 		heading := strings.TrimSpace(line)
 		if !strings.HasPrefix(heading, "## ") {
 			continue
 		}
-		if !topLevel[heading] && (runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading)) {
-			return true
+		if runtimeHeadings[heading] || isProtectedHeading(heading) || slices.Contains(anchors, heading) {
+			if !open.info || !topLevel[heading] {
+				return true
+			}
+			exampleHeading = true
 		}
 	}
-	return false
+	return exampleHeading
 }
 
 func headingsOf(sections []taskSection, indexes []int) []string {

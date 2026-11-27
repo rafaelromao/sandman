@@ -195,8 +195,10 @@ func TestCompactWorktreeTask_CapsEditableStepWithAdditionalHeadings(t *testing.T
 				}
 				return
 			}
+			stepLines := strings.Count(got.Content, "old step detail.")
+			stepPreserved := stepLines == 600
 			if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) ||
-				strings.Count(got.Content, "old step detail.") > 250 || strings.Contains(got.Content, "## Old checkpoint\n") {
+				stepPreserved != strings.HasPrefix(name, "legacy") || strings.Contains(got.Content, "## Old checkpoint\n") {
 				t.Fatalf("invalid compaction: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
 			}
 		})
@@ -209,6 +211,17 @@ func TestCompactWorktreeTask_UnverifiedLegacyStepIsPreserved(t *testing.T) {
 	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
 	if err != nil || got.Compacted || got.Content != task {
 		t.Fatalf("unverified legacy step was altered: compacted=%v err=%v", got.Compacted, err)
+	}
+}
+
+func TestCompactWorktreeTask_VerifiedLegacyFooterDoesNotAuthorizeStepCut(t *testing.T) {
+	cfg := prompt.RenderConfig{PromptFlag: "## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nCurrent work.\n\n## Footer\n\nKeep this footer.\n"}
+	issue := strings.Repeat("Required issue criterion.\n", 900)
+	task := "## Issue\n\nIssue context.\n\n## Next Step\n\n" + issue + "\n## Footer\n\nKeep this footer.\n" +
+		"\n## Old checkpoint\n\n" + strings.Repeat("Old history.\n", 5000)
+	got, err := CompactWorktreeTask(task, TaskCompactionRequest{WorkDir: t.TempDir(), Force: true, Template: cfg})
+	if err != nil || !got.Compacted || !strings.Contains(got.Content, issue) || strings.Contains(got.Content, "Old history.") {
+		t.Fatalf("unexpected result: compacted=%v reason=%q err=%v", got.Compacted, got.Reason, err)
 	}
 }
 

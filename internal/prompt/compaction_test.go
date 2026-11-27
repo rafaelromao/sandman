@@ -342,11 +342,12 @@ func TestCompactTask_DroppingAnAttachedNextStepSectionCompacts(t *testing.T) {
 func TestCompactTask_KeepsAHistorySectionThatSwallowedThePlan(t *testing.T) {
 	history := checkpoints(10, 1000)
 	history[2] += "```\ntruncated log\n"
-	task := structuredTask(history...) + "\n## Plan\n\n```go\nfunc slice() {}\n```\n\nThe plan's prose.\n"
+	firstPlan := "\n## Plan\n\n```go\nfunc slice() {}\n```\n\nThe plan's prose.\n"
+	task := structuredTask(history...) + firstPlan + "\n## Plan\n\nA separate plan.\n"
 
 	got := compact(task, true)
 
-	for _, kept := range []string{"## Plan\n", "The plan's prose.", "## Checkpoint 10\n"} {
+	for _, kept := range []string{firstPlan, "A separate plan.", "## Checkpoint 10\n"} {
 		if !strings.Contains(got.Content, kept) {
 			t.Errorf("lost %q", kept)
 		}
@@ -416,7 +417,7 @@ func TestCompactTask_KeepsAnIssueNextStepWhole(t *testing.T) {
 	}
 }
 
-func TestTemplateNextStep_FindsTheTemplatesOwnOccurrence(t *testing.T) {
+func TestRenderWithTaskStructure_FindsTheTemplatesOwnOccurrence(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, template string) RenderConfig {
 		path := filepath.Join(dir, name)
@@ -428,17 +429,17 @@ func TestTemplateNextStep_FindsTheTemplatesOwnOccurrence(t *testing.T) {
 	issueWithNextStep := "## Next Step\n\nissue text\n"
 	for name, tc := range map[string]struct {
 		cfg  RenderConfig
-		task string
+		body string
 		want int
 	}{
-		"default template, issue has one": {RenderConfig{}, strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", issueWithNextStep, 1), 2},
-		"default template":                {RenderConfig{}, strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", "body", 1), 1},
-		"before the issue body":           {write("before.md", "## Next Step\n\n## Issue\n\n{{ISSUE_BODY}}\n"), "## Next Step\n\n## Issue\n\n" + issueWithNextStep, 1},
-		"template has none":               {write("none.md", "## Issue\n\n{{ISSUE_BODY}}\n"), "## Issue\n\n" + issueWithNextStep, -1},
+		"default template, issue has one": {RenderConfig{}, issueWithNextStep, 2},
+		"default template":                {RenderConfig{}, "body", 1},
+		"before the issue body":           {write("before.md", "## Next Step\n\n## Issue\n\n{{ISSUE_BODY}}\n"), issueWithNextStep, 1},
+		"template has none":               {write("none.md", "## Issue\n\n{{ISSUE_BODY}}\n"), issueWithNextStep, -1},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := TemplateNextStep(tc.cfg, tc.task); got != tc.want {
-				t.Fatalf("TemplateNextStep = %d, want %d", got, tc.want)
+			if _, got, err := (&Engine{}).RenderWithTaskStructure(tc.cfg, IssueData{Body: tc.body}); err != nil || got != tc.want {
+				t.Fatalf("editable occurrence = %d, want %d (err %v)", got, tc.want, err)
 			}
 		})
 	}
@@ -518,18 +519,6 @@ func TestRenderWithTaskStructure_ProtectsIssueProseInsideNextStep(t *testing.T) 
 	got := CompactTask(task, TaskCompaction{Force: true, Target: testTarget, Anchors: TaskHeadings(rendered), NextStepOccurrence: editable, ArchivePath: "archive.md"})
 	if !got.Compacted || !strings.HasPrefix(got.Content, rendered) || strings.Contains(got.Content, "## Checkpoint 1\n") {
 		t.Fatal("compaction did not preserve the rendered Task and move old history")
-	}
-}
-
-func TestTemplateNextStep_InlineAndAmbiguousLegacy(t *testing.T) {
-	cfg := RenderConfig{PromptFlag: "## Next Step\n\nTemplate instructions.\n\n## Issue\n\n{{ISSUE_BODY}}\n"}
-	task := strings.Replace(cfg.PromptFlag, "{{ISSUE_BODY}}", "## Next Step\n\nIssue instructions.\n", 1)
-	if got := TemplateNextStep(cfg, task); got != 1 {
-		t.Fatalf("inline template Next Step = %d, want 1", got)
-	}
-	legacy := DefaultPrompt() + "\n## Next Step\n\nAgent checkpoint.\n"
-	if got := LegacyTemplateNextStep(RenderConfig{}, legacy); got != 1 {
-		t.Fatalf("legacy Next Step with a duplicate after the verified footer = %d, want 1", got)
 	}
 }
 
