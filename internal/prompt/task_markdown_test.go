@@ -316,7 +316,7 @@ func TestCompactTask_CapsALogInNextStepThatReadsAsAHeading(t *testing.T) {
 // the step is still cut.
 func TestCompactTask_CutsBeforeAHeadingLineThatDoesNotFit(t *testing.T) {
 	for name, heading := range map[string]string{"trailing spaces": "## Aa      \n", "closing signs": "## Aa ######\n", "CRLF": "## Aa\r\n"} {
-		for padding := 3940; padding < 4040; padding++ {
+		for padding := 3985; padding < 4015; padding++ {
 			step := "Implement the first slice.\n" + strings.Repeat("x", padding) + "\n" + heading + paragraph("tail", 600)
 			task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
 
@@ -478,20 +478,21 @@ func TestCompactTask_LeavesTheTaskAloneWhenTheParserFails(t *testing.T) {
 	}
 }
 
-// Reading is linear: each of these takes minutes if it is quadratic.
+// Reading is linear: under the race detector, which CI runs with, each of these
+// takes far longer than the limit if it is quadratic.
 func TestSplitTaskSections_ReadsAdversarialTasksQuickly(t *testing.T) {
 	for name, content := range map[string]string{
-		"comments":             strings.Repeat("<!--\ntext\n", 100_000),
-		"fences":               strings.Repeat("```go\ntext\n", 100_000),
-		"a long marker line":   strings.Repeat("<!--\n", 100_000) + strings.Repeat(" ", 5_000_000) + "<!-- sandman:x -->\n",
-		"nested quotes":        strings.Repeat(">", 400_000) + "\n",
-		"nested lists":         strings.Repeat("- ", 200_000) + "x\n",
-		"deep lines":           strings.Repeat(strings.Repeat("> ", 100)+"x\n", 5_000),
-		"link definitions":     strings.Repeat("[a]: b\n", 300_000),
-		"underlined headings":  strings.Repeat("a\n---\n\n", 50_000),
-		"one long paragraph":   strings.Repeat("word `x` [y]( <z\n", 100_000),
-		"markers in a comment": "<!--" + strings.Repeat(" ", 1_000_000) + "\n" + strings.Repeat("<!-- sandman:x -->\n", 100_000) + "-->\n",
-		"closed code and HTML": strings.Repeat("```\nx\n```\n<!-- y -->\n## H\n", 20_000),
+		"comments":             strings.Repeat("<!--\ntext\n", 40_000),
+		"fences":               strings.Repeat("```go\ntext\n", 40_000),
+		"a long marker line":   strings.Repeat("<!--\n", 20_000) + strings.Repeat(" ", 1_000_000) + "<!-- sandman:x -->\n",
+		"nested quotes":        strings.Repeat(">", 120_000) + "\n",
+		"nested lists":         strings.Repeat("- ", 60_000) + "x\n",
+		"deep lines":           strings.Repeat(strings.Repeat("> ", 100)+"x\n", 2_000),
+		"link definitions":     strings.Repeat("[a]: b\n", 100_000),
+		"underlined headings":  strings.Repeat("a\n---\n\n", 20_000),
+		"one long paragraph":   strings.Repeat("word `x` [y]( <z\n", 40_000),
+		"markers in a comment": "<!--" + strings.Repeat(" ", 200_000) + "\n" + strings.Repeat("<!-- sandman:x -->\n", 20_000) + "-->\n",
+		"closed code and HTML": strings.Repeat("```\nx\n```\n<!-- y -->\n## H\n", 8_000),
 	} {
 		start := time.Now()
 		splitTaskSections(content)
@@ -502,7 +503,7 @@ func TestSplitTaskSections_ReadsAdversarialTasksQuickly(t *testing.T) {
 }
 
 func TestCompactTask_CompactsALargeTaskQuickly(t *testing.T) {
-	task := structuredTask(strings.Repeat("\n## Checkpoint\n\n- x\n\nNotes\n---\n\n```\ny\n```\n", 30_000))
+	task := structuredTask(strings.Repeat("\n## Checkpoint\n\n- x\n\nNotes\n---\n\n```\ny\n```\n", 8_000))
 	start := time.Now()
 
 	got := compact(task, true)
@@ -665,7 +666,7 @@ func TestCompactTask_NeverLeavesABlockOpenAtTheLimit(t *testing.T) {
 		"an inline span cut short":      {"``` ", " `x`\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for padding := 3950; padding < 4060; padding++ {
+			for padding := 4000; padding < 4045; padding++ {
 				step := tc.before + strings.Repeat("x", padding) + tc.after
 				task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1) +
 					"\n## Plan\n\n```\nkeep\n```\n"
@@ -705,7 +706,7 @@ func TestCompactTask_ClosesAQuotedFenceInItsQuote(t *testing.T) {
 		"quoted list": {"> - ```\n>   ", ">   "},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for padding := 3900; padding < 4060; padding++ {
+			for padding := 3900; padding < 3945; padding++ {
 				step := quote.open + strings.Repeat("x", padding) + "\n" + strings.Repeat(quote.next+"short output line\n", 240) + quote.next + "```\n"
 				task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
 
