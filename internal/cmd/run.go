@@ -424,7 +424,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
-			if compactFlag && overridePrompt && len(issues) == 0 {
+			// A selection that found nothing still resumes ready continuations;
+			// the final batch is checked once it is resolved.
+			if compactFlag && overridePrompt && len(issues) == 0 && !(runID == "" && issueSelectionProvided && len(readyContinuations) > 0) {
 				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
 			}
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") && len(readyContinuations) == 0 {

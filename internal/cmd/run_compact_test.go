@@ -240,26 +240,7 @@ func TestRun_ContinueCompact_ReadyContinuationsOnlyWhenSelected(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCompactFixture(t, nil)
-			worktrees := filepath.Dir(filepath.Dir(filepath.Dir(f.taskPath)))
-			readyTask := filepath.Join(addRegisteredContinuationWorktree(t, f.deps.RepoRoot, worktrees, "43-other"), ".sandman", "task.md")
-			if err := os.MkdirAll(filepath.Dir(readyTask), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(readyTask, []byte(f.task), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			f.deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open", Title: "Other"}}, prs: map[string]*github.PR{}}
-			readyRunID := testRunTS + "-" + testRunShortID + "-43-prev"
-			started := time.Now().UTC().Add(-2 * time.Minute)
-			log := f.deps.EventLog.(*fakeEventLog)
-			log.events = append(log.events,
-				events.Event{Type: "run.started", Timestamp: started, RunID: readyRunID, Issue: 43, Payload: map[string]any{
-					"branch": "43-other", "base_branch": "main", "batch_id": "old-batch", "issue_title": "Other"}},
-				events.Event{Type: "run.await", Timestamp: started.Add(time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{"gate": "pending", "await": true}},
-				events.Event{Type: "run.capacity_queued", Timestamp: started.Add(2 * time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{
-					"ready_continuation": true, "branch": "43-other", "base_branch": "main", "batch_id": "old-batch",
-					"previous_run_id": readyRunID, "previous_run_batch_id": "old-batch", "issue_title": "Other"}},
-			)
+			readyTask, readyRunID := addReadyContinuation(t, f)
 
 			out, err := f.run(t, tc.args...)
 
@@ -303,5 +284,58 @@ func TestRun_ContinueCompact_RefusedStartLeavesTheTaskAlone(t *testing.T) {
 	}
 	if archives, _ := filepath.Glob(filepath.Join(filepath.Dir(f.taskPath), "task-history", "*")); len(archives) != 0 {
 		t.Fatalf("a refused start wrote archives: %v", archives)
+	}
+}
+
+// addReadyContinuation adds #43 as a ready continuation, waiting for capacity
+// with its preserved Task, and returns that Task's path and the Run's ID.
+func addReadyContinuation(t *testing.T, f compactFixture) (string, string) {
+	t.Helper()
+	worktrees := filepath.Dir(filepath.Dir(filepath.Dir(f.taskPath)))
+	readyTask := filepath.Join(addRegisteredContinuationWorktree(t, f.deps.RepoRoot, worktrees, "43-other"), ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(readyTask), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(readyTask, []byte(f.task), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := f.deps.GitHubClient.(*fakeGitHubClient)
+	client.issues = map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open", Title: "Other"}}
+	client.prs = map[string]*github.PR{}
+	readyRunID := testRunTS + "-" + testRunShortID + "-43-prev"
+	started := time.Now().UTC().Add(-2 * time.Minute)
+	log := f.deps.EventLog.(*fakeEventLog)
+	log.events = append(log.events,
+		events.Event{Type: "run.started", Timestamp: started, RunID: readyRunID, Issue: 43, Payload: map[string]any{
+			"branch": "43-other", "base_branch": "main", "batch_id": "old-batch", "issue_title": "Other"}},
+		events.Event{Type: "run.await", Timestamp: started.Add(time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{"gate": "pending", "await": true}},
+		events.Event{Type: "run.capacity_queued", Timestamp: started.Add(2 * time.Minute), RunID: readyRunID, Issue: 43, Payload: map[string]any{
+			"ready_continuation": true, "branch": "43-other", "base_branch": "main", "batch_id": "old-batch",
+			"previous_run_id": readyRunID, "previous_run_batch_id": "old-batch", "issue_title": "Other"}},
+	)
+	return readyTask, readyRunID
+}
+
+// A selection that finds nothing still resumes a ready continuation, as it
+// does without --compact; the ready row is not selected, so nothing is
+// compacted.
+func TestRun_ContinueCompact_EmptySelectionStillResumesReadyContinuations(t *testing.T) {
+	f := newCompactFixture(t, nil)
+	f.deps.GitHubClient.(*fakeGitHubClient).searchIssuesResult = []github.Issue{}
+	readyTask, readyRunID := addReadyContinuation(t, f)
+
+	out, err := f.run(t, "--continue", "--compact", "--label", "no-match", "--prompt", "Custom Task")
+
+	if err != nil || !f.spy.called {
+		t.Fatalf("err = %v, batch ran = %t\n%s", err, f.spy.called, out)
+	}
+	if !f.spy.req.ReadyContinuations[43] || f.spy.req.RunIDs[43] != readyRunID {
+		t.Fatalf("#43 lost its ready routing:\n%s", out)
+	}
+	if len(f.spy.req.CompactTasks) != 0 || !strings.Contains(out, "[--compact] no continued issue is selected") {
+		t.Fatalf("CompactTasks = %v\n%s", f.spy.req.CompactTasks, out)
+	}
+	if got, _ := os.ReadFile(readyTask); string(got) != f.task {
+		t.Fatal("the command wrote the ready continuation's Task")
 	}
 }
