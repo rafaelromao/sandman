@@ -449,7 +449,7 @@ The generated instruction file (`.sandman/task.md`) passed to an Agent for one A
 _Avoid_: Prompt file, handoff doc.
 
 **Task compaction**:
-Sandman's lossless shrinking of an oversized continuation Task (ADR-0066). Above `task_compact_bytes` (default 48 KiB), an implementation launch keeps the Task's recorded structure, plans, status lines and Sandman's sections, keeps the first 4 KiB of `## Next Step`, keeps the newest agent-written history that fits three quarters of the threshold, and moves the rest. `sandman run --continue --compact` applies it on request.
+Sandman's lossless shrinking of an oversized continuation Task (ADR-0066). Above `task_compact_bytes` (default 48 KiB), an implementation launch keeps the Task's recorded structure, plans, status lines and Sandman's sections, keeps the first 4 KiB of `## Next Step`, keeps the newest agent-written history that fits three quarters of the threshold, and moves the rest, finding sections as a CommonMark parser reads the Task. `sandman run --continue --compact` applies it on request.
 _Avoid_: Summarising the Task, trimming the Task.
 
 **Task history archive**:
