@@ -293,6 +293,37 @@ func TestCompactTask_ChecksHeadingsBeforeThePointer(t *testing.T) {
 	}
 }
 
+// Cutting a Next Step can close a fence the Task read as text, taking with it
+// a heading that was in the log; that must not stop the compaction.
+func TestCompactTask_CapsALogInNextStepThatReadsAsAHeading(t *testing.T) {
+	step := "Implement the first slice.\n\nLast run:\n```\nFAIL TestX\n---\n" + strings.Repeat("trace line here\n", 600)
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	got := compact(task, true)
+
+	if !got.Compacted || strings.Count(got.Content, "trace line here") > nextStepLimit/16 || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+	}
+	if again := compact(got.Content, true); again.Compacted {
+		t.Fatal("a second compaction changed the Task")
+	}
+}
+
+// Wherever the limit falls on a heading line longer than the section's name,
+// the step is still cut.
+func TestCompactTask_CutsBeforeAHeadingLineThatDoesNotFit(t *testing.T) {
+	for name, heading := range map[string]string{"trailing spaces": "## Aa      \n", "closing signs": "## Aa ######\n", "CRLF": "## Aa\r\n"} {
+		for padding := 3940; padding < 4040; padding++ {
+			step := "Implement the first slice.\n" + strings.Repeat("x", padding) + "\n" + heading + paragraph("tail", 600)
+			task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+			if got := compact(task, true); !got.Compacted {
+				t.Fatalf("%s, padding %d: %s", name, padding, got.Reason)
+			}
+		}
+	}
+}
+
 // Where no blank line can keep a heading apart, the Task is left alone.
 func TestCompactTask_LeavesTasksThatWouldReadDifferently(t *testing.T) {
 	task := structuredTask("\n## Plan\n\n- last plan step\n## Old\n\n```\n" + paragraph("old", 6000) + "```\n  Newest title\n  ---\n")

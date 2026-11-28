@@ -532,16 +532,21 @@ func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSectio
 		case !cut && len(section.text) <= room:
 			write(section, section.text)
 			room -= len(section.text)
-		// An underlined heading is only cut after all its lines.
-		case !cut && room > len(section.heading) && (!section.underlined || room >= section.headingLength):
+		// A section is only cut after all of its heading's lines.
+		case !cut && room >= section.headingLength:
 			prefix := cutOutsideBlocks(section.text, room)
 			if nextStepLimit-room+len(prefix) < nextStepLimit/2 {
 				// A long line or code block would waste most of the limit.
 				prefix = cutInside(section.text, room)
 			}
-			write(section, trimTrailingNewlines(prefix)+"\n\n")
-			cut = true
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
+			text := trimTrailingNewlines(prefix) + "\n\n"
+			// Closing a block the Task read as text can take the title with it.
+			if len(readTask(text).boundaries(0, 1)) == 0 {
+				section.heading = ""
+			}
+			write(section, text)
+			cut = true
 		default:
 			cut, dropped = true, true
 			moved = append(moved, section.label())

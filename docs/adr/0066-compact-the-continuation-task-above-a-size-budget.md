@@ -127,8 +127,8 @@ updates it.
 - **Joining what is left.** A blank line is added before a kept underlined
   title, or note left after an earlier pointer, whose predecessor moved, so it
   cannot continue the paragraph, list or quote now above it. A compaction is
-  not applied if what follows its pointer would not be read as exactly the
-  sections written there. Titles the pointer lists are written so that they
+  not applied if its result would not be read as exactly the sections written
+  into it. Titles the pointer lists are written so that they
   cannot end an HTML block left open above it. A parser failure leaves the
   Task unchanged.
 - **Where.** Compaction happens once, where the composed Task is written before
