@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -214,7 +215,7 @@ func TestMarkTemplate_MarksTheNextStepGroupAndTheEndOfTheStructure(t *testing.T)
 	marked := markTemplate(DefaultPrompt(), testNonce)
 
 	for _, want := range []string{
-		structureMarker(nextStepStartMarker, testNonce) + "\n## Next Step\n",
+		structureMarker(nextStepStartMarker, testNonce) + "\n## Next Step\n" + structureMarker(nextStepStartMarker, testNonce) + "\n",
 		"## Managed Review Boundary\n" + structureMarker(nextStepEndMarker, testNonce) + "\n",
 	} {
 		if !strings.Contains(marked, want) {
@@ -224,8 +225,8 @@ func TestMarkTemplate_MarksTheNextStepGroupAndTheEndOfTheStructure(t *testing.T)
 	if !strings.HasSuffix(marked, structureMarker(taskEndMarker, testNonce)+"\n") {
 		t.Errorf("the structure does not end the template:\n%s", marked[len(marked)-200:])
 	}
-	if got := strings.ReplaceAll(marked, "<!-- sandman:", ""); strings.Count(marked, "<!-- sandman:") != 3 || len(got) == len(marked) {
-		t.Errorf("want exactly three markers")
+	if strings.Count(marked, "<!-- sandman:") != 4 {
+		t.Errorf("want exactly four marker lines")
 	}
 }
 
@@ -866,5 +867,41 @@ func TestCompactTask_ReplacesAPointerSavedWithCRLF(t *testing.T) {
 			t.Fatalf("launch %d: compacted = %t, %d pointers:\n%q", launch, got.Compacted, strings.Count(got.Content, TaskHistoryHeading), got.Content)
 		}
 		task = crlf(got.Content + strings.Join(checkpoints(12, 1000), ""))
+	}
+}
+
+// Either copy of the Next Step marker locates the step from its heading.
+func TestMarkedTaskBounds_LocatesNextStepFromEitherMarker(t *testing.T) {
+	marked := structuredTask()
+	marker := structureMarker(nextStepStartMarker, testNonce) + "\n"
+	for name, task := range map[string]string{
+		"both":                              marked,
+		"only above":                        strings.Replace(marked, nextStepHeading+"\n"+marker, nextStepHeading+"\n", 1),
+		"only below":                        strings.Replace(marked, marker, "", 1),
+		"a blank line before the one below": strings.Replace(strings.Replace(marked, marker, "", 1), nextStepHeading+"\n", nextStepHeading+"\n\n", 1),
+	} {
+		bounds, ok := MarkedTaskBounds(task, testNonce)
+		if !ok || !strings.HasPrefix(task[bounds.NextStepStart:], nextStepHeading+"\n") || !strings.HasPrefix(task[bounds.NextStepEnd:], "## Required Order\n") {
+			t.Errorf("%s: ok = %t, bounds = %+v", name, ok, bounds)
+		}
+	}
+}
+
+// Unmatched fences are parsed in one pass.
+func TestSplitTaskSections_ManyUnmatchedFencesDoNotRescan(t *testing.T) {
+	content := strings.Repeat("```go\ntext\n", 100_000) + "## After\n"
+	start := time.Now()
+
+	headings := headingsIn(content)
+
+	if elapsed := time.Since(start); elapsed > 20*time.Second || len(headings) != 1 {
+		t.Fatalf("%d headings in %s", len(headings), elapsed)
+	}
+}
+
+func BenchmarkSplitTaskSections_UnmatchedFences(b *testing.B) {
+	content := strings.Repeat("```go\ntext\n", 32_000)
+	for b.Loop() {
+		splitTaskSections(content)
 	}
 }

@@ -481,7 +481,7 @@ func runtimeContextSection(lines []string) (start, end int) {
 	end = len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "## ") || endsSection(trimmed) || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+		if strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
 			end = i
 			break
 		}
@@ -522,8 +522,8 @@ func removeCanonicalSection(content, heading string) string {
 
 // guardSectionEnd returns the byte offset that follows the H2 section opened
 // by the guard heading at the given offset. The section terminates at the
-// next H2 heading (a line beginning with "## "), at the next H1 ("# "), at a
-// structure marker, or at the end of the content. Anchoring on Markdown headings ensures stale or
+// next H2 heading (a line beginning with "## "), at the next H1 ("# "), or
+// at the end of the content. Anchoring on Markdown headings ensures stale or
 // short-bodied guards cannot delete the persisted sections that follow
 // them — a regression that previously sliced into the next H2 body.
 func guardSectionEnd(content string, headingIdx int) int {
@@ -540,7 +540,7 @@ func guardSectionEnd(content string, headingIdx int) int {
 		line := content[scan:end]
 		trimmed := strings.TrimSpace(line)
 		if scan != lineStart {
-			if strings.HasPrefix(trimmed, "## ") || endsSection(trimmed) || (scan+1 < len(content) && strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+			if strings.HasPrefix(trimmed, "## ") || (scan+1 < len(content) && strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
 				return scan
 			}
 		}

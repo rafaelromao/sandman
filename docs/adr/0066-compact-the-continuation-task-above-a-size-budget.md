@@ -43,18 +43,18 @@ updates it.
   and edited sections can all reuse template titles. A fresh implementation
   render therefore writes comment markers into the template before
   substituting anything into it, carrying a per-render nonce recorded in
-  `.sandman/task-anchors`: before the template's `## Next Step`, after the
-  heading of the section that follows it (or with a distinct marker when it is
-  last), and after the template and everything substituted into it. Only
-  sections Sandman removes and rewrites at launches may follow the end marker.
-  Issue text cannot forge the nonce. A Next Step with a placeholder anywhere
-  from its heading to the next one is not marked: what it expands to is
-  unknown, and it can be the issue body. When Sandman rewrites a section at a
-  launch, that section ends at a marker that closes what is above it, so
-  rewriting the one above Next Step neither removes its marker nor puts lines
-  inside it. The marker after the following heading belongs to that section,
-  which is rewritten around it. The editable step starts at the marked `##
-  Next Step` heading.
+  `.sandman/task-anchors`: above and below the heading of the template's `##
+  Next Step`, after the heading of the section that follows it (or with a
+  distinct marker when it is last), and after the template and everything
+  substituted into it. Only sections Sandman removes and rewrites at launches
+  may follow the end marker. Issue text cannot forge the nonce. A Next Step
+  with a placeholder anywhere from its heading to the next one is not marked:
+  what it expands to is unknown, and it can be the issue body. The marker is
+  written twice around the Next Step heading because launches rewrite
+  sections: rewriting the one above takes only the upper copy, and an agent
+  rewriting the step takes only the lower one. Either copy locates the step
+  from its heading. Composing a launch does not read the markers, and a marker
+  with another nonce is text.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that
   `--continue --compact` can. On request it is located only for the built-in

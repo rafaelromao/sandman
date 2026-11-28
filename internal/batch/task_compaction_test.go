@@ -831,7 +831,7 @@ func TestImplementationLaunch_CapsNextStepWhateverIsComposedAboveIt(t *testing.T
 
 			launch := launchInWorktree(t, root, prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil)
 
-			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n\nStart.\n", tc.kept)
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n", "\n\nStart.\n", tc.kept)
 			if n := strings.Count(launch.stdin, "Obsolete step."); n >= 300 {
 				t.Errorf("Next Step was not capped: %d lines remain", n)
 			}
@@ -856,7 +856,7 @@ func TestImplementationLaunch_RefreshesARuntimeContextRightAfterNextStep(t *test
 
 			launch := launchInWorktree(t, root, prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil)
 
-			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n\nStart.\n", "- Review command: `/current-review-command`\n")
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n", "\n\nStart.\n", "- Review command: `/current-review-command`\n")
 			if n := strings.Count(launch.stdin, "Obsolete step."); n >= 300 {
 				t.Errorf("Next Step was not capped: %d lines remain", n)
 			}
@@ -866,6 +866,25 @@ func TestImplementationLaunch_RefreshesARuntimeContextRightAfterNextStep(t *test
 				}
 			}
 		})
+	}
+}
+
+// Another Task's marker quoted in the issue is text: the settings refresh
+// writes where it did before markers existed.
+func TestImplementationLaunch_IgnoresAnotherTasksMarkers(t *testing.T) {
+	quoted := "```\n<!-- sandman:task-end 0000 -->\n<!-- sandman:next-step-start 0000 -->\n```\n"
+	template := "# Task\n\n## Runtime Context\n\n{{ISSUE_BODY}}\n- Review command: `/stale`\n\n## Next Step\n\nStart.\n\n## Footer\n\nF.\n"
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: template}, prompt.IssueData{Body: quoted}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := prompt.ContinuationTaskPromptWithReviewSettings(withCheckpoints(rendered, 30), "/current-review-command", true, 1800)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), quoted, "- Review command: `/current-review-command`\n")
+	if strings.Contains(launch.stdin, "/stale") || strings.Count(launch.stdin, "- Review command:") != 1 {
+		t.Errorf("the settings were not refreshed once:\n%.600s", launch.stdin)
 	}
 }
 

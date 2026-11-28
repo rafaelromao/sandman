@@ -67,6 +67,9 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		write = atomicfs.WriteAtomicNew
 	}
 	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
+	if !req.Force && (threshold <= 0 || len(content) <= threshold) {
+		return unchanged, nil
+	}
 	bounds := taskBounds(req, content)
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.

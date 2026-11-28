@@ -41,19 +41,6 @@ func structureMarker(name, nonce string) string {
 	return "<!-- " + name + " " + nonce + " -->"
 }
 
-// endsSection reports whether a trimmed line is a marker that closes what is
-// above it. Composition ends the section it rewrites there, so it neither
-// removes the marker with that section nor inserts lines below it. The marker
-// that follows the heading after Next Step belongs to that section instead.
-func endsSection(line string) bool {
-	for _, name := range []string{nextStepStartMarker, nextStepLastMarker, taskEndMarker} {
-		if strings.HasPrefix(line, "<!-- "+name+" ") && strings.HasSuffix(line, " -->") {
-			return true
-		}
-	}
-	return false
-}
-
 // markTemplate writes the structure markers into a template before any
 // substitution, so they sit at the template's own headings whatever the
 // substituted values and the issue body hold. The structure ends after the
@@ -107,8 +94,16 @@ func markTemplate(template, nonce string) string {
 		b.WriteString(line + "\n")
 		written = at
 	}
+	// The marker goes both above and below the heading: a launch rewriting the
+	// section above takes only the first, an agent rewriting the step only the
+	// second.
 	if step >= 0 {
 		insert(offsets[step], structureMarker(nextStepStartMarker, nonce))
+		headingEnd := offsets[step+1]
+		if nl := strings.IndexByte(sections[step].text, '\n'); nl >= 0 {
+			headingEnd = offsets[step] + nl + 1
+		}
+		insert(headingEnd, structureMarker(nextStepStartMarker, nonce))
 	}
 	if next >= 0 {
 		headingEnd := offsets[next+1]
@@ -143,8 +138,9 @@ func findLine(content, line string) (int, int) {
 }
 
 // MarkedTaskBounds locates the structure a fresh render marked with nonce. It
-// reports false when the end marker is gone. A Next Step marker that is gone
-// or moved, or a renamed heading, leaves the group unlocated.
+// reports false when the end marker is gone. When both copies of the Next Step
+// marker or the end of the group are gone, or the heading is renamed, the group
+// is left unlocated. Markers with another nonce are text.
 func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 	if nonce == "" {
 		return TaskBounds{}, false
@@ -154,9 +150,14 @@ func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 		return TaskBounds{}, false
 	}
 	bounds := TaskBounds{StructureEnd: structureEnd}
-	_, from := findLine(content[:closing], structureMarker(nextStepStartMarker, nonce))
+	marker, from := findLine(content[:closing], structureMarker(nextStepStartMarker, nonce))
 	if from < 0 {
 		return bounds, true
+	}
+	// With only the copy below the heading left, the step starts above it.
+	above := strings.LastIndex(strings.TrimRight(content[:marker], "\r\n"), "\n") + 1
+	if line, _, _ := strings.Cut(content[above:marker], "\n"); strings.TrimSpace(line) == nextStepHeading {
+		from = above
 	}
 	to, _ := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
 	if to >= 0 {

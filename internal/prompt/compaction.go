@@ -152,35 +152,38 @@ func inCodeBlock(content string, offset int) bool {
 }
 
 // fencedLines reports which lines belong to a fenced code block, delimiters
-// included. A fence left open at the end (a truncated log, say) is read as
-// text, so it cannot swallow the headings after it.
+// included. A fence with no closer (a truncated log, say) is read as text, so
+// it cannot swallow the headings after it.
 func fencedLines(lines []string) []bool {
-	fenced := make([]bool, len(lines))
-	ignored := map[int]bool{}
-	var open fence
-	openedAt := -1
-	for i := 0; ; i++ {
-		if i == len(lines) {
-			if open.char == 0 {
-				return fenced
+	fences := make([]fence, len(lines))
+	for i, line := range lines {
+		fences[i], _ = parseFence(strings.TrimRight(line, "\r\n"))
+	}
+	// closable[i] reports whether a later line closes a block opened at i.
+	closable := make([]bool, len(lines))
+	longest := map[byte]int{} // the longest bare fence further down
+	for i := len(lines) - 1; i >= 0; i-- {
+		if f := fences[i]; f.char != 0 {
+			closable[i] = longest[f.char] >= f.length
+			if !f.info {
+				longest[f.char] = max(longest[f.char], f.length)
 			}
-			// Parsing resumes at the unclosed opener, now read as text.
-			ignored[openedAt] = true
-			clear(fenced[openedAt:])
-			i, open = openedAt, fence{}
 		}
-		if f, ok := parseFence(strings.TrimRight(lines[i], "\r\n")); ok && !ignored[i] {
-			switch {
-			case open.char == 0:
-				open, openedAt = f, i
-			case f.closes(open):
+	}
+	fenced := make([]bool, len(lines))
+	var open fence
+	for i, f := range fences {
+		switch {
+		case open.char != 0:
+			fenced[i] = true
+			if f.closes(open) {
 				open = fence{}
 			}
-			fenced[i] = true
-			continue
+		case closable[i]:
+			open, fenced[i] = f, true
 		}
-		fenced[i] = open.char != 0
 	}
+	return fenced
 }
 
 // fence is a fenced code block delimiter: its character and length, and
