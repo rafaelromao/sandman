@@ -86,23 +86,29 @@ updates it.
   block closed, unless the block's delimiter and its closer do not both fit.
   The rest of the structure, every `## Plan`, execution checklists, status
   lines and Sandman's sections are kept byte for byte. Those headings are
-  recognised however Markdown allows them to be written, including underlined
-  and in any capitalisation, with a suffix after `Plan` or `Execution
-  Checklist`. So is a section whose code block swallowed one of those, unless
-  the block is clearly a language-tagged example that starts with that heading
-  while a real one exists. Any section with a line a continuation takes for a
-  Runtime Context heading, even inside a code block, is also kept, so
-  compaction never moves review settings. How a continuation picks the section
-  it writes them to is unchanged. Composition and compaction do not read every
-  heading alike, so every section that span runs into, as composition reads
-  it, is kept, the pointer goes after it, and a compaction that would still
-  change the span is not applied. If an agent removes the Next Step markers
-  the step is kept whole; if it removes the closing marker and the layout
-  cannot be verified, the Task is left unchanged.
+  recognised indented, with a tab or closing number signs, underlined, in any
+  capitalisation, and with a suffix after `Plan` or `Execution Checklist`. So
+  is a section whose code block swallowed one of those, unless the block is
+  clearly a language-tagged example that starts with that heading while a real
+  one exists. Any section with a line a continuation takes for a Runtime
+  Context heading, even inside a code block, is also kept, so compaction never
+  moves review settings. How a continuation picks the section it writes them
+  to is unchanged. Composition and compaction do not read every heading alike,
+  so every section that span runs into, as composition reads it, is kept, the
+  pointer goes after it, and a compaction that would still change the span is
+  not applied. If an agent removes the Next Step markers the step is kept
+  whole; if it removes the closing marker and the layout cannot be verified,
+  the Task is left unchanged.
 - **Code blocks.** They are read across the whole Task, including those a list
   item opens on its own line, which end with the item. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
   whose bounds fall inside one is not capped.
+- **Known limit.** Compaction reads Markdown with its own line scanner, not a
+  parser. Some constructs are misread: a `##` line inside an HTML comment or
+  block counts as a heading, and an underlined heading does not start a
+  section. Text can then move that should have stayed; nothing is lost,
+  because the complete Task is archived before anything moves. Reading the
+  Task with a Markdown parser is a separate change (#3047).
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
