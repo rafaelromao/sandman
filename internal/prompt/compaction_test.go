@@ -691,3 +691,50 @@ func TestCompactTask_KeepsAnEmptySectionAfterNextStep(t *testing.T) {
 		})
 	}
 }
+
+// A heading built from a placeholder can expand to several lines, so the end
+// marker cannot follow it; Next Step is then left unmarked.
+func TestMarkTemplate_LeavesNextStepUnmarkedBeforeAPlaceholderHeading(t *testing.T) {
+	// The issue ends in a heading, which a marker after the template heading
+	// line would mistake for that line.
+	issue := "Rollback plan\n\n## Acceptance criteria\n\n" + paragraph("criterion", 6000) + "\n## Sign-off"
+	for name, heading := range map[string]string{"issue body": "## {{ISSUE_BODY}}", "another placeholder": "## {{ROLLBACK}}"} {
+		t.Run(name, func(t *testing.T) {
+			template := "## Next Step\n\nStart.\n\n" + heading + "\n\nFooter.\n"
+			marked := markTemplate(template, testNonce)
+			if strings.Contains(marked, nextStepStartMarker) || strings.Contains(marked, nextStepEndMarker) {
+				t.Fatalf("marked:\n%s", marked)
+			}
+			rendered := strings.ReplaceAll(strings.ReplaceAll(marked, "{{ISSUE_BODY}}", issue), "{{ROLLBACK}}", issue)
+
+			got := compactTo(rendered+strings.Join(checkpoints(12, 1000), ""), 8*1024, true)
+
+			if !got.Compacted || !strings.Contains(got.Content, issue) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+				t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+			}
+		})
+	}
+}
+
+// A note after the history pointer has no heading of its own; a plan its
+// open fence swallowed still protects it.
+func TestCompactTask_KeepsANoteAfterThePointerThatSwallowedAPlan(t *testing.T) {
+	for name, opener := range map[string]string{"opening the note": "```text\n", "after a line": "Log:\n```text\n"} {
+		t.Run(name, func(t *testing.T) {
+			once := compact(structuredTask(checkpoint(1, 9000)), false)
+			if !once.Compacted {
+				t.Fatalf("setup: %s", once.Reason)
+			}
+			plan := "## Plan\n\n- [ ] Verify the output.\n\n```\noutput\n```\n"
+			note := opener + strings.Repeat("truncated log\n", 50) + plan
+			grown := strings.Replace(once.Content, taskHistoryEnd+"\n", taskHistoryEnd+"\n\n"+note, 1) +
+				"\n## Plan\n\nA separate plan.\n" + strings.Join(checkpoints(6, 1000), "")
+
+			got := compactTo(grown, 1024, true)
+
+			if !got.Compacted || !strings.Contains(got.Content, plan) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+				t.Fatalf("compacted = %t (%s); the swallowed plan moved:\n%s", got.Compacted, got.Reason, got.Content)
+			}
+		})
+	}
+}

@@ -201,10 +201,14 @@ func isProtectedHeading(heading string) bool {
 }
 
 // isKeptSection reports whether compaction keeps a section byte for byte
-// wherever it is: Sandman's sections, protected state, and a section whose
-// fenced block swallowed one of those.
+// wherever it is: Sandman's sections, protected state, and text whose fenced
+// block swallowed one of those, including a note without a heading of its own.
 func isKeptSection(section taskSection, topLevel map[string]bool) bool {
-	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) || swallowsProtected(section.text, topLevel)
+	body := section.text
+	if section.heading != "" {
+		_, body, _ = strings.Cut(body, "\n")
+	}
+	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) || swallowsProtected(body, topLevel)
 }
 
 // CompactTask moves the oldest agent-written history out of an oversized Task
@@ -238,9 +242,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		switch {
 		case section.generatedPointer:
 			continue
-		case section.afterPointer:
-			history = append(history, i)
-		case section.heading == "" || isKeptSection(section, topLevel):
+		case section.heading == "" && !section.afterPointer, isKeptSection(section, topLevel):
 			kept[i] = section.text
 			fixed += len(section.text)
 		default:
@@ -378,14 +380,13 @@ func historyBytes(sections []taskSection, indexes []int) int {
 	return n
 }
 
-// swallowsProtected reports whether a section's body holds, inside a fenced
-// block, a heading compaction would keep, typically because an agent left a
-// fence open and a later one closed it. Such a section is kept whole. Only a
-// clearly bounded example is not: a language-tagged block whose first line is
-// the heading, which also heads a real section, closed by a bare fence with no
+// swallowsProtected reports whether body holds, inside a fenced block, a
+// heading compaction would keep, typically because an agent left a fence open
+// and a later one closed it. Such a section is kept whole. Only a clearly
+// bounded example is not: a language-tagged block whose first line is the
+// heading, which also heads a real section, closed by a bare fence with no
 // fence inside.
-func swallowsProtected(text string, topLevel map[string]bool) bool {
-	_, body, _ := strings.Cut(text, "\n")
+func swallowsProtected(body string, topLevel map[string]bool) bool {
 	var open fence
 	example, atStart := false, false
 	for line := range strings.SplitSeq(body, "\n") {

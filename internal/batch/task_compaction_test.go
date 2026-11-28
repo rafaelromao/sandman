@@ -580,3 +580,53 @@ func TestFreshRenderMarksTheTemplatesNextStep(t *testing.T) {
 		t.Fatal("the template's Next Step was not capped")
 	}
 }
+
+// Protected text stays in both the agent's input and the worktree Task, while
+// old checkpoints still move.
+func TestImplementationLaunch_KeepsProtectedTextAfterCompaction(t *testing.T) {
+	// The issue ends in a heading, which a marker after the template heading
+	// line would mistake for that line.
+	issue := "Rollback plan\n\n## Acceptance criteria\n\n- [ ] " + strings.Repeat("roll back cleanly. ", 400) + "\n\n## Sign-off"
+	template := "# Task\n\n## Next Step\n\nStart.\n\n## {{ISSUE_BODY}}\n\nFooter.\n"
+	multiline, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: template}, prompt.IssueData{Body: issue}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	once, err := CompactWorktreeTask(checkpointTask(30), TaskCompactionRequest{WorkDir: noncedDir(t), Threshold: testTaskCompactBytes, Now: time.Now()})
+	if err != nil || !once.Compacted {
+		t.Fatalf("setup: %v %s", err, once.Reason)
+	}
+	end := "<!-- end of Sandman Task History -->\n"
+	plan := "## Plan\n\n- [ ] Verify the rollback.\n\n```\noutput\n```\n"
+	noted := strings.Replace(once.Content, end, end+"\n```text\ntruncated log\n"+plan, 1) +
+		"\n## Plan\n\nA separate plan.\n" + checkpointTask(30)[len(checkpointTask(0)):]
+
+	for name, tc := range map[string]struct{ task, kept string }{
+		"multiline heading after Next Step": {withCheckpoints(multiline, 30), issue},
+		"note after the history pointer":    {noted, plan},
+	} {
+		t.Run(name, func(t *testing.T) {
+			launch := launchWithCompaction(t, tc.task, testTaskCompactBytes)
+
+			written, err := os.ReadFile(filepath.Join(launch.workDir, ".sandman", "task.md"))
+			if err != nil || string(written) != launch.stdin {
+				t.Fatalf("worktree Task differs from the launched one (%v)", err)
+			}
+			if !strings.Contains(launch.stdin, tc.kept) {
+				t.Fatalf("protected text left the Task:\n%s", launch.stdin)
+			}
+			if strings.Contains(launch.stdin, "## Checkpoint 1\n") {
+				t.Fatal("the old checkpoints did not move")
+			}
+		})
+	}
+}
+
+// noncedDir is a directory recording the test Tasks' markers.
+func noncedDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	recordTestNonce(t, dir)
+	return dir
+}

@@ -44,10 +44,11 @@ func structureMarker(name, nonce string) string {
 // markTemplate writes the structure markers into a template before
 // substitution, so they sit at the template's positions whatever the issue
 // body holds. The structure ends after the template and every place the issue
-// body is substituted into. The Next Step group is marked unless the issue
-// body is substituted into it: from its heading to the next template section,
-// whose heading line the end marker follows so that rewriting Next Step keeps
-// it.
+// body is substituted into. The Next Step group is marked from its heading to
+// the next template section, whose heading line the end marker follows so that
+// rewriting Next Step keeps it. It is left unmarked if the issue body is
+// substituted into it, or if that next heading holds a placeholder, which
+// could expand to several lines.
 func markTemplate(template, nonce string) string {
 	sections := splitTaskSections(template)
 	offsets := make([]int, len(sections)+1)
@@ -74,7 +75,11 @@ func markTemplate(template, nonce string) string {
 				next, groupEnd = i, offsets[i]
 			}
 		}
-		if strings.Contains(template[offsets[step]:groupEnd], "{{ISSUE_BODY}}") {
+		heading := ""
+		if next >= 0 {
+			heading, _, _ = strings.Cut(sections[next].text, "\n")
+		}
+		if strings.Contains(template[offsets[step]:groupEnd], issueBodyPlaceholder) || strings.Contains(heading, "{{") {
 			step, next = -1, -1
 		}
 	}

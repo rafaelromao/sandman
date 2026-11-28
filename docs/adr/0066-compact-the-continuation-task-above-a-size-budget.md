@@ -47,7 +47,8 @@ updates it.
   distinct marker when it is last), and after the template and every issue
   substitution. Only sections Sandman removes and rewrites at launches may
   follow the end marker. Issue text cannot forge the nonce. A Next Step that
-  the issue body is substituted into is not marked.
+  the issue body is substituted into is not marked, nor is one followed by a
+  heading holding a placeholder, which could expand to several lines.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that `--continue
   --compact` can. On request it is located only for the built-in layout: the
