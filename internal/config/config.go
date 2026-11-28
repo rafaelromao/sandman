@@ -19,16 +19,22 @@ var ErrBreakingContract = errors.New("config contract migration required")
 
 // Defaults for optional config fields.
 const (
-	DefaultAgent             = "opencode"
-	DefaultModel             = "opencode/big-pickle"
-	DefaultReviewAgent       = "opencode"
-	DefaultReviewModel       = "opencode/big-pickle"
-	DefaultBuildToolsPreset  = "generic"
-	DefaultReviewCommand     = ""
-	DefaultParallel          = 1
-	DefaultReviewParallel    = 1
-	DefaultStartDelay        = 0
-	DefaultRunIdleTimeout    = 3600
+	DefaultAgent            = "opencode"
+	DefaultModel            = "opencode/big-pickle"
+	DefaultReviewAgent      = "opencode"
+	DefaultReviewModel      = "opencode/big-pickle"
+	DefaultBuildToolsPreset = "generic"
+	DefaultReviewCommand    = ""
+	DefaultParallel         = 1
+	DefaultReviewParallel   = 1
+	DefaultStartDelay       = 0
+	DefaultRunIdleTimeout   = 3600
+	// DefaultTaskCompactBytes is the Task size above which a continuation is
+	// compacted: about 11k tokens, 4.5% of a 250k-token context window.
+	DefaultTaskCompactBytes = 48 * 1024
+	// MinTaskCompactBytes keeps compaction above the built-in template's own
+	// size, so it does not run on every launch.
+	MinTaskCompactBytes      = 32 * 1024
 	DefaultReviewTimeout     = 1800
 	MinReviewTimeout         = 240
 	DefaultRetries           = 3
@@ -51,23 +57,26 @@ type Config struct {
 	ReviewCommand      string `yaml:"review_command"`
 	// ReviewCommandSet records that review_command was configured, even as
 	// an empty value. An empty configured command selects blind review.
-	ReviewCommandSet      bool             `yaml:"-"`
-	DefaultParallel       int              `yaml:"parallel"`
-	DefaultReviewParallel int              `yaml:"parallel_reviews"`
-	StartDelay            int              `yaml:"start_delay"`
-	RunIdleTimeout        int              `yaml:"run_idle_timeout"`
-	ReviewTimeout         int              `yaml:"review_timeout,omitempty"`
-	ContextErrorPhrases   []string         `yaml:"context_error_phrases,omitempty"`
-	Retries               int              `yaml:"retries"`
-	ContainerCapacity     int              `yaml:"container_capacity"`
-	MaxContainers         int              `yaml:"max_containers"`
-	WorktreeDir           string           `yaml:"worktree_dir"`
-	Sandbox               string           `yaml:"sandbox"`
-	CleanupWorktrees      *bool            `yaml:"cleanup_worktrees,omitempty"`
-	Agents                map[string]Agent `yaml:"agents,omitempty"`
-	Git                   GitConfig        `yaml:"git"`
-	Agent                 string           `yaml:"-"`
-	AgentProviders        map[string]Agent `yaml:"-"`
+	ReviewCommandSet      bool     `yaml:"-"`
+	DefaultParallel       int      `yaml:"parallel"`
+	DefaultReviewParallel int      `yaml:"parallel_reviews"`
+	StartDelay            int      `yaml:"start_delay"`
+	RunIdleTimeout        int      `yaml:"run_idle_timeout"`
+	ReviewTimeout         int      `yaml:"review_timeout,omitempty"`
+	ContextErrorPhrases   []string `yaml:"context_error_phrases,omitempty"`
+	Retries               int      `yaml:"retries"`
+	ContainerCapacity     int      `yaml:"container_capacity"`
+	MaxContainers         int      `yaml:"max_containers"`
+	WorktreeDir           string   `yaml:"worktree_dir"`
+	Sandbox               string   `yaml:"sandbox"`
+	CleanupWorktrees      *bool    `yaml:"cleanup_worktrees,omitempty"`
+	// TaskCompactBytes is the continuation Task size above which a launch
+	// compacts it; nil means the default and 0 disables compaction.
+	TaskCompactBytes *int             `yaml:"task_compact_bytes,omitempty"`
+	Agents           map[string]Agent `yaml:"agents,omitempty"`
+	Git              GitConfig        `yaml:"git"`
+	Agent            string           `yaml:"-"`
+	AgentProviders   map[string]Agent `yaml:"-"`
 }
 
 // GitConfig holds git-specific settings.
@@ -341,6 +350,7 @@ func SupportedKeys() []string {
 		"worktree_dir",
 		"sandbox",
 		"cleanup_worktrees",
+		"task_compact_bytes",
 		"git.base_branch",
 	}
 }
@@ -373,6 +383,7 @@ func Load(path string) (*Config, error) {
 		WorktreeDir           string           `yaml:"worktree_dir"`
 		Sandbox               string           `yaml:"sandbox"`
 		CleanupWorktrees      *bool            `yaml:"cleanup_worktrees"`
+		TaskCompactBytes      yaml.Node        `yaml:"task_compact_bytes"`
 		Agents                map[string]Agent `yaml:"agents"`
 		Git                   struct {
 			BaseBranch   string  `yaml:"base_branch"`
@@ -421,6 +432,16 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.StartDelay < 0 {
 		return nil, fmt.Errorf("validate config: start_delay must be 0 or greater")
+	}
+	if node := raw.TaskCompactBytes; node.Kind != 0 && node.Tag != "!!null" {
+		value, err := strconv.Atoi(node.Value)
+		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || err != nil {
+			return nil, fmt.Errorf("validate config: task_compact_bytes must be an integer")
+		}
+		if err := ValidateTaskCompactBytes(value); err != nil {
+			return nil, fmt.Errorf("validate config: %w", err)
+		}
+		cfg.TaskCompactBytes = &value
 	}
 	if raw.RunIdleTimeout == nil {
 		cfg.RunIdleTimeout = DefaultRunIdleTimeout
@@ -768,6 +789,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.Sandbox, nil
 	case "cleanup_worktrees":
 		return strconv.FormatBool(c.EffectiveCleanupWorktrees()), nil
+	case "task_compact_bytes":
+		return strconv.Itoa(c.EffectiveTaskCompactBytes()), nil
 	case "git.base_branch":
 		return c.Git.BaseBranch, nil
 	case "git.default_branch":
@@ -839,6 +862,15 @@ func (c *Config) SetValue(key, value string) error {
 			return fmt.Errorf("invalid value for cleanup_worktrees: %w", err)
 		}
 		c.CleanupWorktrees = &cleanup
+	case "task_compact_bytes":
+		n, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("invalid value for task_compact_bytes: %w", err)
+		}
+		if err := ValidateTaskCompactBytes(n); err != nil {
+			return err
+		}
+		c.TaskCompactBytes = &n
 	case "git.base_branch":
 		c.Git.BaseBranch = value
 	case "git.default_branch":
@@ -847,6 +879,24 @@ func (c *Config) SetValue(key, value string) error {
 		return fmt.Errorf("unknown config key: %s", key)
 	}
 	return nil
+}
+
+// ValidateTaskCompactBytes accepts 0, which disables Task compaction, or a
+// size of at least MinTaskCompactBytes.
+func ValidateTaskCompactBytes(n int) error {
+	if n != 0 && n < MinTaskCompactBytes {
+		return fmt.Errorf("task_compact_bytes must be 0 or at least %d", MinTaskCompactBytes)
+	}
+	return nil
+}
+
+// EffectiveTaskCompactBytes returns the continuation Task size above which a
+// launch compacts it, or 0 when compaction is disabled.
+func (c *Config) EffectiveTaskCompactBytes() int {
+	if c == nil || c.TaskCompactBytes == nil {
+		return DefaultTaskCompactBytes
+	}
+	return *c.TaskCompactBytes
 }
 
 // EffectiveCleanupWorktrees returns whether successful implementation worktrees

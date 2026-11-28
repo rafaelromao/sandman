@@ -971,3 +971,42 @@ func killCancellationFixture(t *testing.T, marker string) {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
+
+// An abort before the process starts spawns nothing and is reported as such.
+func TestExecWithStart_SpawnsNothingAfterAnAbort(t *testing.T) {
+	repoPath, worktreePath := testContainerSandboxPaths(t)
+	ctr := &fakeContainer{id: "abc123"}
+	container := NewContainerSandbox(&fakeWorktreeForContainer{workDir: worktreePath}, ctr, "docker", repoPath)
+	repo := t.TempDir()
+	initGitRepoWithRemote(t, repo)
+	worktree := NewWorktreeSandbox(repo, filepath.Join(repo, "worktrees"), "abort", "main")
+	if err := worktree.Start(SandboxStart{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, launcher := range map[string]interface {
+		ExecWithStart(context.Context, string, io.Writer, io.Writer, func()) error
+	}{"container": container, "worktree": worktree} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			prev := ExecCommandFn
+			defer func() { ExecCommandFn = prev }()
+			// The abort arrives while the command is being built.
+			ExecCommandFn = func(string, ...string) *exec.Cmd {
+				cancel()
+				return exec.Command("true")
+			}
+			if name == "worktree" {
+				cancel()
+			}
+			started := false
+
+			err := launcher.ExecWithStart(ctx, "true", io.Discard, io.Discard, func() { started = true })
+
+			if !errors.Is(err, ErrExecNotStarted) || !errors.Is(err, context.Canceled) || started {
+				t.Fatalf("err = %v, started = %t", err, started)
+			}
+		})
+	}
+}

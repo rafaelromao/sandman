@@ -104,3 +104,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0063 | Centralize AFK continuity outcomes | accepted |
 | 0064 | Bound runtime CI recovery | accepted |
 | 0065 | Deliver prompts on stdin and bound review relaunch loops | accepted |
+| 0066 | Compact the continuation Task above a size budget | accepted |

@@ -445,8 +445,18 @@ The instruction content passed to an Agent after template rendering. See `Task` 
 _Avoid_: Instructions, query.
 
 **Task**:
-The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. Its plan, checklist, and next action are agent-owned durable progress: runtime-owned re-entry rereads the latest worktree Task, never the batch-start snapshot. Missing or unreadable Tasks fail continuation before launch instead of falling back to stale or default instructions. Continuation refreshes the runtime-owned Review command, selected review mode, and effective timeout in Runtime Context from current settings while preserving the rest of the Task. It replaces `rendered-prompt.md` and subsumes the handoff document's role.
+The generated instruction file (`.sandman/task.md`) passed to an Agent for one AgentRun. Its plan, checklist, and next action are agent-owned durable progress: runtime-owned re-entry rereads the latest worktree Task, never the batch-start snapshot. Missing or unreadable Tasks fail continuation before launch instead of falling back to stale or default instructions. Continuation refreshes the runtime-owned Review command, selected review mode, and effective timeout in Runtime Context from current settings while preserving the rest of the Task, except what Task compaction moves into the Task history archive (ADR-0066). It replaces `rendered-prompt.md` and subsumes the handoff document's role.
 _Avoid_: Prompt file, handoff doc.
+
+**Task compaction**:
+Sandman's lossless shrinking of an oversized continuation Task (ADR-0066). Above `task_compact_bytes` (default 48 KiB), an implementation launch keeps the Task's recorded structure, plans, status lines and Sandman's sections, keeps the first 4 KiB of `## Next Step`, keeps the newest agent-written history that fits three quarters of the threshold, and moves the rest. `sandman run --continue --compact` applies it on request.
+_Avoid_: Summarising the Task, trimming the Task.
+
+**Task history archive**:
+The complete Task as it was before a compaction, written as a new file, never replacing one, to `.sandman/task-history/<RunID>-<UTC timestamp>.md` in the worktree (`-2`, `-3`, ... for later compactions in the same second) before the compacted Task, and named in the Task's `## Sandman Task History` section.
+
+**Task anchors**:
+The comment markers a fresh implementation render writes into its Task, around the template's `## Next Step` and at the end of the template and issue content, carrying a nonce recorded in `.sandman/task-anchors`. Compaction keeps what precedes the end marker, caps only the marked Next Step, and treats what follows as history. A Task without markers is compacted only on request (`--continue --compact`), from the verified built-in layout.
 
 **Default Task Prompt**:
 The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default-task-prompt.md`.

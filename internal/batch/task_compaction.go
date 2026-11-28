@@ -1,0 +1,274 @@
+package batch
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/prompt"
+)
+
+// taskAnchorsFile records the nonce of the structure markers a fresh
+// implementation render wrote into its Task. It lives next to the Task in the
+// worktree.
+const taskAnchorsFile = "task-anchors"
+
+// unmarkedTaskNote says why an automatic compaction skips a Task without
+// structure markers.
+const unmarkedTaskNote = "the Task has no structure markers; `sandman run --continue --compact` can compact it on request"
+
+// maxArchiveNames bounds the names tried for one archive: the timestamp name,
+// then that name with "-2", "-3", ... when an earlier compaction in the same
+// second already holds it.
+const maxArchiveNames = 100
+
+// TaskCompactionRequest describes one compaction of a worktree's Task.
+type TaskCompactionRequest struct {
+	// WorkDir is the worktree root holding .sandman/task.md.
+	WorkDir string
+	// Label prefixes the archive name; normally the RunID.
+	Label string
+	// Threshold is the configured task_compact_bytes; 0 disables automatic
+	// compaction.
+	Threshold int
+	// Force compacts below the threshold, as `--continue --compact` does.
+	Force bool
+	// Template and IssueBody verify the built-in layout of a Task that
+	// carries no markers, which only a forced compaction uses.
+	Template  prompt.RenderConfig
+	IssueBody string
+	Now       time.Time
+	// Write creates the archive atomically inside the worktree and must never
+	// replace an existing file, failing with an error wrapping os.ErrExist
+	// instead; nil means atomicfs.WriteAtomicNew.
+	Write func(worktree *os.Root, name string, data []byte, mode os.FileMode) error
+}
+
+// CompactWorktreeTask compacts a Task that is about to be launched or
+// continued. When content moves, the complete original is archived under the
+// worktree's .sandman/task-history first; an archive failure returns the
+// error and leaves the caller to launch the original. The caller writes the
+// returned content as the Task.
+func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.TaskCompactionResult, error) {
+	threshold := req.Threshold
+	if req.Force && threshold <= 0 {
+		threshold = config.DefaultTaskCompactBytes
+	}
+	write := req.Write
+	if write == nil {
+		write = atomicfs.WriteAtomicNew
+	}
+	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
+	if !req.Force && (threshold <= 0 || len(content) <= threshold) {
+		return unchanged, nil
+	}
+	bounds := taskBounds(req, content)
+	// The archive stays inside the worktree, whatever symlinks it holds.
+	worktree, err := os.OpenRoot(req.WorkDir)
+	if err != nil {
+		return unchanged, fmt.Errorf("archive Task: %w", err)
+	}
+	defer worktree.Close()
+	// Every archive gets its own name, so a second compaction in the same
+	// second never replaces the first one's only copy of what it moved.
+	for n := 1; n <= maxArchiveNames; n++ {
+		archive := filepath.ToSlash(filepath.Join(".sandman", "task-history", taskArchiveName(req.Label, req.Now, n)))
+		name := filepath.FromSlash(archive)
+		if _, err := worktree.Lstat(name); err == nil {
+			continue
+		}
+		result := prompt.CompactTask(content, prompt.TaskCompaction{
+			Threshold:   threshold,
+			Target:      threeQuarters(threshold),
+			Force:       req.Force,
+			ArchivePath: archive,
+			Bounds:      bounds,
+		})
+		if !result.Compacted {
+			if bounds == nil && !req.Force && result.Reason != "" {
+				result.Reason = unmarkedTaskNote
+			}
+			return result, nil
+		}
+		err := write(worktree, name, []byte(content), 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return unchanged, fmt.Errorf("archive Task: %w", err)
+		}
+		return result, nil
+	}
+	return unchanged, fmt.Errorf("archive Task: no free archive name after %d tries", maxArchiveNames)
+}
+
+// TaskCompactionSummary is the one-line account of a compaction for logs.
+func TaskCompactionSummary(result prompt.TaskCompactionResult, err error) string {
+	switch {
+	case err != nil:
+		return fmt.Sprintf("task not compacted: %d bytes; %v", result.Before, err)
+	case result.Compacted:
+		archive := ""
+		if result.ArchivePath != "" {
+			archive = "; full Task archived at " + result.ArchivePath
+		}
+		return fmt.Sprintf("task compacted: %d -> %d bytes%s", result.Before, result.After, archive)
+	case result.Reason != "":
+		return fmt.Sprintf("task not compacted: %d bytes; %s", result.Before, result.Reason)
+	}
+	return ""
+}
+
+func taskArchiveName(label string, now time.Time, n int) string {
+	name := now.UTC().Format("20060102T150405Z")
+	if label = strings.TrimSpace(label); label != "" {
+		name = label + "-" + name
+	}
+	if n > 1 {
+		name += fmt.Sprintf("-%d", n)
+	}
+	return name + ".md"
+}
+
+// taskBounds locates the structure of a worktree's Task from the markers its
+// fresh render recorded. A Task without them, such as one rendered before
+// Sandman marked Tasks, is located from the built-in layout only when the
+// operator asked for the compaction: the layout cannot prove that an older
+// template had no section after it. It returns nil when nothing is located.
+func taskBounds(req TaskCompactionRequest, content string) *prompt.TaskBounds {
+	if nonce, ok := readTaskNonce(req.WorkDir); ok {
+		if bounds, ok := prompt.MarkedTaskBounds(content, nonce); ok {
+			return &bounds
+		}
+	}
+	if !req.Force {
+		return nil
+	}
+	if bounds, ok := prompt.BuiltInTaskBounds(req.Template, content, req.IssueBody); ok {
+		return &bounds
+	}
+	return nil
+}
+
+// readTaskNonce returns the nonce recorded in a worktree. One that cannot be
+// read inside the worktree, such as through a symlink leading out of it, is
+// unavailable, and so is anything at that path other than a small regular
+// file: opening never waits for a writer, as a named pipe's would, and the
+// read is bounded.
+func readTaskNonce(workDir string) (string, bool) {
+	worktree, err := os.OpenRoot(workDir)
+	if err != nil {
+		return "", false
+	}
+	defer worktree.Close()
+	file, err := worktree.OpenFile(taskAnchorsName(), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxTaskNonceBytes+1))
+	if err != nil || len(data) > maxTaskNonceBytes {
+		return "", false
+	}
+	nonce := strings.TrimSpace(string(data))
+	return nonce, nonce != ""
+}
+
+// maxTaskNonceBytes bounds the marker sidecar, many times the size of the
+// nonce a render records.
+const maxTaskNonceBytes = 256
+
+func taskAnchorsName() string {
+	return filepath.Join(".sandman", taskAnchorsFile)
+}
+
+// threeQuarters is the floor of three quarters of n, for any n.
+func threeQuarters(n int) int {
+	return n/4*3 + n%4*3/4
+}
+
+// newTaskNonce returns the nonce a fresh render marks its Task with.
+func newTaskNonce() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate Task marker nonce: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// recordTaskNonce stores the nonce of a fresh Task's markers. A failure is
+// reported and leaves the Task to compaction on request only.
+func (r *AgentRun) recordTaskNonce(nonce string) {
+	if nonce == "" {
+		return
+	}
+	// Not through the Task writer: the nonce is not the Task. Like the
+	// archive, it stays inside the worktree, whatever symlinks it holds.
+	worktree, err := os.OpenRoot(r.sandbox.WorkDir())
+	if err == nil {
+		err = atomicfs.WriteAtomicIn(worktree, taskAnchorsName(), []byte(nonce+"\n"), 0o644)
+		_ = worktree.Close()
+	}
+	if err != nil && r.warningWriter() != nil {
+		fmt.Fprintf(r.warningWriter(), "warning: record Task markers: %v\n", err)
+	}
+}
+
+// compactsTask reports whether this launch's continuation Task is compacted:
+// implementation launches only. Reviews and prompt-only runs such as quota
+// probes and health repairs serve no issue.
+func (r *AgentRun) compactsTask() bool {
+	return r.issue != nil && !r.review && (r.taskCompactBytes > 0 || r.forceTaskCompaction)
+}
+
+// compactTask compacts an implementation launch's composed Task and records
+// the outcome in the run log. Any failure launches the Task unchanged.
+func (r *AgentRun) compactTask(task string, renderCfg prompt.RenderConfig, log io.Writer) (string, string, string) {
+	// The archive has its own writer, which never replaces a file; the Task
+	// writer replaces the Task afterwards.
+	result, err := CompactWorktreeTask(task, TaskCompactionRequest{
+		WorkDir: r.sandbox.WorkDir(), Label: r.runID, Threshold: r.taskCompactBytes,
+		Force: r.forceTaskCompaction, Template: renderCfg, Now: r.runtimeNow(), Write: r.archiveWriter,
+		IssueBody: r.issueData().Body,
+	})
+	summary := TaskCompactionSummary(result, err)
+	if err != nil || !result.Compacted {
+		r.logCompaction(log, summary)
+		return task, "", ""
+	}
+	return result.Content, result.ArchivePath, summary
+}
+
+func (r *AgentRun) logCompaction(log io.Writer, summary string) {
+	if summary != "" {
+		if warnings := r.warningWriter(); warnings != nil {
+			fmt.Fprintln(warnings, summary)
+		}
+		prefixed := NewLinePrefixWriter(r.prefixLabel(), log)
+		fmt.Fprintln(prefixed, summary)
+		_ = prefixed.Flush()
+	}
+}
+
+func (r *AgentRun) removeUnusedTaskArchive(log io.Writer, path string) {
+	worktree, err := os.OpenRoot(r.sandbox.WorkDir())
+	if err == nil {
+		err = worktree.Remove(filepath.FromSlash(path))
+		_ = worktree.Close()
+	}
+	if err != nil {
+		r.logCompaction(log, fmt.Sprintf("remove unused Task archive: %v", err))
+	}
+}

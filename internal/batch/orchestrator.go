@@ -2086,6 +2086,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				PreviousRunBatchIDs: req.PreviousRunBatchIDs,
 				RunID:               runID,
 				ReuseSession:        req.ReuseSession[issueNum],
+				compactTask:         req.CompactTasks[issueNum],
 				BaseBranch:          issueBaseBranch,
 				ExternalBlockers:    req.Blocked[issueNum],
 				RenderCfg:           renderCfg,
@@ -2892,6 +2893,7 @@ type runSession struct {
 	previousRunIDs            map[int]string
 	previousRunBatchIDs       map[int]string
 	reuseSession              bool
+	compactTask               bool // forced Task compaction for the next implementation launch, which consumes it
 	quotaAllowance            usageLimitAllowance
 	outcomeTable              continuityTable
 	identityResolver          *gitIdentityResolver
@@ -3946,6 +3948,8 @@ loop:
 				agentRun.preset = s.agentCfg.Preset
 				agentRun.now = s.runtimeNow
 				agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
+				agentRun.taskCompactBytes = s.cfg.EffectiveTaskCompactBytes()
+				agentRun.forceTaskCompaction = s.compactTask
 				if s.opts.taskWriter != nil {
 					agentRun.taskWriter = s.opts.taskWriter
 				}
@@ -3992,6 +3996,9 @@ loop:
 					return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
 				})
 			})
+			if result.launcherStarted {
+				s.compactTask = false
+			}
 			if result.Issue == nil && s.issueNumber > 0 {
 				result.Issue = issueRef(s.issueNumber)
 			}

@@ -210,6 +210,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
 			reuseSessionFlag, _ := cmd.Flags().GetBool("reuse-session")
+			compactFlag, _ := cmd.Flags().GetBool("compact")
 			runIDFlag := cmd.Flags().Lookup("run-id")
 			runID, _ := cmd.Flags().GetString("run-id")
 			if runIDFlag.Changed {
@@ -222,6 +223,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			if reuseSessionFlag && !continueFlag {
 				return MarkUsage(fmt.Errorf("--reuse-session requires --continue"))
+			}
+			if compactFlag && !continueFlag {
+				return MarkUsage(fmt.Errorf("--compact requires --continue"))
+			}
+			if compactFlag && runIDFlag.Changed {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations (--run-id)"))
 			}
 			var eventLogSnapshot []events.Event
 			var readyContinuations []batch.ReadyContinuation
@@ -282,6 +289,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
 			issueSelectionProvided := len(args) > 0 || label != "" || query != ""
+			if compactFlag && overridePrompt && !issueSelectionProvided && !promptNeedsIssueSelection {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			if overridePrompt && !issueSelectionProvided {
 				readyContinuations = nil
 			}
@@ -414,6 +424,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			// A selection that found nothing still resumes ready continuations;
+			// the final batch is checked once it is resolved.
+			if compactFlag && overridePrompt && len(issues) == 0 && !(runID == "" && issueSelectionProvided && len(readyContinuations) > 0) {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			if len(issues) == 0 && (!overridePrompt || promptNeedsIssueSelection) && !(continueFlag && runID != "") && len(readyContinuations) == 0 {
 				return MarkUsage(fmt.Errorf("no issues selected"))
 			}
@@ -532,6 +547,13 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			baseBranches := make(map[int]string)
 			taskPrompts := make(map[int]string)
 			continueIssues := make([]int, 0, len(resolvedBatch.Issues))
+			continuationTimeout := cfg.EffectiveReviewTimeout()
+			if reviewTimeoutSet {
+				continuationTimeout = reviewTimeout
+			}
+			composeContinuation := func(content string) string {
+				return prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
+			}
 			if continueFlag {
 				modeEvents := []events.Event{}
 				if deps.EventLog != nil {
@@ -592,11 +614,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					previousRunIDs[num] = lastRun.RunID
 					previousRunBatchIDs[num] = previousRunBatchID(lastRun)
 					reuseSessions[num] = reuseSessionFlag
-					continuationTimeout := cfg.EffectiveReviewTimeout()
-					if reviewTimeoutSet {
-						continuationTimeout = reviewTimeout
-					}
-					taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewSettings(content, reviewCommand, true, continuationTimeout)
+					taskPrompts[num] = composeContinuation(content)
 				}
 			}
 			var continuationReq batch.Request
@@ -702,7 +720,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return err
 				}
 			}
-
+			// Specification expansion and closed-issue filtering can leave no
+			// issue, which the batch runner would launch as prompt-only.
+			if compactFlag && len(req.Issues) == 0 &&
+				(req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			req.PhaseWriter = phaseWriter
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -820,6 +843,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			warnOpencodeVersionMismatch(cmd, agentName, sandboxMode, repoRoot, cfg)
 
+			if compactFlag {
+				// The first launch of each row compacts its Task, after the
+				// batch has admitted it, so a refused start changes no Task.
+				// Only continued issues the operator selected; never rows
+				// added as ready continuations or dependencies.
+				req.CompactTasks = requestTaskCompaction(cmd, selectedIssues(continueIssues, issues, resolvedBatch.ParentChildren))
+			}
+
 			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {
 				printSummary(cmd, result)
@@ -867,6 +898,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff; tunables come from current flags/config and the worktree identity is replayed")
 	cmd.Flags().Bool("reuse-session", false, "With --continue, resume each prior agent session when the agent supports it")
+	cmd.Flags().Bool("compact", false, "With --continue, compact each continued issue's Task before it starts, archiving the original under .sandman/task-history")
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd

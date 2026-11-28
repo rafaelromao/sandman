@@ -1,8 +1,10 @@
 package prompt
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -341,11 +343,67 @@ func TaskWithReviewEvidenceAndDirective(content string, evidence map[string]any,
 		fmt.Fprintf(&b, "- %s: %v\n", key, v)
 	}
 	if req, ok := evidence["review_request"].(map[string]any); ok && len(req) > 0 {
-		if enc, err := json.Marshal(req); err == nil {
+		if enc, err := marshalWithoutRepeats(req); err == nil {
 			fmt.Fprintf(&b, "- review_request: %s\n", enc)
 		}
 	}
 	return trimTrailingNewlines(b.String()) + "\n"
+}
+
+// repeatedStringMinimum is the length from which a repeated string in the
+// review evidence is replaced by a reference to its first occurrence.
+const repeatedStringMinimum = 256
+
+// marshalWithoutRepeats encodes value as JSON, replacing every later copy of
+// a long string with "(same as <path>)", where path is the JSON pointer of
+// its first occurrence in encoding order. A review report is otherwise stored
+// once per source that carries it.
+func marshalWithoutRepeats(value any) ([]byte, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var generic any
+	if err := decoder.Decode(&generic); err != nil {
+		return nil, err
+	}
+	return json.Marshal(replaceRepeats(generic, "", map[string]string{}))
+}
+
+func replaceRepeats(value any, path string, seen map[string]string) any {
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			v[key] = replaceRepeats(v[key], path+"/"+jsonPointerToken(key), seen)
+		}
+		return v
+	case []any:
+		for i := range v {
+			v[i] = replaceRepeats(v[i], fmt.Sprintf("%s/%d", path, i), seen)
+		}
+		return v
+	case string:
+		if len(v) < repeatedStringMinimum {
+			return v
+		}
+		if first, ok := seen[v]; ok {
+			return "(same as " + first + ")"
+		}
+		seen[v] = path
+		return v
+	}
+	return value
+}
+
+func jsonPointerToken(key string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
 }
 
 func removeReviewEvidenceSection(content string) string {

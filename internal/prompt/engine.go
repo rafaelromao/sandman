@@ -211,9 +211,23 @@ type Engine struct{}
 // unchanged so the historical "missing substitution keys" contract is
 // preserved.
 func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
+	return e.render(cfg, data, "")
+}
+
+// RenderMarked renders a Task like Render, marking the template's structure
+// with nonce so that compaction can tell it from what the agent adds later.
+func (e *Engine) RenderMarked(cfg RenderConfig, data IssueData, nonce string) (string, error) {
+	return e.render(cfg, data, nonce)
+}
+
+func (e *Engine) render(cfg RenderConfig, data IssueData, nonce string) (string, error) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
 		return "", err
+	}
+
+	if nonce != "" {
+		template = markTemplate(template, nonce)
 	}
 
 	mapping := issueMapping(data)

@@ -63,6 +63,12 @@ Once required verification and your publication or request-delivery work are com
 
 Report truthfully. Keep local verification in progress, external CI or review awaiting observation, and ready for merge apart in every checkpoint and final summary. Never present an earlier "CI is running" or "review is pending" statement as current: re-read the live state and report what you verified, or label it as the last observation with its timestamp. In a managed run the runtime, not your summary, makes the post-attempt decision.
 
+### Keep the Task a checkpoint
+
+Every continuation, retry and resume sends the Task back to the agent as its prompt, so its size is paid on every launch. Keep `.sandman/task.md` a current-state checkpoint: rewrite `## Next Step` in place, replace a superseded checkpoint instead of adding another section, and do not paste logs, command output or review reports into it. Record facts once, where they belong. Leave any `<!-- sandman:... -->` comment lines where they are: they mark which parts of the Task Sandman may compact.
+
+When the Task grows past its size budget, Sandman moves earlier checkpoints to `.sandman/task-history/` and names the file in the Task. That content is history: read it only when a detail you need is missing from the Task and from the live repository, pull request and checks.
+
 ### Failed current-head CI recovery
 
 A failed required check on the current pull-request head remains implementation work, even when another check is pending or a reviewer has approved. Diagnose the actual failure first. Repair and validate deterministic source, test, configuration, or workflow failures; update the coordinated pins for a verified provider deprecation. Do not rerun deterministic failures.

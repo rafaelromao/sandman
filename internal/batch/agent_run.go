@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -18,6 +19,18 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
+
+// launchOutput reports launcher start before forwarding output, even when
+// the subprocess writes before its start callback runs.
+type launchOutput struct {
+	writer  io.Writer
+	started func()
+}
+
+func (w launchOutput) Write(p []byte) (int, error) {
+	w.started()
+	return w.writer.Write(p)
+}
 
 // AgentRun orchestrates the lifecycle of a single agent execution for an issue.
 type AgentRun struct {
@@ -57,13 +70,23 @@ type AgentRun struct {
 	cleanupError            error // distinct cleanup failure from context cancellation
 	operationalError        error
 	contextRolloverLiterals []string
-	env                     map[string]string
-	outputWriter            io.Writer
-	layout                  paths.Layout
-	runFolder               string
-	taskWriter              func(string, []byte, os.FileMode) error
-	sessionWarning          io.Writer
-	now                     func() time.Time
+	// taskCompactBytes is the size above which an implementation launch
+	// compacts its continuation Task; 0 disables compaction.
+	taskCompactBytes int
+	// forceTaskCompaction compacts this launch's Task whatever its size, as
+	// `sandman run --continue --compact` requests for a row's first launch.
+	forceTaskCompaction bool
+	launcherStarted     bool
+	env                 map[string]string
+	outputWriter        io.Writer
+	layout              paths.Layout
+	runFolder           string
+	taskWriter          func(string, []byte, os.FileMode) error
+	// archiveWriter creates Task history archives without replacing any
+	// file; nil means atomicfs.WriteAtomicNew.
+	archiveWriter  func(*os.Root, string, []byte, os.FileMode) error
+	sessionWarning io.Writer
+	now            func() time.Time
 	// credentials reconciles rotating agent credentials between the host and
 	// the batch config snapshot around every launch; nil for none.
 	credentials *credentialSync
@@ -93,13 +116,24 @@ func NewAgentRunWithLayout(issue *github.Issue, branch string, sandbox sandbox.S
 // Prepare renders the prompt for the issue and writes it to the sandbox.
 func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfig) error {
 	issue := r.issueData()
-	rendered, err := renderer.Render(cfg, prompt.IssueData{
+	data := prompt.IssueData{
 		Number:       issue.Number,
 		Title:        issue.Title,
 		Body:         issue.Body,
 		SourceBranch: r.branch,
 		BaseBranch:   r.baseBranch,
-	})
+	}
+	var rendered, nonce string
+	var err error
+	if marker, ok := renderer.(interface {
+		RenderMarked(prompt.RenderConfig, prompt.IssueData, string) (string, error)
+	}); ok && r.issue != nil && !r.review {
+		if nonce, err = newTaskNonce(); err == nil {
+			rendered, err = marker.RenderMarked(cfg, data, nonce)
+		}
+	} else {
+		rendered, err = renderer.Render(cfg, data)
+	}
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
 	}
@@ -111,6 +145,7 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
+	r.recordTaskNonce(nonce)
 	return nil
 }
 
@@ -121,7 +156,12 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 // Execute propagates it through the returned error so Run can record it
 // on the AgentRunResult (issue #2605 acceptance criterion #4).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
-	return r.execute(ctx, command, stdout, stderr, nil, nil)
+	logFile, err := r.openRunLog()
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	return r.execute(ctx, command, stdout, stderr, nil, nil, logFile, nil)
 }
 
 func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
@@ -129,24 +169,26 @@ func (r *AgentRun) setQuotaSignals(modelProgress, usageLimit func()) {
 	r.usageLimit = usageLimit
 }
 
-func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser) error {
+func (r *AgentRun) openRunLog() (*os.File, error) {
 	runFolder := r.runFolder
 	if runFolder == "" {
 		runFolder = r.sandbox.WorkDir()
 	}
 	if runFolder == "" {
-		return fmt.Errorf("runFolder not set")
+		return nil, fmt.Errorf("runFolder not set")
 	}
 	if err := os.MkdirAll(runFolder, 0755); err != nil {
-		return fmt.Errorf("create run folder: %w", err)
+		return nil, fmt.Errorf("create run folder: %w", err)
 	}
 	logPath := filepath.Join(runFolder, "run.log")
 	logFile, err := atomicfs.OpenAppend(logPath, 0644)
 	if err != nil {
-		return fmt.Errorf("create log file: %w", err)
+		return nil, fmt.Errorf("create log file: %w", err)
 	}
-	defer logFile.Close()
+	return logFile, nil
+}
 
+func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr io.Writer, parsedStdout, parsedStderr outputParser, logFile *os.File, started func()) error {
 	if r.outputWriter != nil {
 		stdout = io.MultiWriter(stdout, r.outputWriter)
 		stderr = io.MultiWriter(stderr, r.outputWriter)
@@ -163,7 +205,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	warnings := combinedErr
 	touchLog := func() {
 		now := time.Now()
-		_ = os.Chtimes(logPath, now, now)
+		_ = os.Chtimes(logFile.Name(), now, now)
 	}
 	for _, parser := range []outputParser{parsedStdout, parsedStderr} {
 		if observer, ok := parser.(progressObserver); ok {
@@ -186,7 +228,14 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 	}
 
 	r.reconcileCredentials(warnings)
-	execErr := r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+	var execErr error
+	if launcher, ok := r.sandbox.(interface {
+		ExecWithStart(context.Context, string, io.Writer, io.Writer, func()) error
+	}); ok && started != nil {
+		execErr = launcher.ExecWithStart(ctx, command, launchOutput{combinedOut, started}, launchOutput{combinedErr, started}, started)
+	} else {
+		execErr = r.sandbox.Exec(ctx, command, combinedOut, combinedErr)
+	}
 	flushOutputParsers(parsedStdout, parsedStderr)
 	r.reconcileCredentials(warnings)
 	_ = prefixedOut.Flush()
@@ -207,6 +256,7 @@ func (r *AgentRun) execute(ctx context.Context, command string, stdout, stderr i
 // repo's `.sandman/`. The path is intentionally literal because the
 // worktree has its own `.sandman/` directory that the layout does not own.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	r.launcherStarted = false
 	r.ciRerunAction = nil
 	r.usageLimitResetAt = time.Time{}
 	renderedPromptFile := renderCfg.RenderedPromptFile
@@ -214,27 +264,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		renderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 	}
 
-	if renderCfg.TaskPrompt != "" {
-		if ctx.Err() != nil {
-			r.status = "aborted"
-			return r.Result()
-		}
-		taskPrompt := renderCfg.TaskPrompt
-		if !r.review {
-			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
-			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
-		}
-		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
-			// A clean recovery session must not start without its checkpoint-first
-			// Task, even though atomic replacement preserved the prior Task.
-			// Retain the rollover cause so the ordinary retry boundary retries
-			// against that unchanged Task rather than treating this as a generic
-			// failure and replacing it with a continuation prompt.
-			r.contextExhausted = renderCfg.ContextRecovery
-			r.status = "failure"
-			return r.Result()
-		}
-	} else {
+	if renderCfg.TaskPrompt == "" {
 		if err := r.Prepare(renderer, renderCfg); err != nil {
 			r.status = "failure"
 			return r.Result()
@@ -291,6 +321,53 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 
+	logFile, err := r.openRunLog()
+	if err != nil {
+		r.status = "failure"
+		return r.Result()
+	}
+	defer logFile.Close()
+
+	var archivePath, compactionSummary string
+	var originalTask []byte
+	var originalTaskErr error
+	taskPath := filepath.Join(r.sandbox.WorkDir(), renderedPromptFile)
+	if taskPrompt := renderCfg.TaskPrompt; taskPrompt != "" {
+		if ctx.Err() != nil {
+			r.status = "aborted"
+			return r.Result()
+		}
+		if !r.review {
+			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
+			taskPrompt = prompt.EnsureManagedTaskContext(taskPrompt)
+		}
+		if r.compactsTask() {
+			originalTask, originalTaskErr = os.ReadFile(taskPath)
+			if originalTaskErr == nil || os.IsNotExist(originalTaskErr) {
+				taskPrompt, archivePath, compactionSummary = r.compactTask(taskPrompt, renderCfg, logFile)
+			}
+		}
+		// An abort while compacting commits nothing.
+		if ctx.Err() != nil {
+			if archivePath != "" {
+				r.removeUnusedTaskArchive(logFile, archivePath)
+			}
+			r.status = "aborted"
+			return r.Result()
+		}
+		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
+			if archivePath != "" {
+				r.logCompaction(logFile, fmt.Sprintf("task not compacted: %v", err))
+				r.removeUnusedTaskArchive(logFile, archivePath)
+			}
+			// Preserve the rollover cause so the ordinary retry uses the
+			// unchanged checkpoint rather than a generic continuation prompt.
+			r.contextExhausted = renderCfg.ContextRecovery
+			r.status = "failure"
+			return r.Result()
+		}
+	}
+
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
 	detector := strategy.ContextRolloverDetector(r.contextRolloverLiterals, func() {
@@ -330,7 +407,47 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			})
 		}
 	}
-	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr)
+	var reportCompaction func()
+	if compactionSummary != "" {
+		reportCompaction = sync.OnceFunc(func() { r.logCompaction(logFile, compactionSummary) })
+	}
+	var execErr error
+	if err := ctx.Err(); err != nil {
+		// Nothing is launched after an abort.
+		execErr = fmt.Errorf("%w: %w", sandbox.ErrExecNotStarted, err)
+	} else {
+		execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
+	}
+	r.launcherStarted = !errors.Is(execErr, sandbox.ErrExecNotStarted)
+	// A refused launch that was asked to compact leaves the previous Task,
+	// whether or not anything moved, and so does an abort before the launch
+	// that compacted. Otherwise an automatic compaction stays, like the
+	// composed Task it replaces: the next attempt reads from it what this one
+	// was told.
+	if errors.Is(execErr, sandbox.ErrExecNotStarted) && renderCfg.TaskPrompt != "" && r.compactsTask() &&
+		(r.forceTaskCompaction || archivePath != "" && ctx.Err() != nil) &&
+		(originalTaskErr == nil || os.IsNotExist(originalTaskErr)) {
+		var rollbackErr error
+		if os.IsNotExist(originalTaskErr) {
+			rollbackErr = os.Remove(taskPath)
+		} else {
+			rollbackErr = r.writeTaskPrompt(renderedPromptFile, string(originalTask))
+		}
+		if rollbackErr != nil {
+			fmt.Fprintf(logFile, "restore Task after refused launch: %v\n", rollbackErr)
+		} else {
+			r.logCompaction(logFile, "task not compacted: the launcher did not start; previous Task restored")
+			if archivePath != "" {
+				r.removeUnusedTaskArchive(logFile, archivePath)
+			}
+		}
+	} else if reportCompaction != nil {
+		reportCompaction()
+	}
+	if !r.launcherStarted && ctx.Err() != nil {
+		r.status = "aborted"
+		return r.Result()
+	}
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)
 	if stopped := parsersReadOnlyPermissionMode(parsedStdout, parsedStderr); stopped != nil && ctx.Err() == nil {
@@ -372,7 +489,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				fallbackUsed = true
 				fallbackOut, fallbackErr := strategy.NewOutputParsers(r.warningWriter())
 				persistSessionsAsObserved(strategy, r, fallbackOut, fallbackErr)
-				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr)
+				execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, fallbackOut, fallbackErr, logFile, nil)
 				r.ciRerunAction = strategy.CIRerunAction(fallbackOut, fallbackErr)
 				r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, fallbackOut, fallbackErr)
 				parsedStdout, parsedStderr = fallbackOut, fallbackErr
@@ -394,7 +511,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if r.credentials != nil && attemptCtx.Err() == nil {
 			relaunchOut, relaunchErr := strategy.NewOutputParsers(r.warningWriter())
 			persistSessionsAsObserved(strategy, r, relaunchOut, relaunchErr)
-			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr)
+			execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, relaunchOut, relaunchErr, logFile, nil)
 			r.ciRerunAction = strategy.CIRerunAction(relaunchOut, relaunchErr)
 			r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr, relaunchOut, relaunchErr)
 			parsedStdout, parsedStderr = relaunchOut, relaunchErr
@@ -528,6 +645,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		CleanupError:      r.cleanupError,
 		OperationalError:  r.operationalError,
 		ciRerunAction:     r.ciRerunAction,
+		launcherStarted:   r.launcherStarted,
 	}
 }
 

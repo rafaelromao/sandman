@@ -10,6 +10,9 @@ import (
 	"syscall"
 )
 
+// ErrExecNotStarted identifies a definite refusal before the local launcher spawned.
+var ErrExecNotStarted = errors.New("sandbox execution did not start")
+
 // CleanupError wraps a context cancellation error together with a distinct
 // cleanup failure. Callers can use errors.As to extract the underlying
 // cleanup error and record it separately, satisfying acceptance criterion #4

@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Continuation Tasks are compacted once they grow past `task_compact_bytes` (default 48 KiB, suited to agents with a context window of about 250k tokens). Sandman archives the complete Task under the worktree's `.sandman/task-history/`, then moves the oldest agent-written checkpoints and trims `## Next Step` to its first 4 KiB, keeping the template, issue, plan and its own sections, which fresh runs mark with comment lines in the Task. `sandman run --continue --compact` compacts on request, and is the only way Tasks created before this version are compacted.
 - `sandman init --base-branch <branch>` records the repository's base branch. Without it, new projects record the repository's default branch (`origin/HEAD`), else `main`, so later Runs need no `--base-branch`.
 - Sandman's skills install without the Go CLI through Vercel's skills CLI: `npx skills add rafaelromao/sandman --skill '*'` installs the whole catalog for the supported coding agents. See `docs/usage/skills.md`.
 
 ### Fixed
 
+- A review report repeated in a resumed Task's review evidence is now stored once, with later copies referring to the first.
 - Built-in agent commands now read the prompt on stdin instead of passing it as one argument, so a prompt over Linux's 128 KiB argument limit (a pull request with a long review history) no longer fails every launch with `Argument list too long`. A configured command that spells out the earlier built-in one still means built-in.
 - Reviews and quota probes run by a custom OpenCode command now recognise the raw usage-limit record, even when the command exits zero, so the review daemon pauses instead of relaunching on every poll.
 - Failed review launches now back off across runs and daemon restarts, doubling from 10 seconds to 10 minutes, instead of retrying about every 30 seconds. There is still no attempt limit.

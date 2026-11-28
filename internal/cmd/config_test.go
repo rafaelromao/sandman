@@ -273,6 +273,7 @@ git:
 		"worktree_dir: /tmp/wt",
 		"sandbox: worktree",
 		"cleanup_worktrees: true",
+		"task_compact_bytes: 49152",
 		"git.base_branch: trunk",
 	}
 
