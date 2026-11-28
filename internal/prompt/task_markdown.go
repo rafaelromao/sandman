@@ -482,9 +482,14 @@ func (d taskDocument) splitsBlock(offset int) bool {
 	return i < len(d.blocks) && d.blocks[i].start < offset
 }
 
-// boundaries returns the headings that start sections: every H2 an ATX line
-// writes, inside a list too, and every underlined one outside lists and block
-// quotes.
+// startsSection reports whether a heading starts a section: every H2 an ATX
+// line writes, inside a list too, and every underlined one outside lists and
+// block quotes.
+func (h markdownHeading) startsSection() bool {
+	return h.level == 2 && (!h.underlined || h.topLevel)
+}
+
+// boundaries returns the headings that start sections.
 func (d taskDocument) boundaries(from, to int) []markdownHeading {
 	var out []markdownHeading
 	i := sort.Search(len(d.headings), func(n int) bool { return d.headings[n].start >= from })
@@ -492,7 +497,7 @@ func (d taskDocument) boundaries(from, to int) []markdownHeading {
 		if h.start >= to {
 			break
 		}
-		if h.level == 2 && (!h.underlined || h.topLevel) {
+		if h.startsSection() {
 			out = append(out, h)
 		}
 	}

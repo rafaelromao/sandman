@@ -129,10 +129,11 @@ updates it.
 - **Joining what is left.** A blank line is added before a kept underlined
   title, or note left after an earlier pointer, whose predecessor moved, so it
   cannot continue the paragraph, list or quote now above it. A compaction is
-  not applied if its result would not be read as exactly the sections written
-  into it. Titles the pointer lists are written so that they
-  cannot end an HTML block left open above it. A parser failure leaves the
-  Task unchanged.
+  not applied unless its result reads as it was put together: sections and
+  code and HTML blocks starting exactly where they were written, and no block
+  left open that was not. Titles the pointer lists are escaped, so they can
+  neither open a block there nor end one left open above it. A parser failure
+  leaves the Task unchanged.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches

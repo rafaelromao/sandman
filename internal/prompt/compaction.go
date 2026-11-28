@@ -88,9 +88,9 @@ type taskSection struct {
 // whose title can be a whole paragraph.
 const maxLabel = 120
 
-// pointerSafe keeps a title the history pointer lists from ending an HTML block
-// left open above it.
-var pointerSafe = strings.NewReplacer("-->", "->", "?>", "? >", "]]>", "]] >", "</", "< /")
+// pointerSafe keeps a title the history pointer lists from being read as
+// markup: it can neither open a block there nor end one left open above.
+var pointerSafe = strings.NewReplacer("<", "&lt;", ">", "&gt;", "```", "\\`\\`\\`", "~~~", "\\~\\~\\~")
 
 // mayJoin reports whether the section would continue whatever paragraph, list
 // or quote precedes it without a blank line, as an underlined title or text
@@ -290,7 +290,9 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	if doc.splitsBlock(from) || doc.splitsBlock(to) {
 		from, to = 0, 0
 	}
-	head, headings, moved, changed := capNextStep(doc, bounds.StructureEnd, from, to, keeps)
+	// want follows how the result must read, as it is put together.
+	var want outline
+	head, moved, changed := capNextStep(doc, &want, bounds.StructureEnd, from, to, keeps)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
@@ -307,9 +309,6 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	}
 	// Nor does the pointer go inside the settings span.
 	for rest < len(tail) && settingsFrom < offsets[rest] && offsets[rest] < settingsTo {
-		if tail[rest].heading != "" {
-			headings = append(headings, len(head)+offsets[rest]-bounds.StructureEnd)
-		}
 		rest++
 	}
 	// What precedes the pointer is one piece of the Task.
@@ -318,6 +317,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		prefixEnd = offsets[rest]
 	}
 	prefix := head + content[bounds.StructureEnd:prefixEnd]
+	want.copied(doc, bounds.StructureEnd, prefixEnd, len(head))
 	separator := blankLineAfter(prefix)
 	// kept holds what is written of each section: everything but old pointers,
 	// until history moves.
@@ -385,22 +385,21 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 
 	var b strings.Builder
 	b.WriteString(prefix + separator)
-	// headings holds where each section with a heading starts, the pointer
-	// among them: the result must be read as exactly those sections.
-	headings = append(headings, b.Len())
-	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, moved))
+	pointer := renderHistoryPointer(opts, len(content)-keptSize, moved)
+	// The pointer is a section, and the comment ending it a block.
+	want.sections = append(want.sections, b.Len())
+	want.blocks = append(want.blocks, blockStart{b.Len() + strings.LastIndex(pointer, taskHistoryEnd), true})
+	b.WriteString(pointer)
 	for i := rest; i < len(tail); i++ {
 		if kept[i] == "" {
 			continue
 		}
 		b.WriteString(gapBefore(b.String(), tail, kept, i))
-		if tail[i].heading != "" {
-			headings = append(headings, b.Len())
-		}
+		want.copied(doc, offsets[i], offsets[i]+len(kept[i]), b.Len())
 		b.WriteString(kept[i])
 	}
 	compacted := b.String()
-	if !startsSections(compacted, headings) {
+	if !readsAs(compacted, want) {
 		result.Reason = "compacting would change how the Task reads"
 		return result
 	}
@@ -480,11 +479,42 @@ func (g *gapCount) drop(i int) {
 	}
 }
 
-// startsSections reports whether content's sections start exactly at offsets:
-// none lost, and none made out of what was text.
-func startsSections(content string, offsets []int) bool {
-	headings := readTask(content).boundaries(0, len(content))
-	return slices.EqualFunc(headings, offsets, func(h markdownHeading, offset int) bool { return h.start == offset })
+// outline is how a Task reads where compaction cares: where its sections
+// start, and where its code and HTML blocks do and whether each is closed.
+type outline struct {
+	sections []int
+	blocks   []blockStart
+	// What is copied is written in the order it is read, so each of these
+	// moves forward through the headings and blocks once.
+	heading, block int
+}
+
+type blockStart struct {
+	offset int
+	closed bool
+}
+
+// copied adds how d's bytes from from to to read once written at offset at. A
+// block that runs past to is cut there, and has to be closed.
+func (o *outline) copied(d taskDocument, from, to, at int) {
+	for ; o.heading < len(d.headings) && d.headings[o.heading].start < to; o.heading++ {
+		if h := d.headings[o.heading]; h.start >= from && h.startsSection() {
+			o.sections = append(o.sections, at+h.start-from)
+		}
+	}
+	for ; o.block < len(d.blocks) && d.blocks[o.block].start < to; o.block++ {
+		if b := d.blocks[o.block]; b.start >= from {
+			o.blocks = append(o.blocks, blockStart{at + b.start - from, b.closed || b.end > to})
+		}
+	}
+}
+
+// readsAs reports whether content reads as want says: no section or block lost,
+// none made out of what was text, and no block left open that was not.
+func readsAs(content string, want outline) bool {
+	var got outline
+	got.copied(readTask(content), 0, len(content), 0)
+	return slices.Equal(got.sections, want.sections) && slices.Equal(got.blocks, want.blocks)
 }
 
 // settingsSpan returns the byte range of the section a continuation writes the
@@ -532,79 +562,76 @@ func blankLineAfter(text string) string {
 // structure, which ends at end: the bytes from from to to. Once cut, what
 // follows in the group moves too: the group keeps a prefix, never fragments
 // from beyond the limit. Sections keeps reports, given their offset, stay and
-// do not count. It returns the structure, where its headings start, what moved
-// and whether anything did.
-func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSection) bool) (string, []int, []string, bool) {
+// do not count. It returns the structure, adding how it must read to want,
+// what moved and whether anything did.
+func capNextStep(doc taskDocument, want *outline, end, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
 	structure := doc.content[:end]
-	var headings []int
-	// starts records the headings of what is copied from offset at on, which
-	// moves by shift.
-	starts := func(at, to, shift int) {
-		for _, h := range doc.boundaries(at, to) {
-			headings = append(headings, h.start+shift)
-		}
-	}
-	unchanged := func() (string, []int, []string, bool) {
-		headings = nil
-		starts(0, end, 0)
-		return structure, headings, nil, false
-	}
-	if from >= to {
-		return unchanged()
-	}
-	sections := doc.sections(from, to)
-	kept := make([]bool, len(sections))
+	var sections []taskSection
+	var kept []bool
 	size := 0
-	for i, offset := 0, from; i < len(sections); i++ {
-		if kept[i] = keeps(offset, sections[i]); !kept[i] {
-			size += len(sections[i].text)
+	if from < to {
+		sections = doc.sections(from, to)
+		kept = make([]bool, len(sections))
+		for i, offset := 0, from; i < len(sections); i++ {
+			if kept[i] = keeps(offset, sections[i]); !kept[i] {
+				size += len(sections[i].text)
+			}
+			offset += len(sections[i].text)
 		}
-		offset += len(sections[i].text)
 	}
 	if size <= nextStepLimit {
-		return unchanged()
+		want.copied(doc, 0, end, 0)
+		return structure, nil, false
 	}
-	starts(0, from, 0)
+	want.copied(doc, 0, from, 0)
 	var b strings.Builder
 	var moved []string
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
 	cut, dropped := false, false
-	write := func(section taskSection, text string) {
+	// write adds text, which holds the first keep bytes of the section at
+	// offset, and returns where it lands.
+	write := func(section taskSection, offset, keep int, text string) int {
 		if section.underlined && dropped {
 			b.WriteString(blankLineAfter(b.String()))
 		}
-		if section.heading != "" {
-			headings = append(headings, from+b.Len())
-		}
+		at := from + b.Len()
+		want.copied(doc, offset, offset+keep, at)
 		b.WriteString(text)
 		dropped = false
+		return at
 	}
-	for i, section := range sections {
+	for i, offset := 0, from; i < len(sections); i++ {
+		section, start := sections[i], offset
+		offset += len(section.text)
 		switch {
 		case section.text == "":
 		case kept[i]:
-			write(section, section.text)
+			write(section, start, len(section.text), section.text)
 		case !cut && len(section.text) <= room:
-			write(section, section.text)
+			write(section, start, len(section.text), section.text)
 			room -= len(section.text)
 		// A section is only cut after all of its heading's lines.
 		case !cut && room >= section.headingLength:
-			prefix := cutOutsideBlocks(section, room)
-			if nextStepLimit-room+len(prefix) < nextStepLimit/2 {
+			keep, closer, opened := len(cutOutsideBlocks(section, room)), "", -1
+			if nextStepLimit-room+keep < nextStepLimit/2 {
 				// A long line or code block would waste most of the limit.
-				prefix = cutInside(section, room)
+				keep, closer, opened = cutInside(section, room)
 			}
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
-			write(section, trimTrailingNewlines(prefix)+"\n\n")
+			at := write(section, start, keep, trimTrailingNewlines(section.text[:keep]+closer)+"\n\n")
+			if opened >= 0 {
+				// The line cut short is now a block of its own.
+				want.blocks = append(want.blocks, blockStart{at + opened, true})
+			}
 			cut = true
 		default:
 			cut, dropped = true, true
 			moved = append(moved, section.label())
 		}
 	}
-	starts(to, end, from+b.Len()-to)
-	return structure[:from] + b.String() + structure[to:], headings, moved, true
+	want.copied(doc, to, end, from+b.Len())
+	return structure[:from] + b.String() + structure[to:], moved, true
 }
 
 func historyBytes(sections []taskSection, indexes []int) int {
@@ -686,23 +713,31 @@ func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
 	return example
 }
 
-// cutInside returns at most limit bytes of the section, ending between
-// characters and closing a code or HTML block the cut leaves open.
-func cutInside(section taskSection, limit int) string {
+// cutInside returns how many bytes of the section to keep, at most limit with
+// what closes the block the cut leaves open, ending between characters. It
+// returns that closing text too, and where a line cut short became a fence of
+// its own, or -1.
+func cutInside(section taskSection, limit int) (int, string, int) {
 	prefix := section.cutLine(limit)
-	closer, delimited := section.closerAfter(prefix)
+	closer, delimited, _ := section.closerAfter(prefix)
 	if closer == "" {
-		return prefix
+		return len(prefix), "", -1
 	}
-	short := section.cutLine(limit - len(closer))
+	short := section.cutLine(limit - len("\n"+closer))
 	if len(short) < delimited {
 		// The block's delimiter and its closer do not both fit.
-		return cutOutsideBlocks(section, limit)
+		return len(cutOutsideBlocks(section, limit)), "", -1
 	}
-	if again, _ := section.closerAfter(short); again == "" {
-		return short
+	again, _, opened := section.closerAfter(short)
+	if again == "" {
+		return len(short), "", -1
 	}
-	return short + closer
+	// The closer is the very next line: a blank one would end a quote holding
+	// the block, and the closer would open another.
+	if !strings.HasSuffix(short, "\n") {
+		again = "\n" + again
+	}
+	return len(short), again, opened
 }
 
 // cutLine returns at most limit bytes of the section, without a last line that
@@ -718,23 +753,24 @@ func (s taskSection) cutLine(limit int) string {
 	return prefix
 }
 
-// closerAfter returns what a prefix of the section needs after it to leave no
-// block open, and how long a prefix must be to hold the delimiter it closes.
-func (s taskSection) closerAfter(prefix string) (string, int) {
+// closerAfter returns the line a prefix of the section needs after it to leave
+// no block open, how long a prefix must be to hold the delimiter it closes,
+// and where a line cut short opened that block, or -1.
+func (s taskSection) closerAfter(prefix string) (closer string, delimited, opened int) {
 	if block, open := s.leftOpen(len(prefix)); open {
-		return "\n" + block.closer, block.start + block.opening
+		return block.closer, block.start + block.opening, -1
 	}
 	// A line cut short can open a fence the whole line, with a backtick after
 	// its delimiter, does not.
 	start := lineStart(prefix, len(prefix))
 	line := prefix[start:]
 	if !isFenceLine(line) || isFenceLine(s.text[start:lineEnd(s.text, start)]) {
-		return "", 0
+		return "", 0, -1
 	}
 	trimmed := strings.TrimLeft(line, " ")
 	indent := len(line) - len(trimmed)
 	delimiter := trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, trimmed[:1]))]
-	return "\n" + line[:indent] + delimiter, start + indent + len(delimiter)
+	return line[:indent] + delimiter, start + indent + len(delimiter), start
 }
 
 // leftOpen returns the block a cut at offset at leaves needing a closing line.

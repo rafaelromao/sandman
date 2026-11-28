@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -677,5 +678,83 @@ func TestCompactTask_NeverLeavesABlockOpenAtTheLimit(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// requireClosedBlocks checks that content, read as CommonMark does, leaves no
+// code or HTML block unclosed and holds want of them.
+func requireClosedBlocks(t *testing.T, content string, want int, at string) {
+	t.Helper()
+	blocks := readMarkdown(content, parser.NewContext()).blocks
+	open := 0
+	for _, block := range blocks {
+		if !block.closed {
+			open++
+		}
+	}
+	if open != 0 || len(blocks) != want {
+		t.Fatalf("%s: %d blocks, %d unclosed, want %d closed:\n%s", at, len(blocks), open, want, content[max(len(content)-200, 0):])
+	}
+}
+
+// A quoted fence cut short is closed inside its quote, wherever the limit
+// falls around a line break.
+func TestCompactTask_ClosesAQuotedFenceInItsQuote(t *testing.T) {
+	for name, quote := range map[string]struct{ open, next string }{
+		"quote":       {"> ```\n> ", "> "},
+		"quoted list": {"> - ```\n>   ", ">   "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for padding := 3900; padding < 4060; padding++ {
+				step := quote.open + strings.Repeat("x", padding) + "\n" + strings.Repeat(quote.next+"short output line\n", 240) + quote.next + "```\n"
+				task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+				got := compact(task, true)
+
+				from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "## Required Order")
+				if !got.Compacted || from < 0 || to < from {
+					t.Fatalf("padding %d: compacted = %t (%s)", padding, got.Compacted, got.Reason)
+				}
+				// The body marker is a comment; the other block is the fence.
+				requireClosedBlocks(t, got.Content[from:to], 2, fmt.Sprint("padding ", padding))
+			}
+		})
+	}
+}
+
+// A moved title is listed as text: it neither ends a block left open above the
+// pointer nor opens one inside it.
+func TestCompactTask_ListsTitlesAsText(t *testing.T) {
+	for name, tc := range map[string]struct{ above, title string }{
+		"an arrow below a declaration": {"\n<!DOCTYPE\n", "## Option A > Option B"},
+		"an arrow below a comment":     {"\n<!-- unfinished\n", "## Retry A --> B"},
+		"a fence":                      {"", "## ```"},
+		"a tag":                        {"", "## <pre> output"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := structuredTask(tc.above) + strings.Join(checkpoints(10, 1000), "")
+			task = strings.Replace(task, "Implement the first slice.\n",
+				"Implement the first slice.\n"+paragraph("now", 5000)+"\n"+tc.title+"\n\nnotes\n", 1)
+
+			got := compact(task, true)
+
+			if !got.Compacted {
+				t.Fatalf("not compacted: %s", got.Reason)
+			}
+			if again := compact(got.Content, true); again.Compacted {
+				t.Fatal("a second compaction changed the Task")
+			}
+		})
+	}
+}
+
+// A result whose blocks are not the ones written into it is not applied.
+func TestReadsAs_ComparesBlocksAsWellAsSections(t *testing.T) {
+	content := "## A\n\n```\ncode\n```\n"
+	var want outline
+	want.copied(readTask(content), 0, len(content), 0)
+
+	if !readsAs(content, want) || readsAs("## A\n\n```\ncode\n~~~\n", want) || readsAs("## A\n\n> ```\n\n> ```\n", want) {
+		t.Fatalf("outline = %+v", want)
 	}
 }
