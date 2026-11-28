@@ -851,3 +851,20 @@ func TestCompactTask_NamesEveryMovedSection(t *testing.T) {
 		t.Fatalf("%d bytes, over the target", len(got.Content))
 	}
 }
+
+// An editor that rewrites the Task with CRLF endings does not make history
+// pointers or blank lines pile up.
+func TestCompactTask_ReplacesAPointerSavedWithCRLF(t *testing.T) {
+	crlf := func(text string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
+	}
+	task := crlf(structuredTask(checkpoints(12, 1000)...))
+	for launch := 1; launch <= 3; launch++ {
+		got := compact(task, true)
+
+		if !got.Compacted || strings.Count(got.Content, TaskHistoryHeading) != 1 || strings.Contains(crlf(got.Content), "\r\n\r\n\r\n"+TaskHistoryHeading) {
+			t.Fatalf("launch %d: compacted = %t, %d pointers:\n%q", launch, got.Compacted, strings.Count(got.Content, TaskHistoryHeading), got.Content)
+		}
+		task = crlf(got.Content + strings.Join(checkpoints(12, 1000), ""))
+	}
+}

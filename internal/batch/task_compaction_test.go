@@ -839,6 +839,36 @@ func TestImplementationLaunch_CapsNextStepWhateverIsComposedAboveIt(t *testing.T
 	}
 }
 
+// A Runtime Context right after Next Step is refreshed below the marker that
+// follows its heading, so the step keeps its bounds.
+func TestImplementationLaunch_RefreshesARuntimeContextRightAfterNextStep(t *testing.T) {
+	for name, settings := range map[string]string{
+		"settings missing": "- Current branch: `b`",
+		"settings present": "- Review command: `/old`\n- Delegated review response timeout: `600` seconds",
+		"empty section":    "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n\n## Runtime Context\n\n" + settings + "\n\n## Footer\n\nF.\n"
+			fresh := launchInWorktree(t, root, prompt.RenderConfig{PromptFlag: template}, testTaskCompactBytes, &prompt.Engine{})
+			task := withCheckpoints(strings.Replace(fresh.stdin, "Start.\n", "Start.\n"+strings.Repeat("Obsolete step.\n", 1000), 1), 30)
+			task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+
+			launch := launchInWorktree(t, root, prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil)
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n\nStart.\n", "- Review command: `/current-review-command`\n")
+			if n := strings.Count(launch.stdin, "Obsolete step."); n >= 300 {
+				t.Errorf("Next Step was not capped: %d lines remain", n)
+			}
+			for _, field := range []string{"- Review command:", "- Review mode:", "- Delegated review response timeout:"} {
+				if n := strings.Count(launch.stdin, field); n != 1 {
+					t.Errorf("%d %q lines, want 1", n, field)
+				}
+			}
+		})
+	}
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

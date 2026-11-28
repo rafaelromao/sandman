@@ -86,9 +86,9 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 	var out []taskSection
 	for _, section := range sections {
 		if section.heading == TaskHistoryHeading {
-			if at := strings.Index(section.text, "\n"+taskHistoryEnd+"\n"); at >= 0 &&
-				strings.HasPrefix(section.text, TaskHistoryHeading+"\n\nSandman moved ") {
-				end := at + len(taskHistoryEnd) + 2
+			// An agent's editor may have rewritten the line endings.
+			if _, end := findLine(section.text, taskHistoryEnd); end >= 0 &&
+				strings.HasPrefix(strings.ReplaceAll(section.text, "\r\n", "\n"), TaskHistoryHeading+"\n\nSandman moved ") {
 				section.generatedPointer = true
 				if tail := section.text[end:]; strings.TrimSpace(tail) != "" {
 					section.text = section.text[:end]
@@ -373,7 +373,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 // only adds: no byte of what precedes the pointer is ever removed.
 func blankLineAfter(text string) string {
 	switch {
-	case strings.HasSuffix(text, "\n\n"):
+	case strings.HasSuffix(text, "\n\n"), strings.HasSuffix(text, "\n\r\n"):
 		return ""
 	case strings.HasSuffix(text, "\n"):
 		return "\n"

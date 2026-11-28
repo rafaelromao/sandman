@@ -481,7 +481,7 @@ func runtimeContextSection(lines []string) (start, end int) {
 	end = len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "## ") || isStructureMarker(trimmed) || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+		if strings.HasPrefix(trimmed, "## ") || endsSection(trimmed) || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
 			end = i
 			break
 		}
@@ -540,7 +540,7 @@ func guardSectionEnd(content string, headingIdx int) int {
 		line := content[scan:end]
 		trimmed := strings.TrimSpace(line)
 		if scan != lineStart {
-			if strings.HasPrefix(trimmed, "## ") || isStructureMarker(trimmed) || (scan+1 < len(content) && strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+			if strings.HasPrefix(trimmed, "## ") || endsSection(trimmed) || (scan+1 < len(content) && strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
 				return scan
 			}
 		}

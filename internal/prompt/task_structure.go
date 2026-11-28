@@ -41,12 +41,12 @@ func structureMarker(name, nonce string) string {
 	return "<!-- " + name + " " + nonce + " -->"
 }
 
-// isStructureMarker reports whether a trimmed line is one of the markers a
-// fresh render writes. Composition ends the section it rewrites there, so it
-// neither removes a marker with the section above it nor inserts lines below
-// it.
-func isStructureMarker(line string) bool {
-	for _, name := range []string{nextStepStartMarker, nextStepEndMarker, nextStepLastMarker, taskEndMarker} {
+// endsSection reports whether a trimmed line is a marker that closes what is
+// above it. Composition ends the section it rewrites there, so it neither
+// removes the marker with that section nor inserts lines below it. The marker
+// that follows the heading after Next Step belongs to that section instead.
+func endsSection(line string) bool {
+	for _, name := range []string{nextStepStartMarker, nextStepLastMarker, taskEndMarker} {
 		if strings.HasPrefix(line, "<!-- "+name+" ") && strings.HasSuffix(line, " -->") {
 			return true
 		}
