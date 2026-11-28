@@ -52,8 +52,15 @@ func structureMarker(name, nonce string) string {
 // heading line the end marker follows so that rewriting Next Step keeps it. It
 // is left unmarked if anything from the one to the other is a placeholder:
 // what it expands to is unknown here.
-func markTemplate(template, nonce string) string {
-	sections := splitTaskSections(template)
+func markTemplate(template, nonce string) (marked string) {
+	// A template the parser fails on is left unmarked.
+	defer func() {
+		if recover() != nil {
+			marked = template
+		}
+	}()
+	doc := readTask(template)
+	sections := doc.sections(0, len(template))
 	offsets := make([]int, len(sections)+1)
 	for i, section := range sections {
 		offsets[i+1] = offsets[i] + len(section.text)
@@ -67,7 +74,8 @@ func markTemplate(template, nonce string) string {
 	end := offsets[last+1]
 	step, next := -1, -1
 	for i := 1; i <= last && step < 0; i++ {
-		if sections[i].heading == nextStepHeading {
+		// Markers would break an underlined heading apart.
+		if sections[i].heading == nextStepHeading && !sections[i].underlined {
 			step = i
 		}
 	}
@@ -82,7 +90,7 @@ func markTemplate(template, nonce string) string {
 			heading, _, _ := strings.Cut(sections[next].text, "\n")
 			groupEnd += len(heading)
 		}
-		if span := template[offsets[step]:groupEnd]; keyPattern.MatchString(span) || holdsOtherHeading(span) {
+		if keyPattern.MatchString(template[offsets[step]:groupEnd]) || doc.holdsOtherHeading(offsets[step], groupEnd) {
 			step, next = -1, -1
 		}
 	}
@@ -140,14 +148,15 @@ func findLine(content, line string) (int, int) {
 	return -1, -1
 }
 
-// nextStepStart returns the offset of the marked Next Step heading, or -1. The
-// marker below the heading names the one right above it; the marker above
-// names the first one after it. Neither ever reaches back into earlier text.
-func nextStepStart(content, nonce string) int {
+// nextStepStart returns the offset of the marked Next Step heading before to,
+// or -1. The marker below the heading names the one right above it; the marker
+// above names the first one after it. Neither ever reaches back into earlier
+// text.
+func nextStepStart(doc taskDocument, to int, nonce string) int {
+	content := doc.content[:to]
 	if below, _ := findLine(content, structureMarker(nextStepBodyMarker, nonce)); below >= 0 {
 		at := strings.LastIndex(strings.TrimRight(content[:below], "\r\n"), "\n") + 1
-		line, _, _ := strings.Cut(content[at:below], "\n")
-		if heading, ok := h2Heading(line); ok && heading == nextStepHeading {
+		if doc.atxSectionAt(at, nextStepHeading) {
 			return at
 		}
 	}
@@ -155,8 +164,8 @@ func nextStepStart(content, nonce string) int {
 	if offset < 0 {
 		return -1
 	}
-	for _, section := range splitTaskSectionsFrom(content, offset) {
-		if section.heading == nextStepHeading {
+	for _, section := range doc.sections(offset, to) {
+		if section.heading == nextStepHeading && !section.underlined {
 			return offset
 		}
 		offset += len(section.text)
@@ -164,35 +173,16 @@ func nextStepStart(content, nonce string) int {
 	return -1
 }
 
-// holdsOtherHeading reports whether text has, outside code blocks, a heading
-// that ends a section but that sections are not split at: an H1, or a line
-// underlined as a heading.
-func holdsOtherHeading(text string) bool {
-	lines := strings.SplitAfter(text, "\n")
-	fenced := fencedLines(lines)
-	for i, line := range lines {
-		line = strings.TrimRight(line, "\r\n")
-		body := strings.TrimLeft(line, " ")
-		if fenced[i] || len(line)-len(body) > 3 {
-			continue
-		}
-		if body == "#" || strings.HasPrefix(body, "# ") || strings.HasPrefix(body, "#\t") {
-			return true
-		}
-		underline := strings.TrimRight(body, " \t")
-		if underline != "" && (strings.Trim(underline, "=") == "" || strings.Trim(underline, "-") == "") &&
-			i > 0 && strings.TrimSpace(lines[i-1]) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // MarkedTaskBounds locates the structure a fresh render marked with nonce. It
 // reports false when the end marker is gone. When both copies of the Next Step
 // marker or the end of the group are gone, or the heading is renamed, the group
 // is left unlocated. Markers with another nonce are text.
-func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
+func MarkedTaskBounds(content, nonce string) (bounds TaskBounds, located bool) {
+	defer func() {
+		if recover() != nil {
+			bounds, located = TaskBounds{}, false
+		}
+	}()
 	if nonce == "" {
 		return TaskBounds{}, false
 	}
@@ -200,19 +190,20 @@ func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 	if closing < 0 {
 		return TaskBounds{}, false
 	}
-	bounds := TaskBounds{StructureEnd: structureEnd}
+	bounds = TaskBounds{StructureEnd: structureEnd}
+	doc := readTask(content)
 	to, _ := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
 	if to >= 0 {
 		// The group ends at the heading the marker follows.
 		heading := strings.LastIndex(strings.TrimRight(content[:to], "\r\n"), "\n") + 1
-		if _, ok := h2Heading(content[heading:to]); !ok {
+		if !doc.atxSectionAt(heading, "") {
 			return bounds, true
 		}
 		to = heading
 	} else if to, _ = findLine(content[:closing], structureMarker(nextStepLastMarker, nonce)); to < 0 {
 		return bounds, true
 	}
-	if from := nextStepStart(content[:to], nonce); from >= 0 {
+	if from := nextStepStart(doc, to, nonce); from >= 0 {
 		bounds.NextStepStart, bounds.NextStepEnd = from, to
 	}
 	return bounds, true
@@ -249,7 +240,12 @@ func lastTemplateSection(template string) string {
 // editable only if the Task holds exactly one before the requirements, and
 // neither it nor the template's holds a heading sections are not split at, nor
 // the template's a placeholder.
-func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds, bool) {
+func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (bounds TaskBounds, located bool) {
+	defer func() {
+		if recover() != nil {
+			bounds, located = TaskBounds{}, false
+		}
+	}()
 	template, err := loadTemplate(cfg)
 	if err != nil {
 		return TaskBounds{}, false
@@ -273,16 +269,17 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 		return TaskBounds{}, false
 	}
 
-	var bounds TaskBounds
+	doc := readTask(content)
 	offset, steps := start, 0
-	for _, section := range splitTaskSectionsFrom(content, start) {
+	for _, section := range doc.sections(start, len(content)) {
 		switch {
-		case section.heading == nextStepHeading:
+		case section.heading == nextStepHeading && !section.underlined:
 			steps++
 			bounds.NextStepStart, bounds.NextStepEnd = offset, offset+len(section.text)
 		case section.heading == completionHeading && strings.HasPrefix(section.text+"\n", requirements+"\n"):
 			bounds.StructureEnd = offset + min(len(requirements)+1, len(section.text))
-			if steps != 1 || unverifiableNextStep(template) || holdsOtherHeading(content[bounds.NextStepStart:bounds.NextStepEnd]) {
+			if steps != 1 || unverifiableNextStep(template) ||
+				doc.holdsOtherHeading(bounds.NextStepStart, doc.nextATXSection(bounds.NextStepStart)) {
 				bounds.NextStepStart, bounds.NextStepEnd = 0, 0
 			}
 			return bounds, true
@@ -293,12 +290,18 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 }
 
 // unverifiableNextStep reports whether a template's Next Step section holds a
-// placeholder or a heading it is not split at.
+// placeholder or a heading it is not split at, or ends at one.
 func unverifiableNextStep(template string) bool {
-	for _, section := range splitTaskSections(template) {
-		if section.heading == nextStepHeading && (keyPattern.MatchString(section.text) || holdsOtherHeading(section.text)) {
-			return true
+	doc := readTask(template)
+	offset := 0
+	for _, section := range doc.sections(0, len(template)) {
+		if section.heading == nextStepHeading && !section.underlined {
+			end := doc.nextATXSection(offset)
+			if keyPattern.MatchString(template[offset:end]) || doc.holdsOtherHeading(offset, end) {
+				return true
+			}
 		}
+		offset += len(section.text)
 	}
 	return false
 }

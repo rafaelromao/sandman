@@ -2,9 +2,12 @@ package prompt
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/parser"
 )
 
 // TaskHistoryHeading names the Sandman-owned section that points a compacted
@@ -64,20 +67,60 @@ type TaskCompactionResult struct {
 }
 
 type taskSection struct {
-	heading string // trimmed heading line; empty for the preamble
+	heading string // "## title" for classification; empty for the preamble
 	text    string
+	// headingLength is the length of the heading's lines, two or more for an
+	// underlined heading, whose title lines title holds.
+	headingLength int
+	underlined    bool
+	title         []string
+	// blocks are the section's code and HTML blocks, relative to text.
+	blocks []markdownBlock
+	// holdsNextTitle marks the section before an underlined title that is
+	// kept: an underline is easily written by accident, as under a rule.
+	holdsNextTitle bool
 	// afterPointer marks text an agent wrote after a history pointer's end
 	// marker, before the next heading.
 	afterPointer     bool
 	generatedPointer bool
 }
 
+// maxLabel bounds the name the history pointer gives an underlined section,
+// whose title can be a whole paragraph.
+const maxLabel = 120
+
+// pointerSafe keeps a title the history pointer lists from ending an HTML block
+// left open above it.
+var pointerSafe = strings.NewReplacer("-->", "->", "?>", "? >", "]]>", "]] >", "</", "< /")
+
 // label names a section in the history pointer's list of moved sections.
 func (s taskSection) label() string {
 	if s.afterPointer {
 		return "## Notes after the previous Sandman Task History"
 	}
-	return s.heading
+	name := s.heading
+	if s.underlined && len(name) > maxLabel {
+		name = runePrefix(name, maxLabel) + "..."
+	}
+	return pointerSafe.Replace(name)
+}
+
+// protectedTitle reports whether the section's underlined title names one
+// compaction keeps.
+func (s taskSection) protectedTitle() bool {
+	return s.underlined && underlinesProtected(s.title)
+}
+
+// from returns what follows offset in the section, without a heading.
+func (s taskSection) from(offset int) taskSection {
+	rest := taskSection{text: s.text[offset:], holdsNextTitle: s.holdsNextTitle}
+	for _, block := range s.blocks {
+		if block.start >= offset {
+			block.start, block.end = block.start-offset, block.end-offset
+			rest.blocks = append(rest.blocks, block)
+		}
+	}
+	return rest
 }
 
 // splitAtPointerEnd separates text written after a history pointer's end
@@ -90,9 +133,11 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 			if _, end := findLine(section.text, taskHistoryEnd); end >= 0 &&
 				strings.HasPrefix(strings.ReplaceAll(section.text, "\r\n", "\n"), TaskHistoryHeading+"\n\nSandman moved ") {
 				section.generatedPointer = true
-				if tail := section.text[end:]; strings.TrimSpace(tail) != "" {
+				if strings.TrimSpace(section.text[end:]) != "" {
+					tail := section.from(end)
+					tail.afterPointer = true
 					section.text = section.text[:end]
-					out = append(out, section, taskSection{text: tail, afterPointer: true})
+					out = append(out, section, tail)
 					continue
 				}
 			}
@@ -102,41 +147,61 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 	return out
 }
 
-// splitTaskSections splits a Task at its H2 headings outside fenced code
-// blocks. Text before the first heading is the preamble section.
+// splitTaskSections splits a Task at its H2 headings, as CommonMark reads
+// them (see boundaries). Text before the first heading is the preamble
+// section.
 func splitTaskSections(content string) []taskSection {
 	return splitTaskSectionsFrom(content, 0)
 }
 
 // splitTaskSectionsFrom splits content from the line starting at byte offset
-// from. Code blocks are read over the whole content, so a block that crosses
-// from stays in the preamble and its lines are never headings.
+// from. The Task is read whole, so a block that crosses from stays in the
+// preamble and its lines are never headings.
 func splitTaskSectionsFrom(content string, from int) []taskSection {
-	lines := strings.SplitAfter(content, "\n")
-	fenced := fencedLines(lines)
-	first := lineAt(lines, from)
-	headings := []string{""}
-	starts := []int{first}
-	for i := first; i < len(lines); i++ {
-		if heading, ok := h2Heading(lines[i]); ok && !fenced[i] {
-			headings = append(headings, heading)
-			starts = append(starts, i)
+	return readTask(content).sections(from, len(content))
+}
+
+// sections splits the content between two line starts, slicing the original
+// bytes.
+func (d taskDocument) sections(from, to int) []taskSection {
+	headings := d.boundaries(from, to)
+	sections := make([]taskSection, len(headings)+1)
+	start := from
+	block := sort.Search(len(d.blocks), func(n int) bool { return d.blocks[n].start >= from })
+	for n := range sections {
+		end := to
+		if n < len(headings) {
+			end = headings[n].start
 		}
+		section := &sections[n]
+		if n > 0 {
+			h := headings[n-1]
+			section.headingLength = min(h.end, end) - start
+			section.underlined, section.title = h.underlined, h.title
+			if h.underlined {
+				section.heading, _ = h2Heading("## " + strings.Join(h.title, " "))
+			} else {
+				section.heading, _ = h2Heading(d.content[start:min(h.end, end)])
+			}
+		}
+		section.text = d.content[start:end]
+		for ; block < len(d.blocks) && d.blocks[block].start < end; block++ {
+			b := d.blocks[block]
+			b.start, b.end = b.start-start, b.end-start
+			section.blocks = append(section.blocks, b)
+		}
+		start = end
 	}
-	sections := make([]taskSection, len(starts))
-	for n, start := range starts {
-		end := len(lines)
-		if n+1 < len(starts) {
-			end = starts[n+1]
-		}
-		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
+	for n := 0; n+1 < len(sections); n++ {
+		sections[n].holdsNextTitle = sections[n+1].protectedTitle()
 	}
 	return sections
 }
 
-// h2Heading reports whether a line is an H2, indented by up to three spaces as
-// Markdown allows, and names it as "## title" for classification, whatever
-// blank space or closing number signs it is written with.
+// h2Heading names a line written as an H2, indented by up to three spaces as
+// Markdown allows, as "## title" for classification, whatever blank space or
+// closing number signs it is written with. Whether a line is a heading at all
+// is the parser's call.
 func h2Heading(line string) (string, bool) {
 	line = strings.TrimRight(line, "\r\n")
 	body := strings.TrimLeft(line, " ")
@@ -149,23 +214,6 @@ func h2Heading(line string) (string, bool) {
 		words = words[:n-1]
 	}
 	return strings.TrimSpace("## " + strings.Join(words, " ")), true
-}
-
-// lineAt returns the index of the first line starting at or after byte offset.
-func lineAt(lines []string, offset int) int {
-	i := 0
-	for start := 0; i < len(lines) && start < offset; i++ {
-		start += len(lines[i])
-	}
-	return i
-}
-
-// inCodeBlock reports whether the line at byte offset belongs to a fenced
-// code block.
-func inCodeBlock(content string, offset int) bool {
-	lines := strings.SplitAfter(content, "\n")
-	i := lineAt(lines, offset)
-	return i < len(lines) && fencedLines(lines)[i]
 }
 
 // isProtectedHeading reports whether a section holds agent state that is
@@ -195,15 +243,12 @@ func holdsRuntimeContext(text string) bool {
 
 // isKeptSection reports whether compaction keeps a section byte for byte
 // wherever it is: Sandman's sections, protected state, text a continuation may
-// write the review settings into, and text whose fenced block swallowed one of
-// those, including a note without a heading of its own.
+// write the review settings into, and text whose code or HTML block swallowed
+// one of those, including a note without a heading of its own.
 func isKeptSection(section taskSection, topLevel map[string]bool) bool {
-	body := section.text
-	if section.heading != "" {
-		_, body, _ = strings.Cut(body, "\n")
-	}
 	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) ||
-		holdsRuntimeContext(section.text) || swallowsProtected(body, topLevel)
+		section.protectedTitle() || section.holdsNextTitle ||
+		holdsRuntimeContext(section.text) || swallowsProtected(section, topLevel)
 }
 
 // CompactTask moves the oldest agent-written history out of an oversized Task
@@ -211,8 +256,15 @@ func isKeptSection(section taskSection, topLevel map[string]bool) bool {
 // rest of the structure, plans, status lines and Sandman's sections are kept
 // byte for byte; history is kept from the end while the Task fits the target.
 // The caller archives the original before using the result.
-func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
-	result := TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
+func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResult) {
+	result = TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
+	// A parser failure on odd input must not take the Run with it.
+	defer func() {
+		if failure := recover(); failure != nil {
+			result = TaskCompactionResult{Content: content, Before: len(content), After: len(content),
+				Reason: fmt.Sprintf("the Task could not be read: %v", failure)}
+		}
+	}()
 	if opts.Target <= 0 || !opts.Force && (opts.Threshold <= 0 || len(content) <= opts.Threshold) {
 		return result
 	}
@@ -221,8 +273,9 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 	bounds := *opts.Bounds
+	doc := readTask(content)
 	topLevel := map[string]bool{}
-	for _, section := range splitTaskSections(content) {
+	for _, section := range doc.sections(0, len(content)) {
 		topLevel[section.heading] = true
 	}
 	// Sections the settings span runs into are kept whole too: composition
@@ -231,19 +284,19 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	keeps := func(offset int, section taskSection) bool {
 		return isKeptSection(section, topLevel) || offset < settingsTo && offset+len(section.text) > settingsFrom
 	}
-	// A Next Step whose bounds fall inside a code block is not capped: cutting
-	// there would split the block.
+	// A Next Step whose bounds fall inside a code or HTML block is not capped:
+	// cutting there would split the block.
 	from, to := bounds.NextStepStart, bounds.NextStepEnd
-	if inCodeBlock(content, from) || inCodeBlock(content, to) {
+	if doc.splitsBlock(from) || doc.splitsBlock(to) {
 		from, to = 0, 0
 	}
-	head, moved, changed := capNextStep(content[:bounds.StructureEnd], from, to, keeps)
+	head, moved, changed := capNextStep(doc, bounds.StructureEnd, from, to, keeps)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
 	// goes right after it, so text the agent appends later never becomes part
 	// of the pointer.
-	tail := splitAtPointerEnd(splitTaskSectionsFrom(content, bounds.StructureEnd))
+	tail := splitAtPointerEnd(doc.sections(bounds.StructureEnd, len(content)))
 	offsets := make([]int, len(tail))
 	for i, offset := 0, bounds.StructureEnd; i < len(tail); i++ {
 		offsets[i], offset = offset, offset+len(tail[i].text)
@@ -261,7 +314,13 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	kept := make([]string, len(tail))
 	var history []int
 	fixed := len(head)
+	// gaps allows for the blank line each underlined section may need once
+	// what preceded it moves (see below).
+	gaps := 0
 	for i, section := range tail {
+		if section.underlined {
+			gaps += len("\n\n")
+		}
 		switch {
 		case section.generatedPointer:
 			continue
@@ -286,6 +345,9 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		if n > 0 {
 			section := tail[history[n-1]]
 			keptSize -= len(section.text)
+			if section.underlined {
+				gaps -= len("\n\n")
+			}
 			listedBytes += len("- \n") + len(strings.TrimPrefix(section.label(), "## "))
 		}
 		if n == 0 && !changed {
@@ -300,7 +362,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		if count > 0 {
 			pointerSize += len(movedSectionsHeading) + listedBytes
 		}
-		if keptSize+pointerSize <= opts.Target {
+		if keptSize+gaps+pointerSize <= opts.Target {
 			keepFrom = n
 			break
 		}
@@ -323,11 +385,29 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 
 	var b strings.Builder
 	b.WriteString(prefix + separator)
+	// headed holds where the pointer and each kept section with a heading
+	// start, to check they are still read as sections.
+	headed := []int{b.Len()}
 	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, moved))
-	for _, text := range kept[rest:] {
-		b.WriteString(text)
+	for i := rest; i < len(tail); i++ {
+		if kept[i] == "" {
+			continue
+		}
+		// An underlined title would continue whatever paragraph, list or quote
+		// now precedes it without a blank line.
+		if tail[i].underlined && (i == 0 || kept[i-1] == "") {
+			b.WriteString(blankLineAfter(b.String()))
+		}
+		if tail[i].heading != "" {
+			headed = append(headed, b.Len())
+		}
+		b.WriteString(kept[i])
 	}
 	compacted := b.String()
+	if !startsSections(compacted, headed) {
+		result.Reason = "compacting would change how the Task reads"
+		return result
+	}
 	if activeSettings(compacted) != activeSettings(content) {
 		result.Reason = "compacting would change the active review settings"
 		return result
@@ -339,6 +419,17 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
+}
+
+// startsSections reports whether a section starts at each of offsets.
+func startsSections(content string, offsets []int) bool {
+	doc := readTask(content)
+	for _, offset := range offsets {
+		if len(doc.boundaries(offset, offset+1)) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // settingsSpan returns the byte range of the section a continuation writes the
@@ -383,14 +474,16 @@ func blankLineAfter(text string) string {
 }
 
 // capNextStep keeps the first 4 KiB of the Next Step group of a Task's
-// structure, the bytes from from to to. Once cut, what follows in the group
-// moves too: the group keeps a prefix, never fragments from beyond the limit.
-// Sections keeps reports, given their offset, stay and do not count.
-func capNextStep(structure string, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
+// structure, which ends at end: the bytes from from to to. Once cut, what
+// follows in the group moves too: the group keeps a prefix, never fragments
+// from beyond the limit. Sections keeps reports, given their offset, stay and
+// do not count.
+func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
+	structure := doc.content[:end]
 	if from >= to {
 		return structure, nil, false
 	}
-	sections := splitTaskSections(structure[from:to])
+	sections := doc.sections(from, to)
 	kept := make([]bool, len(sections))
 	size := 0
 	for i, offset := 0, from; i < len(sections); i++ {
@@ -406,26 +499,37 @@ func capNextStep(structure string, from, to int, keeps func(int, taskSection) bo
 	var moved []string
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
-	cut := false
+	cut, dropped := false, false
+	write := func(section taskSection) {
+		if section.underlined && dropped {
+			b.WriteString(blankLineAfter(b.String()))
+		}
+		b.WriteString(section.text)
+		dropped = false
+	}
 	for i, section := range sections {
 		switch {
 		case section.text == "":
 		case kept[i]:
-			b.WriteString(section.text)
+			write(section)
 		case !cut && len(section.text) <= room:
-			b.WriteString(section.text)
+			write(section)
 			room -= len(section.text)
-		case !cut && room > len(section.heading):
-			prefix := cutOutsideFence(section.text, room)
+		// An underlined heading is only cut after all its lines.
+		case !cut && room > len(section.heading) && (!section.underlined || room >= section.headingLength):
+			prefix := cutOutsideBlocks(section.text, room)
 			if nextStepLimit-room+len(prefix) < nextStepLimit/2 {
 				// A long line or code block would waste most of the limit.
 				prefix = cutInside(section.text, room)
+			}
+			if section.underlined && dropped {
+				b.WriteString(blankLineAfter(b.String()))
 			}
 			b.WriteString(trimTrailingNewlines(prefix) + "\n\n")
 			cut = true
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
 		default:
-			cut = true
+			cut, dropped = true, true
 			moved = append(moved, section.label())
 		}
 	}
@@ -440,19 +544,25 @@ func historyBytes(sections []taskSection, indexes []int) int {
 	return n
 }
 
-// swallowsProtected reports whether body holds, inside a fenced block, a
-// heading compaction would keep, typically because an agent left a fence open
-// and a later one closed it. Such a section is kept whole. Only a clearly
-// bounded example is not: a language-tagged block whose first line is the
-// heading, which also heads a real section, closed by a bare fence with no
-// fence inside.
-func swallowsProtected(body string, topLevel map[string]bool) bool {
-	var scanner fenceScanner
+// swallowsProtected reports whether the section's text below its heading
+// holds, in a code or HTML block or anywhere it is not read as a heading, a
+// title compaction would keep, typically because an agent left a block open
+// and something later ended it. Such a section is kept whole. Only a clearly
+// bounded example is not: a language-tagged code block whose first line is the
+// heading, which also heads a real section, closed with no fence inside.
+func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
+	var fences []markdownBlock
+	for _, block := range section.blocks {
+		if block.fence.char != 0 {
+			fences = append(fences, block)
+		}
+	}
 	example, atStart := false, false
 	var paragraph []string
-	for line := range strings.SplitSeq(body, "\n") {
-		line = strings.TrimRight(line, "\r")
-		// A paragraph underlined with dashes is an H2 too.
+	for start := section.headingLength; start < len(section.text); start = lineEnd(section.text, start) {
+		end := lineEnd(section.text, start)
+		line := strings.TrimRight(section.text[start:end], "\r\n")
+		// A paragraph underlined with dashes names a title too.
 		switch text := strings.TrimSpace(line); {
 		case text != "" && strings.Trim(text, "-") == "" && len(paragraph) > 0:
 			if underlinesProtected(paragraph) {
@@ -464,20 +574,24 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 		default:
 			paragraph = append(paragraph, text)
 		}
-		before := scanner.open
-		scanner.next(line, true)
+		for len(fences) > 0 && fences[0].end <= start {
+			fences = fences[1:]
+		}
+		var block *markdownBlock
+		if len(fences) > 0 && fences[0].start < end {
+			block = &fences[0]
+		}
 		switch {
-		case scanner.open != before && scanner.open.char != 0:
-			atStart = true
-			continue
-		case scanner.open != before:
-			// The block ended, at its closer or with its list item.
+		case block == nil:
 			example = false
-			if before.closedBy(line) {
-				continue
-			}
-		case before.char != 0:
-			if _, ok := parseFence(line); ok {
+		case block.start >= start:
+			example, atStart = false, true
+			continue
+		case block.closed && block.end == end:
+			example = false
+			continue
+		default:
+			if _, _, ok := parseFence(line); ok {
 				if example {
 					return true
 				}
@@ -485,7 +599,7 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 			}
 		}
 		if heading, ok := h2Heading(strings.TrimSpace(line)); ok && (runtimeHeadings[heading] || isProtectedHeading(heading)) {
-			if !scanner.open.info || !atStart || !topLevel[heading] {
+			if block == nil || !block.info || !atStart || !topLevel[heading] {
 				return true
 			}
 			example = true
@@ -498,18 +612,18 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 }
 
 // cutInside returns at most limit bytes of text, ending between characters and
-// closing a code block left open.
+// closing a code or HTML block left open.
 func cutInside(text string, limit int) string {
 	prefix := runePrefix(text, limit)
-	open := openFence(prefix)
-	if open.char == 0 {
+	open, ok := openBlock(prefix)
+	if !ok {
 		return prefix
 	}
-	closer := "\n" + strings.Repeat(" ", open.column) + strings.Repeat(string(open.char), open.length)
+	closer := "\n" + open.closer
 	short := runePrefix(text, limit-len(closer))
-	if openFence(short) != open {
+	if again, ok := openBlock(short); !ok || again.start != open.start || again.closer != open.closer {
 		// The block's delimiter and its closer do not both fit.
-		return cutOutsideFence(text, limit)
+		return cutOutsideBlocks(text, limit)
 	}
 	return short + closer
 }
@@ -546,23 +660,18 @@ func underlinesProtected(paragraph []string) bool {
 	return false
 }
 
-// cutOutsideFence returns the longest prefix of text, ending at a line break
-// outside any fenced code block, that is at most limit bytes long. The text
-// starts outside a fence, as every section does.
-func cutOutsideFence(text string, limit int) string {
+// cutOutsideBlocks returns the longest prefix of text, ending at a line break
+// outside any code or HTML block, that is at most limit bytes long. The text
+// starts outside a block, as every section does.
+func cutOutsideBlocks(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	safe, offset := 0, 0
-	var scanner fenceScanner
-	for _, line := range strings.SplitAfter(text, "\n") {
-		if offset+len(line) > limit || !strings.HasSuffix(line, "\n") {
-			break
-		}
-		scanner.next(line, true)
-		offset += len(line)
-		if scanner.open.char == 0 {
-			safe = offset
+	doc := readMarkdown(text, parser.NewContext())
+	safe := 0
+	for end := lineEnd(text, 0); end <= limit && text[end-1] == '\n'; end = lineEnd(text, end) {
+		if !doc.splitsBlock(end) {
+			safe = end
 		}
 	}
 	return text[:safe]
