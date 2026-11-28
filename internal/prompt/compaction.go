@@ -92,11 +92,18 @@ const maxLabel = 120
 // markup: it can neither open a block there nor end one left open above.
 var pointerSafe = strings.NewReplacer("<", "&lt;", ">", "&gt;", "```", "\\`\\`\\`", "~~~", "\\~\\~\\~")
 
-// mayJoin reports whether the section would continue whatever paragraph, list
-// or quote precedes it without a blank line, as an underlined title or text
-// without a heading does.
+// indented reports whether the section's first line of text is indented, so a
+// list above could take it in.
+func (s taskSection) indented() bool {
+	first := strings.TrimLeft(s.text, "\r\n")
+	return strings.HasPrefix(first, " ") || strings.HasPrefix(first, "\t")
+}
+
+// mayJoin reports whether the section could continue whatever precedes it: an
+// underlined title or a note without a heading continues a paragraph, list or
+// quote with no blank line before it, and an indented one even with it.
 func (s taskSection) mayJoin() bool {
-	return s.underlined || s.afterPointer
+	return s.underlined || s.afterPointer || s.indented()
 }
 
 // label names a section in the history pointer's list of moved sections.
@@ -251,11 +258,30 @@ func isKeptSection(section taskSection, topLevel map[string]bool) bool {
 		holdsRuntimeContext(section.text) || swallowsProtected(section, topLevel)
 }
 
+// capStyle is how Next Step may be cut.
+type capStyle int
+
+const (
+	// capInside cuts inside a line or block when a cut before it would waste
+	// most of the limit.
+	capInside capStyle = iota
+	// capBefore cuts only between lines and blocks.
+	capBefore
+	// capNothing leaves Next Step whole.
+	capNothing
+)
+
+// readsDifferently is why a result that would not read as it was put together
+// is not applied.
+const readsDifferently = "compacting would change how the Task reads"
+
 // CompactTask moves the oldest agent-written history out of an oversized Task
 // and trims its Next Step group to the first 4 KiB, using opts.Bounds. The
 // rest of the structure, plans, status lines and Sandman's sections are kept
 // byte for byte; history is kept from the end while the Task fits the target.
-// The caller archives the original before using the result.
+// A result that would not read as it was put together is not applied; more
+// careful cuts of Next Step are tried first. The caller archives the original
+// before using the result.
 func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResult) {
 	result = TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
 	// A parser failure on odd input must not take the Run with it.
@@ -272,8 +298,18 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		result.Reason = "no recorded Task structure"
 		return result
 	}
-	bounds := *opts.Bounds
 	doc := readTask(content)
+	for style := capInside; ; style++ {
+		if result = compactRead(doc, opts, style); result.Reason != readsDifferently || style == capNothing {
+			return result
+		}
+	}
+}
+
+// compactRead compacts a Task already read, cutting Next Step as style allows.
+func compactRead(doc taskDocument, opts TaskCompaction, style capStyle) TaskCompactionResult {
+	content, bounds := doc.content, *opts.Bounds
+	result := TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
 	topLevel := map[string]bool{}
 	for _, section := range doc.sections(0, len(content)) {
 		topLevel[section.heading] = true
@@ -287,12 +323,12 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	// A Next Step whose bounds fall inside a code or HTML block is not capped:
 	// cutting there would split the block.
 	from, to := bounds.NextStepStart, bounds.NextStepEnd
-	if doc.splitsBlock(from) || doc.splitsBlock(to) {
+	if style == capNothing || doc.splitsBlock(from) || doc.splitsBlock(to) {
 		from, to = 0, 0
 	}
 	// want follows how the result must read, as it is put together.
 	var want outline
-	head, moved, changed := capNextStep(doc, &want, bounds.StructureEnd, from, to, keeps)
+	head, moved, changed := capNextStep(doc, &want, bounds.StructureEnd, from, to, style, keeps)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
@@ -388,7 +424,8 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	pointer := renderHistoryPointer(opts, len(content)-keptSize, moved)
 	// The pointer is a section, and the comment ending it a block.
 	want.sections = append(want.sections, b.Len())
-	want.blocks = append(want.blocks, blockStart{b.Len() + strings.LastIndex(pointer, taskHistoryEnd), true})
+	endMarker := b.Len() + strings.LastIndex(pointer, taskHistoryEnd)
+	want.blocks = append(want.blocks, blockSpan{endMarker, endMarker + len(taskHistoryEnd), true})
 	b.WriteString(pointer)
 	for i := rest; i < len(tail); i++ {
 		if kept[i] == "" {
@@ -400,7 +437,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	}
 	compacted := b.String()
 	if !readsAs(compacted, want) {
-		result.Reason = "compacting would change how the Task reads"
+		result.Reason = readsDifferently
 		return result
 	}
 	if activeSettings(compacted) != activeSettings(content) {
@@ -416,14 +453,33 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	return result
 }
 
-// gapBefore returns what is written between written and section i: the blank
-// line an underlined title or a note needs, once what preceded it is gone, not
-// to continue the paragraph, list or quote now above it.
+// gapBefore returns what is written between written and section i once what
+// preceded it is gone (see separatorFor).
 func gapBefore(written string, tail []taskSection, kept []string, i int) string {
-	if !tail[i].mayJoin() || i > 0 && kept[i-1] != "" {
+	if i > 0 && kept[i-1] != "" {
 		return ""
 	}
-	return blankLineAfter(written)
+	return separatorFor(written, tail[i])
+}
+
+// joinRule ends any list or quote above it.
+const joinRule = "***\n\n"
+
+// separatorFor returns what keeps an underlined title or a note, written after
+// written rather than what preceded it, from continuing the paragraph, list or
+// quote now above it: a blank line, and for an indented one, which a list
+// would take in all the same, a rule that ends any.
+func separatorFor(written string, section taskSection) string {
+	if !section.mayJoin() {
+		return ""
+	}
+	gap := blankLineAfter(written)
+	// The history pointer's closing comment already ends whatever is above;
+	// anything added after it would read as a note.
+	if section.indented() && !strings.HasSuffix(written, pointerEnd) {
+		gap += joinRule
+	}
+	return gap
 }
 
 // gapCount follows the size of the blank lines gapBefore adds as history is
@@ -480,23 +536,33 @@ func (g *gapCount) drop(i int) {
 }
 
 // outline is how a Task reads where compaction cares: where its sections
-// start, and where its code and HTML blocks do and whether each is closed.
+// start, and where its code and HTML blocks start and end and whether each is
+// closed.
 type outline struct {
 	sections []int
-	blocks   []blockStart
+	blocks   []blockSpan
 	// What is copied is written in the order it is read, so each of these
 	// moves forward through the headings and blocks once.
 	heading, block int
 }
 
-type blockStart struct {
-	offset int
-	closed bool
+// blockSpan is a block's place; end leaves out its trailing blank space, which
+// grows and shrinks with the blank lines around it.
+type blockSpan struct {
+	start, end int
+	closed     bool
 }
 
-// copied adds how d's bytes from from to to read once written at offset at. A
-// block that runs past to is cut there, and has to be closed.
+const blankSpace = " \t\r\n"
+
+// copied adds how d's bytes from from to to read once written at offset at.
 func (o *outline) copied(d taskDocument, from, to, at int) {
+	o.cut(d, from, to, at, -1)
+}
+
+// cut adds the same for bytes cut short at to: a block that runs on has to be
+// closed, ending at end. A negative end says nothing is cut.
+func (o *outline) cut(d taskDocument, from, to, at, end int) {
 	for ; o.heading < len(d.headings) && d.headings[o.heading].start < to; o.heading++ {
 		if h := d.headings[o.heading]; h.start >= from && h.startsSection() {
 			o.sections = append(o.sections, at+h.start-from)
@@ -504,7 +570,11 @@ func (o *outline) copied(d taskDocument, from, to, at int) {
 	}
 	for ; o.block < len(d.blocks) && d.blocks[o.block].start < to; o.block++ {
 		if b := d.blocks[o.block]; b.start >= from {
-			o.blocks = append(o.blocks, blockStart{at + b.start - from, b.closed || b.end > to})
+			span := blockSpan{at + b.start - from, at + b.start - from + len(strings.TrimRight(d.content[b.start:b.end], blankSpace)), b.closed}
+			if end >= 0 && b.end > to {
+				span.end, span.closed = end, true
+			}
+			o.blocks = append(o.blocks, span)
 		}
 	}
 }
@@ -564,7 +634,7 @@ func blankLineAfter(text string) string {
 // from beyond the limit. Sections keeps reports, given their offset, stay and
 // do not count. It returns the structure, adding how it must read to want,
 // what moved and whether anything did.
-func capNextStep(doc taskDocument, want *outline, end, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
+func capNextStep(doc taskDocument, want *outline, end, from, to int, style capStyle, keeps func(int, taskSection) bool) (string, []string, bool) {
 	structure := doc.content[:end]
 	var sections []taskSection
 	var kept []bool
@@ -586,17 +656,24 @@ func capNextStep(doc taskDocument, want *outline, end, from, to int, keeps func(
 	want.copied(doc, 0, from, 0)
 	var b strings.Builder
 	var moved []string
-	// The cut ends with a blank line, which counts against the limit.
+	// The cut ends with a blank line, which counts against the limit, as does
+	// what may be written before a kept section that could join what precedes
+	// it: another compaction must find the group within it.
 	room := nextStepLimit - len("\n\n")
+	for i, section := range sections {
+		if kept[i] && section.mayJoin() {
+			room -= len("\n\n" + joinRule)
+		}
+	}
 	cut, dropped := false, false
 	// write adds text, which holds the first keep bytes of the section at
 	// offset, and returns where it lands.
 	write := func(section taskSection, offset, keep int, text string) int {
-		if section.underlined && dropped {
-			b.WriteString(blankLineAfter(b.String()))
+		if dropped {
+			b.WriteString(separatorFor(b.String(), section))
 		}
 		at := from + b.Len()
-		want.copied(doc, offset, offset+keep, at)
+		want.cut(doc, offset, offset+keep, at, at+len(strings.TrimRight(text, blankSpace)))
 		b.WriteString(text)
 		dropped = false
 		return at
@@ -614,7 +691,7 @@ func capNextStep(doc taskDocument, want *outline, end, from, to int, keeps func(
 		// A section is only cut after all of its heading's lines.
 		case !cut && room >= section.headingLength:
 			keep, closer, opened := len(cutOutsideBlocks(section, room)), "", -1
-			if nextStepLimit-room+keep < nextStepLimit/2 {
+			if style == capInside && nextStepLimit-room+keep < nextStepLimit/2 {
 				// A long line or code block would waste most of the limit.
 				keep, closer, opened = cutInside(section, room)
 			}
@@ -622,7 +699,8 @@ func capNextStep(doc taskDocument, want *outline, end, from, to int, keeps func(
 			at := write(section, start, keep, trimTrailingNewlines(section.text[:keep]+closer)+"\n\n")
 			if opened >= 0 {
 				// The line cut short is now a block of its own.
-				want.blocks = append(want.blocks, blockStart{at + opened, true})
+				text := strings.TrimRight(section.text[:keep]+closer, blankSpace)
+				want.blocks = append(want.blocks, blockSpan{at + opened, at + len(text), true})
 			}
 			cut = true
 		default:
@@ -740,11 +818,16 @@ func cutInside(section taskSection, limit int) (int, string, int) {
 	return len(short), again, opened
 }
 
-// cutLine returns at most limit bytes of the section, without a last line that
-// cut short would close the block holding it.
+// cutLine returns at most limit bytes of the section, without a last line cut
+// short inside its quote or list markers, which would end an inner one, or one
+// that cut short would close the block holding it.
 func (s taskSection) cutLine(limit int) string {
 	prefix := runePrefix(s.text, limit)
 	start := lineStart(prefix, len(prefix))
+	short, whole := prefix[start:], strings.TrimRight(s.text[start:lineEnd(s.text, start)], "\r\n")
+	if short != whole && strings.Trim(short, "> \t") == "" {
+		return prefix[:start]
+	}
 	_, _, closes := closingFence(strings.TrimLeft(prefix[start:], " \t>"))
 	_, _, did := closingFence(strings.TrimLeft(s.text[start:lineEnd(s.text, start)], " \t>"))
 	if closes && !did {

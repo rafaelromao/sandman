@@ -282,17 +282,17 @@ func TestCompactTask_KeepsANoteApartFromWhatNowPrecedesIt(t *testing.T) {
 	}
 }
 
-// Headings kept before the pointer are checked too: here an indented one in
-// Next Step would become part of the list item above it.
-func TestCompactTask_ChecksHeadingsBeforeThePointer(t *testing.T) {
+// An indented heading kept in Next Step after what preceded it moved must not
+// join the list item above it either.
+func TestCompactTask_KeepsAnIndentedHeadingInNextStepApart(t *testing.T) {
 	step := "Implement the first slice.\n" + paragraph("now", 5000) + "## Plan\n\n- last plan step\n## Old\n\n```\n" +
 		paragraph("old", 3000) + "```\n  Other\n  ---\n\n```\n## Plan\n```\n"
 	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
 
 	got := compact(task, true)
 
-	if got.Compacted || got.Content != task || got.Reason != "compacting would change how the Task reads" {
-		t.Fatalf("compacted = %t, reason = %q:\n%s", got.Compacted, got.Reason, got.Content)
+	if !got.Compacted || !strings.Contains(strings.Join(headingsIn(got.Content), "|"), "## Plan|## Other") {
+		t.Fatalf("compacted = %t (%s):\n%s", got.Compacted, got.Reason, got.Content)
 	}
 }
 
@@ -327,14 +327,15 @@ func TestCompactTask_CutsBeforeAHeadingLineThatDoesNotFit(t *testing.T) {
 	}
 }
 
-// Where no blank line can keep a heading apart, the Task is left alone.
-func TestCompactTask_LeavesTasksThatWouldReadDifferently(t *testing.T) {
+// A blank line cannot keep an indented title out of a list; a rule can.
+func TestCompactTask_KeepsAnIndentedHeadingApart(t *testing.T) {
 	task := structuredTask("\n## Plan\n\n- last plan step\n## Old\n\n```\n" + paragraph("old", 6000) + "```\n  Newest title\n  ---\n")
 
 	got := compact(task, true)
 
-	if got.Compacted || got.Content != task || got.Reason != "compacting would change how the Task reads" {
-		t.Fatalf("compacted = %t, reason = %q", got.Compacted, got.Reason)
+	headings := strings.Join(headingsIn(got.Content), "|")
+	if !got.Compacted || !strings.HasSuffix(headings, "## Plan|## Newest title") || !strings.Contains(got.Content, "- last plan step\n\n***\n\n  Newest title\n  ---\n") {
+		t.Fatalf("compacted = %t (%s), headings %q:\n%s", got.Compacted, got.Reason, headings, got.Content)
 	}
 }
 
@@ -432,12 +433,13 @@ func FuzzCompactTask(f *testing.F) {
 		if strings.Contains(got.Reason, "could not be read") || len(got.Content) >= len(task) {
 			t.Fatalf("grew or failed: %s", got.Reason)
 		}
-		// Apart from the pointer, every line written is the Task's, in order.
+		// Apart from the pointer and the rules that keep an indented note out of
+		// a list, every line written is the Task's, in order.
 		from := strings.Index(got.Content, TaskHistoryHeading+"\n\nSandman moved ")
 		_, end := findLine(got.Content[from:], taskHistoryEnd)
 		original := strings.Split(task, "\n")
 		for _, line := range strings.Split(got.Content[:from]+got.Content[from+end:], "\n") {
-			if strings.TrimSpace(line) == "" {
+			if strings.TrimSpace(line) == "" || line+"\n\n" == joinRule {
 				continue
 			}
 			for len(original) > 0 && original[0] != line {
@@ -757,5 +759,124 @@ func TestReadsAs_ComparesBlocksAsWellAsSections(t *testing.T) {
 
 	if !readsAs(content, want) || readsAs("## A\n\n```\ncode\n~~~\n", want) || readsAs("## A\n\n> ```\n\n> ```\n", want) {
 		t.Fatalf("outline = %+v", want)
+	}
+}
+
+// A note kept after an earlier pointer can now follow a list item holding an
+// open fence; it must not join either.
+func TestCompactTask_KeepsAnIndentedNoteOutOfAnOpenBlock(t *testing.T) {
+	once := compact(structuredTask(checkpoint(1, 9000)), false)
+	if !once.Compacted {
+		t.Fatalf("setup: %s", once.Reason)
+	}
+	for name, plan := range map[string]string{
+		"after a list item with a fence": "## Plan\n\n- last plan step\n  ```text\n  x\n",
+		"after a list item":              "## Plan\n\n- last plan step\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := strings.Replace(once.Content, TaskHistoryHeading, "## Old\n\n"+paragraph("old", 6000)+"\n"+plan+TaskHistoryHeading, 1)
+			task = strings.Replace(task, taskHistoryEnd+"\n", taskHistoryEnd+"\n\n  operator note\n", 1)
+
+			got := compact(task, true)
+
+			note := strings.Index(got.Content, "  operator note\n")
+			if !got.Compacted || note < 0 || !strings.Contains(got.Content, plan) {
+				t.Fatalf("compacted = %t (%s):\n%s", got.Compacted, got.Reason, got.Content)
+			}
+			for _, block := range readTask(got.Content).blocks {
+				if block.start <= note && note < block.end {
+					t.Fatalf("the note joined a block:\n%s", got.Content)
+				}
+			}
+			// A rule ends whatever list is open above the note.
+			if !strings.Contains(got.Content[len(plan):note], "\n***\n") {
+				t.Fatalf("nothing ends the list above the note:\n%s", got.Content)
+			}
+		})
+	}
+}
+
+// A line cut short inside a quote's markers would end an inner quote, so the
+// cut goes back to the line before.
+func TestCompactTask_ClosesABlockInANestedQuote(t *testing.T) {
+	for name, block := range map[string]struct{ open, closer string }{
+		"a fence":   {"```", "```"},
+		"a comment": {"<!--", "-->"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for padding := 3890; padding < 3935; padding++ {
+				step := "> > " + block.open + "\n> > " + strings.Repeat("x", padding) + "\n" +
+					strings.Repeat("> > short output line\n", 240) + "> > " + block.closer + "\n"
+				task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+				got := compact(task, true)
+
+				from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "## Required Order")
+				if !got.Compacted || from < 0 || to < from {
+					t.Fatalf("padding %d: compacted = %t (%s)", padding, got.Compacted, got.Reason)
+				}
+				requireClosedBlocks(t, got.Content[from:to], 2, fmt.Sprint("padding ", padding))
+			}
+		})
+	}
+}
+
+// A block's end counts as much as its start.
+func TestReadsAs_ComparesWhereBlocksEnd(t *testing.T) {
+	content := "## A\n\n- item\n  ```\n  code\n\nnote\n"
+	var want outline
+	want.copied(readTask(content), 0, len(content), 0)
+
+	if !readsAs(content, want) || readsAs("## A\n\n- item\n  ```\n  code\n\n  note\n", want) {
+		t.Fatalf("outline = %+v", want)
+	}
+}
+
+// A comment can end on the line that opens it, so a cut after that needs no
+// closer.
+func TestCompactTask_CutsAfterACommentClosedOnItsOwnLine(t *testing.T) {
+	for name, opener := range map[string]string{"a marker": "<!-- sandman:note -->", "quoted": "> - <!-- sandman:note -->", "a comment": "<!-- note -->"} {
+		t.Run(name, func(t *testing.T) {
+			step := opener + strings.Repeat("y", 4300) + "\n"
+			task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", "Implement the first slice.\n"+step, 1)
+
+			got := compact(task, true)
+
+			from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "## Required Order")
+			if !got.Compacted || from < 0 || to-from < nextStepLimit/2 || strings.Contains(got.Content[from:to], "\n-->") {
+				t.Fatalf("compacted = %t (%s), kept %d bytes", got.Compacted, got.Reason, to-from)
+			}
+		})
+	}
+}
+
+// Closing a block cut inside can end a comment left open above it. The cut is
+// then made before the block rather than refused.
+func TestCompactTask_FallsBackToACarefulCut(t *testing.T) {
+	step := "<!--\n- <!--" + strings.Repeat("y", 4300) + "\n"
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", "Implement the first slice.\n"+step, 1)
+
+	got := compact(task, true)
+
+	if !got.Compacted || strings.Contains(got.Content, "## Checkpoint 1\n") || strings.Contains(got.Content, "yyyy") {
+		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+	}
+}
+
+// What is written before a kept section after a cut counts against the limit,
+// so compacting again changes nothing.
+func TestCompactTask_ACutWithAKeptSectionStaysCut(t *testing.T) {
+	for padding := 3990; padding < 4060; padding++ {
+		step := "Implement the first slice.\n" + strings.Repeat("x", padding) + "\n## Old\n\nold\n  ## Plan\n\n- keep\n"
+		task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+		got := compact(task, true)
+
+		if !got.Compacted {
+			t.Fatalf("padding %d: %s", padding, got.Reason)
+		}
+		if again := compact(got.Content, true); again.Compacted {
+			t.Fatalf("padding %d: a second compaction moved %q", padding, again.Moved)
+		}
 	}
 }

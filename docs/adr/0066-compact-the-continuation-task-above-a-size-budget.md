@@ -128,10 +128,12 @@ updates it.
   paragraphs of at most 64 lines, because both otherwise cost quadratic time.
 - **Joining what is left.** A blank line is added before a kept underlined
   title, or note left after an earlier pointer, whose predecessor moved, so it
-  cannot continue the paragraph, list or quote now above it. A compaction is
-  not applied unless its result reads as it was put together: sections and
-  code and HTML blocks starting exactly where they were written, and no block
-  left open that was not. Titles the pointer lists are escaped, so they can
+  cannot continue the paragraph, list or quote now above it; an indented one,
+  which a list would still take in, also gets a `***` rule above it. A compaction is
+  not applied unless its result reads as it was put together: sections
+  starting, and code and HTML blocks starting and ending, exactly where they
+  were written, and no block left open that was not. Before giving up it cuts
+  Next Step only between blocks, then leaves it whole. Titles the pointer lists are escaped, so they can
   neither open a block there nor end one left open above it. A parser failure
   leaves the Task unchanged.
 - **Where.** Compaction happens once, where the composed Task is written before

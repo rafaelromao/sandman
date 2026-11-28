@@ -53,11 +53,13 @@ type markdownBlock struct {
 func (b markdownBlock) endsBy(prefix string) bool {
 	at := lineStart(prefix, len(prefix))
 	line := prefix[at:]
-	if at <= b.start || isSandmanMarker(line) {
-		return false
-	}
 	if b.fence.char == 0 {
-		return holdsHTMLEnd(line, b.htmlKind)
+		// An HTML block can end on the line that opens it, which a marker
+		// further down does not.
+		return (at <= b.start || !isSandmanMarker(line)) && holdsHTMLEnd(line, b.htmlKind)
+	}
+	if at <= b.start {
+		return false
 	}
 	char, length, ok := closingFence(strings.TrimLeft(line, "> \t"))
 	return ok && char == b.fence.char && length >= b.fence.length
