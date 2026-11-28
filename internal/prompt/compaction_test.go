@@ -774,14 +774,57 @@ func TestCompactTask_KeepsEveryRuntimeContextTheRuntimeUpdates(t *testing.T) {
 	}
 }
 
-// An unbalanced fence in the issue can pair with a later one and swallow the
-// real Runtime Context; it is still refreshed rather than duplicated.
-func TestEnsureReviewSettingsContext_RefreshesASwallowedRuntimeContext(t *testing.T) {
-	content := "## Issue\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n## Notes\n\n```\ncode\n"
+// The settings are only rewritten where they unambiguously are. When the
+// section holding them sits inside a code block, a section is appended and no
+// existing byte changes.
+func TestEnsureReviewSettingsContext_NeverRewritesAnAmbiguousSection(t *testing.T) {
+	for name, content := range map[string]string{
+		"swallowed section":               "## Issue\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n## Notes\n\n```\ncode\n",
+		"issue heading beside swallowed":  "## Runtime Context\n\nThe issue's text.\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n```\n",
+		"issue settings beside swallowed": "## Runtime Context\n\n- Review command: `/issue`\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n```\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := EnsureReviewSettingsContext(content, "/new", true, 1800)
 
-	got := EnsureReviewSettingsContext(content, "/new", true, 1800)
+			appended := strings.TrimPrefix(got, strings.TrimRight(content, "\n"))
+			if appended == got || !strings.HasPrefix(appended, "\n\n"+reviewTimeoutContextHeading+"\n") || !strings.Contains(appended, "- Review command: `/new`") {
+				t.Fatalf("got:\n%s", got)
+			}
+			if again := EnsureReviewSettingsContext(got, "/new", true, 1800); again != got {
+				t.Fatalf("not stable:\n%s", again)
+			}
+		})
+	}
+}
 
-	if !strings.Contains(got, "- Review command: `/new`") || strings.Contains(got, "/old") || strings.Contains(got, reviewTimeoutContextHeading) {
-		t.Fatalf("got:\n%s", got)
+// A code sample inside the section keeps its lines; the real fields after it
+// are the ones updated.
+func TestEnsureReviewSettingsContext_LeavesCodeSamplesInsideTheSection(t *testing.T) {
+	sample := "```md\n- Review command: `/sample`\n- Delegated review response timeout: `1` seconds\n```\n"
+	content := "## Runtime Context\n\n" + sample + "\n- Review command: `/old`\n- Delegated review response timeout: `9` seconds\n"
+
+	for _, got := range []string{
+		EnsureReviewSettingsContext(content, "/new", true, 1800),
+		EnsureReviewTimeoutContext(content, 1800),
+	} {
+		if !strings.Contains(got, sample) || !strings.Contains(got, "- Delegated review response timeout: `1800` seconds") || strings.Contains(got, "`9` seconds") {
+			t.Fatalf("got:\n%s", got)
+		}
+	}
+}
+
+// The offsets are exact whether or not the issue body ends its last line.
+func TestBuiltInTaskBounds_LocatesExactOffsets(t *testing.T) {
+	for _, body := range []string{"The issue.", "The issue.\n", "The issue.\n\n"} {
+		task := strings.Replace(defaultPrompt, issueBodyPlaceholder, body, 1) + "\n## Checkpoint\n\nnotes\n"
+
+		bounds, ok := BuiltInTaskBounds(RenderConfig{}, task, body)
+
+		if !ok || !strings.HasPrefix(task[bounds.NextStepStart:], nextStepHeading+"\n") ||
+			!strings.HasPrefix(task[bounds.NextStepEnd:], "## Managed Review Boundary\n") ||
+			!strings.HasSuffix(task[:bounds.StructureEnd], "with reason.\n") ||
+			task[bounds.StructureEnd:] != "\n## Checkpoint\n\nnotes\n" {
+			t.Fatalf("body %q: ok = %t, bounds = %+v", body, ok, bounds)
+		}
 	}
 }

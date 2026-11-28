@@ -41,14 +41,14 @@ func structureMarker(name, nonce string) string {
 	return "<!-- " + name + " " + nonce + " -->"
 }
 
-// markTemplate writes the structure markers into a template before
-// substitution, so they sit at the template's positions whatever the issue
-// body holds. The structure ends after the template and every place the issue
-// body is substituted into. The Next Step group is marked from its heading to
-// the next template section, whose heading line the end marker follows so that
-// rewriting Next Step keeps it. It is left unmarked if the issue body is
-// substituted into it, or if that next heading holds a placeholder, which
-// could expand to several lines.
+// markTemplate writes the structure markers into a template before any
+// substitution, so they sit at the template's own headings whatever the
+// substituted values and the issue body hold. The structure ends after the
+// template and every place something is substituted into. The Next Step group
+// is marked from the template's heading to the next template section, whose
+// heading line the end marker follows so that rewriting Next Step keeps it. It
+// is left unmarked if anything from the one to the other is a placeholder:
+// what it expands to is unknown here.
 func markTemplate(template, nonce string) string {
 	sections := splitTaskSections(template)
 	offsets := make([]int, len(sections)+1)
@@ -56,9 +56,9 @@ func markTemplate(template, nonce string) string {
 		offsets[i+1] = offsets[i] + len(section.text)
 	}
 	// The structure ends before trailing sections Sandman composes again at
-	// every launch, unless the template puts the issue body in one.
+	// every launch, unless the template substitutes something into one.
 	last := len(sections) - 1
-	for last > 0 && composedHeadings[sections[last].heading] && !strings.Contains(sections[last].text, issueBodyPlaceholder) {
+	for last > 0 && composedHeadings[sections[last].heading] && !keyPattern.MatchString(sections[last].text) {
 		last--
 	}
 	end := offsets[last+1]
@@ -75,11 +75,11 @@ func markTemplate(template, nonce string) string {
 				next, groupEnd = i, offsets[i]
 			}
 		}
-		heading := ""
 		if next >= 0 {
-			heading, _, _ = strings.Cut(sections[next].text, "\n")
+			heading, _, _ := strings.Cut(sections[next].text, "\n")
+			groupEnd += len(heading)
 		}
-		if strings.Contains(template[offsets[step]:groupEnd], issueBodyPlaceholder) || strings.Contains(heading, "{{") {
+		if keyPattern.MatchString(template[offsets[step]:groupEnd]) {
 			step, next = -1, -1
 		}
 	}
@@ -189,7 +189,9 @@ func lastTemplateSection(template string) string {
 // Completion Requirements`. The Task must hold the current issue body there and
 // those requirements verbatim; otherwise nothing is located. Only the `##
 // Next Step` section itself is editable: without markers nothing proves that
-// the sections after it were added by the agent and not by the template.
+// the sections after it were added by the agent and not by the template. It is
+// editable only if the Task holds exactly one before the requirements and the
+// template's holds no placeholder.
 func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds, bool) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
@@ -204,22 +206,42 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 
 	body := builtInIssueBlockStart + NeutraliseBodyPlaceholders(issueBody)
 	at := strings.Index(content, body)
-	if at < 0 || !strings.HasPrefix(strings.TrimLeft(content[at+len(body):], "\r\n"), runtimeContextHeading) {
+	if at < 0 {
 		return TaskBounds{}, false
 	}
-	bodyEnd := at + len(body)
+	// The body may end mid-line, so the sections start at the heading after it.
+	after := strings.TrimLeft(content[at+len(body):], "\r\n")
+	start := len(content) - len(after)
+	if !strings.HasPrefix(after, runtimeContextHeading) || content[start-1] != '\n' {
+		return TaskBounds{}, false
+	}
 
 	var bounds TaskBounds
-	offset := bodyEnd
-	for _, section := range splitTaskSections(content[bodyEnd:]) {
+	offset, steps := start, 0
+	for _, section := range splitTaskSectionsFrom(content, start) {
 		switch {
-		case section.heading == nextStepHeading && bounds.NextStepEnd == 0:
+		case section.heading == nextStepHeading:
+			steps++
 			bounds.NextStepStart, bounds.NextStepEnd = offset, offset+len(section.text)
 		case section.heading == completionHeading && strings.HasPrefix(section.text+"\n", requirements+"\n"):
 			bounds.StructureEnd = offset + min(len(requirements)+1, len(section.text))
+			if steps != 1 || placeholderInNextStep(template) {
+				bounds.NextStepStart, bounds.NextStepEnd = 0, 0
+			}
 			return bounds, true
 		}
 		offset += len(section.text)
 	}
 	return TaskBounds{}, false
+}
+
+// placeholderInNextStep reports whether a template's Next Step section holds a
+// placeholder.
+func placeholderInNextStep(template string) bool {
+	for _, section := range splitTaskSections(template) {
+		if section.heading == nextStepHeading && keyPattern.MatchString(section.text) {
+			return true
+		}
+	}
+	return false
 }

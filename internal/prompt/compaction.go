@@ -107,12 +107,20 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 // splitTaskSections splits a Task at its H2 headings outside fenced code
 // blocks. Text before the first heading is the preamble section.
 func splitTaskSections(content string) []taskSection {
+	return splitTaskSectionsFrom(content, 0)
+}
+
+// splitTaskSectionsFrom splits content from the line starting at byte offset
+// from. Code blocks are read over the whole content, so a block that crosses
+// from stays in the preamble and its lines are never headings.
+func splitTaskSectionsFrom(content string, from int) []taskSection {
 	lines := strings.SplitAfter(content, "\n")
 	fenced := fencedLines(lines)
+	first := lineAt(lines, from)
 	headings := []string{""}
-	starts := []int{0}
-	for i, line := range lines {
-		if trimmed := strings.TrimRight(line, "\r\n"); !fenced[i] && strings.HasPrefix(trimmed, "## ") {
+	starts := []int{first}
+	for i := first; i < len(lines); i++ {
+		if trimmed := strings.TrimRight(lines[i], "\r\n"); !fenced[i] && strings.HasPrefix(trimmed, "## ") {
 			headings = append(headings, strings.TrimSpace(trimmed))
 			starts = append(starts, i)
 		}
@@ -126,6 +134,23 @@ func splitTaskSections(content string) []taskSection {
 		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
 	}
 	return sections
+}
+
+// lineAt returns the index of the first line starting at or after byte offset.
+func lineAt(lines []string, offset int) int {
+	i := 0
+	for start := 0; i < len(lines) && start < offset; i++ {
+		start += len(lines[i])
+	}
+	return i
+}
+
+// inCodeBlock reports whether the line at byte offset belongs to a fenced
+// code block.
+func inCodeBlock(content string, offset int) bool {
+	lines := strings.SplitAfter(content, "\n")
+	i := lineAt(lines, offset)
+	return i < len(lines) && fencedLines(lines)[i]
 }
 
 // fencedLines reports which lines belong to a fenced code block, delimiters
@@ -234,13 +259,19 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	for _, section := range splitTaskSections(content) {
 		topLevel[section.heading] = true
 	}
-	head, moved, changed := capNextStep(content[:bounds.StructureEnd], bounds.NextStepStart, bounds.NextStepEnd, topLevel)
+	// A Next Step whose bounds fall inside a code block is not capped: cutting
+	// there would split the block.
+	from, to := bounds.NextStepStart, bounds.NextStepEnd
+	if inCodeBlock(content, from) || inCodeBlock(content, to) {
+		from, to = 0, 0
+	}
+	head, moved, changed := capNextStep(content[:bounds.StructureEnd], from, to, topLevel)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
 	// goes right after it, so text the agent appends later never becomes part
 	// of the pointer.
-	tail := splitAtPointerEnd(splitTaskSections(content[bounds.StructureEnd:]))
+	tail := splitAtPointerEnd(splitTaskSectionsFrom(content, bounds.StructureEnd))
 	prefix, rest := head, 0
 	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
 		prefix, rest = head+tail[0].text, 1

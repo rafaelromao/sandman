@@ -734,6 +734,74 @@ func TestImplementationLaunch_PointerReplacementKeepsAdjacentSections(t *testing
 	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), plan, "\n"+status)
 }
 
+// A prompt argument that expands to its own Next Step never becomes the
+// editable one: the template's heading is.
+func TestImplementationLaunch_CapsTheTemplatesNextStepNotASubstitutedOne(t *testing.T) {
+	checklist := "## Next Step\n\n" + strings.Repeat("- [ ] rollback verified.\n", 400)
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{
+		PromptFlag: "# Task\n\n## Project Requirements\n\n{{RELEASE_DOC}}\n\n## Next Step\n\nStart.\n\n## Footer\n\nF.\n",
+		PromptArgs: map[string]string{"RELEASE_DOC": checklist},
+	}, prompt.IssueData{}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := withCheckpoints(strings.Replace(rendered, "Start.\n", "Start.\n"+strings.Repeat("Obsolete step.\n", 1000), 1), 30)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), checklist)
+	if strings.Count(launch.stdin, "Obsolete step.") >= 300 {
+		t.Error("the template's Next Step was not capped")
+	}
+}
+
+// A code block that starts in the issue and ends after the structure stays
+// whole, with the history pointer after it.
+func TestImplementationLaunch_KeepsACodeBlockThatCrossesTheStructure(t *testing.T) {
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{}, prompt.IssueData{Number: 7, Body: "Log:\n\n```\nfirst line\n"}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closing := "\n## Sample log output\n\n" + strings.Repeat("log line\n", 50) + "```\n"
+	task := withCheckpoints(rendered+closing, 30)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), closing)
+	if strings.Index(launch.stdin, prompt.TaskHistoryHeading) < strings.Index(launch.stdin, closing) {
+		t.Error("the history pointer is inside the code block")
+	}
+}
+
+// A code sample inside Runtime Context keeps its lines; continuation updates
+// the real field and compaction keeps it.
+func TestImplementationLaunch_KeepsACodeSampleInsideRuntimeContext(t *testing.T) {
+	sample := "\n```md\n- Review command: `/sample-command`\n```\n"
+	task := strings.Replace(checkpointTask(30), "## Runtime Context\n", "## Runtime Context\n"+sample, 1)
+	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), sample, "- Review command: `/current-review-command`")
+}
+
+// When the real Runtime Context sits inside a code block, the issue's section
+// of the same name is not rewritten: the settings go in a section of their own.
+func TestImplementationLaunch_LeavesTheIssuesRuntimeContextAlone(t *testing.T) {
+	issue := "## Runtime Context\n\nThe issue's own section.\n\n```\nlog\n"
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{}, prompt.IssueData{Number: 7, Body: issue}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := withCheckpoints(rendered+"\n```\n", 30)
+	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), issue,
+		"## Sandman Runtime Context\n- Review command: `/current-review-command`")
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

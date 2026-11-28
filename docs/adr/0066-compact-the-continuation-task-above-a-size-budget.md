@@ -41,25 +41,27 @@ updates it.
 - **Structure is marked, not inferred.** Telling template, issue and agent
   text apart from headings alone is ambiguous: issue bodies, agent checkpoints
   and edited sections can all reuse template titles. A fresh implementation
-  render therefore writes, once operator values are substituted, comment
-  markers into its Task, carrying a per-render nonce recorded in
+  render therefore writes comment markers into the template before
+  substituting anything into it, carrying a per-render nonce recorded in
   `.sandman/task-anchors`: before the template's `## Next Step`, after the
   heading of the section that follows it (or with a distinct marker when it is
-  last), and after the template and every issue substitution. Only sections
-  Sandman removes and rewrites at launches may follow the end marker. Issue
-  text cannot forge the nonce. A Next Step that the issue body is substituted
-  into is not marked, nor is one followed by a heading holding a placeholder,
-  which could expand to several lines.
+  last), and after the template and everything substituted into it. Only
+  sections Sandman removes and rewrites at launches may follow the end marker.
+  Issue text cannot forge the nonce. A Next Step with a placeholder anywhere
+  from its heading to the next one is not marked: what it expands to is
+  unknown, and it can be the issue body.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
-  decision, is never compacted automatically; the run log says that `--continue
-  --compact` can. On request it is located only for the built-in layout: the
-  template puts the issue body alone under `## Issue Context` before `##
-  Runtime Context` and ends with the built-in `## Completion Requirements`, and
-  the Task holds the current issue body and those requirements verbatim. Only
-  its `## Next Step` section is capped: nothing proves that the sections after
-  it were added by the agent rather than the template. This cannot prove that
-  an older template had no section after the requirements, which would move
-  into the archive; the operator accepts that by asking. Anything else is left
+  decision, is never compacted automatically; the run log says that
+  `--continue --compact` can. On request it is located only for the built-in
+  layout: the template puts the issue body alone under `## Issue Context`
+  before `## Runtime Context` and ends with the built-in `## Completion
+  Requirements`, and the Task holds the current issue body and those
+  requirements verbatim. Only its `## Next Step` section is capped, and only
+  when the Task holds exactly one before the requirements and the template's
+  holds no placeholder: nothing proves that the sections after it were added
+  by the agent rather than the template. This cannot prove that an older
+  template had no section after the requirements, which would move into the
+  archive; the operator accepts that by asking. Anything else is left
   unchanged.
 - **What moves.** Only what follows the structure is history. The fewest oldest
   sections move for the Task, with a pointer naming exactly what moved, to fit;
@@ -72,6 +74,13 @@ updates it.
   that starts with that heading while a real one exists. If an agent removes
   the Next Step markers the step is kept whole; if it removes the closing
   marker and the layout cannot be verified, the Task is left unchanged.
+- **Code blocks.** They are read across the whole Task. One that crosses the
+  end of the structure stays whole, with the pointer after it, and a Next Step
+  whose bounds fall inside one is not capped. Refreshing the review settings
+  at a continuation follows the same reading: lines in code blocks are not
+  rewritten, and when the Runtime Context section holding the settings sits
+  inside one, Sandman appends a `## Sandman Runtime Context` section rather
+  than rewrite another section of that name, such as one in the issue.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
@@ -105,8 +114,9 @@ older checkpoint or move a newer one; the archive and the live repository
 cover both cases.
 
 The built-in template and a current review report are kept, so a Task with a
-large report can stay above the target. A replay with that Task's shape (98 KB
-once its review report is stored once) launches at about 46 KB. The real 119 KB
-Task would reach about 50 KB, above the threshold, so its later launches would
-log that it cannot shrink further until the report is answered. With session reuse, the agent's earlier conversation still
-holds the old Task; compaction shrinks only the file and the new prompt.
+large report can stay above the target. A replay with that Task's shape,
+marked as a fresh render (98 KB once its review report is stored once),
+launches at about 46 KB. The real 119 KB Task predates the markers: it is
+compacted only on request, to 93 KB, of which 38 KB is review evidence the old
+code stored three times. With session reuse, the agent's earlier conversation
+still holds the old Task; compaction shrinks only the file and the new prompt.
