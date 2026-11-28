@@ -467,12 +467,14 @@ func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 // runtimeContextSection returns the last runtime-context section so an issue
 // body containing similarly named text is never treated as Sandman metadata.
 func runtimeContextSection(lines []string) (start, end int) {
-	start = -1
-	for i, line := range lines {
-		switch strings.TrimSpace(line) {
-		case reviewTimeoutContextHeading, runtimeContextHeading:
-			start = i
-		}
+	// The headings compaction sees: never one inside a code sample. If the
+	// only Runtime Context sits inside what parses as a fenced block, such as
+	// after an unbalanced fence in the issue, it is still the one to refresh.
+	fenced := fencedLines(lines)
+	start = lastRuntimeContext(lines, fenced)
+	if start < 0 {
+		fenced = make([]bool, len(lines))
+		start = lastRuntimeContext(lines, fenced)
 	}
 	if start < 0 {
 		return -1, -1
@@ -481,12 +483,26 @@ func runtimeContextSection(lines []string) (start, end int) {
 	end = len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+		if !fenced[i] && (strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##"))) {
 			end = i
 			break
 		}
 	}
 	return start, end
+}
+
+func lastRuntimeContext(lines []string, fenced []bool) int {
+	last := -1
+	for i, line := range lines {
+		if fenced[i] || !strings.HasPrefix(line, "## ") {
+			continue
+		}
+		switch strings.TrimSpace(line) {
+		case reviewTimeoutContextHeading, runtimeContextHeading:
+			last = i
+		}
+	}
+	return last
 }
 
 func insertLine(lines []string, index int, line string) []string {

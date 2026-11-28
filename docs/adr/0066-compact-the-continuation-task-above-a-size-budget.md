@@ -41,14 +41,15 @@ updates it.
 - **Structure is marked, not inferred.** Telling template, issue and agent
   text apart from headings alone is ambiguous: issue bodies, agent checkpoints
   and edited sections can all reuse template titles. A fresh implementation
-  render therefore writes comment markers into its Task, carrying a per-render
-  nonce recorded in `.sandman/task-anchors`: before the template's
-  `## Next Step`, after the heading of the section that follows it (or with a
-  distinct marker when it is last), and after the template and every issue
-  substitution. Only sections Sandman removes and rewrites at launches may
-  follow the end marker. Issue text cannot forge the nonce. A Next Step that
-  the issue body is substituted into is not marked, nor is one followed by a
-  heading holding a placeholder, which could expand to several lines.
+  render therefore writes, once operator values are substituted, comment
+  markers into its Task, carrying a per-render nonce recorded in
+  `.sandman/task-anchors`: before the template's `## Next Step`, after the
+  heading of the section that follows it (or with a distinct marker when it is
+  last), and after the template and every issue substitution. Only sections
+  Sandman removes and rewrites at launches may follow the end marker. Issue
+  text cannot forge the nonce. A Next Step that the issue body is substituted
+  into is not marked, nor is one followed by a heading holding a placeholder,
+  which could expand to several lines.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that `--continue
   --compact` can. On request it is located only for the built-in layout: the

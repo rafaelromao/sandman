@@ -13,7 +13,6 @@ const TaskHistoryHeading = "## Sandman Task History"
 // taskHistoryEnd closes the history pointer, so text an agent writes after it
 // stays its own and is never replaced with the pointer.
 const taskHistoryEnd = "<!-- end of Sandman Task History -->"
-const taskHistorySeparator = "\n\n"
 
 // nextStepHeading is the template section the agent rewrites with its current
 // position. Its beginning is kept when it grows; see nextStepLimit.
@@ -93,12 +92,6 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 				strings.HasPrefix(section.text, TaskHistoryHeading+"\n\nSandman moved ") {
 				end := at + len(taskHistoryEnd) + 2
 				section.generatedPointer = true
-				if len(out) > 0 {
-					previous := &out[len(out)-1]
-					if before, ok := strings.CutSuffix(previous.text, taskHistorySeparator); ok {
-						previous.text = before
-					}
-				}
 				if tail := section.text[end:]; strings.TrimSpace(tail) != "" {
 					section.text = section.text[:end]
 					out = append(out, section, taskSection{text: tail, afterPointer: true})
@@ -112,37 +105,14 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 }
 
 // splitTaskSections splits a Task at its H2 headings outside fenced code
-// blocks. Text before the first heading is the preamble section. A fence left
-// open at the end of the Task (a truncated log, say) is treated as text, so it
-// cannot swallow the sections after it.
+// blocks. Text before the first heading is the preamble section.
 func splitTaskSections(content string) []taskSection {
 	lines := strings.SplitAfter(content, "\n")
+	fenced := fencedLines(lines)
 	headings := []string{""}
 	starts := []int{0}
-	var open fence
-	openedAt := -1
-	ignored := map[int]bool{}
-	for i := 0; ; i++ {
-		if i == len(lines) {
-			if open.char == 0 {
-				break
-			}
-			// No heading was recorded while the fence was open, so parsing
-			// resumes at its opener, now read as text.
-			ignored[openedAt] = true
-			i, open = openedAt, fence{}
-		}
-		trimmed := strings.TrimRight(lines[i], "\r\n")
-		if f, ok := parseFence(trimmed); ok && !ignored[i] {
-			switch {
-			case open.char == 0:
-				open, openedAt = f, i
-			case f.closes(open):
-				open = fence{}
-			}
-			continue
-		}
-		if open.char == 0 && strings.HasPrefix(trimmed, "## ") {
+	for i, line := range lines {
+		if trimmed := strings.TrimRight(line, "\r\n"); !fenced[i] && strings.HasPrefix(trimmed, "## ") {
 			headings = append(headings, strings.TrimSpace(trimmed))
 			starts = append(starts, i)
 		}
@@ -156,6 +126,38 @@ func splitTaskSections(content string) []taskSection {
 		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
 	}
 	return sections
+}
+
+// fencedLines reports which lines belong to a fenced code block, delimiters
+// included. A fence left open at the end (a truncated log, say) is read as
+// text, so it cannot swallow the headings after it.
+func fencedLines(lines []string) []bool {
+	fenced := make([]bool, len(lines))
+	ignored := map[int]bool{}
+	var open fence
+	openedAt := -1
+	for i := 0; ; i++ {
+		if i == len(lines) {
+			if open.char == 0 {
+				return fenced
+			}
+			// Parsing resumes at the unclosed opener, now read as text.
+			ignored[openedAt] = true
+			clear(fenced[openedAt:])
+			i, open = openedAt, fence{}
+		}
+		if f, ok := parseFence(strings.TrimRight(lines[i], "\r\n")); ok && !ignored[i] {
+			switch {
+			case open.char == 0:
+				open, openedAt = f, i
+			case f.closes(open):
+				open = fence{}
+			}
+			fenced[i] = true
+			continue
+		}
+		fenced[i] = open.char != 0
+	}
 }
 
 // fence is a fenced code block delimiter: its character and length, and
@@ -235,8 +237,15 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	head, moved, changed := capNextStep(content[:bounds.StructureEnd], bounds.NextStepStart, bounds.NextStepEnd, topLevel)
 
 	// What follows the structure is history, except what is always kept. The
-	// text before the first heading stays with the structure.
+	// text before the first heading stays with the structure, and the pointer
+	// goes right after it, so text the agent appends later never becomes part
+	// of the pointer.
 	tail := splitAtPointerEnd(splitTaskSections(content[bounds.StructureEnd:]))
+	prefix, rest := head, 0
+	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
+		prefix, rest = head+tail[0].text, 1
+	}
+	separator := blankLineAfter(prefix)
 	kept := make([]string, len(tail))
 	var history []int
 	fixed := len(head)
@@ -261,7 +270,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	for _, heading := range listed {
 		listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
 	}
-	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(taskHistorySeparator)
+	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(separator)
 	for n := 0; n <= len(history); n++ {
 		if n > 0 {
 			section := tail[history[n-1]]
@@ -308,16 +317,9 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		return result
 	}
 
-	// The pointer goes right after the structure, so text the agent appends
-	// later never becomes part of it.
 	var b strings.Builder
-	b.WriteString(head)
-	rest := 0
-	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
-		b.WriteString(kept[0])
-		rest = 1
-	}
-	b.WriteString(taskHistorySeparator + renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved)))
+	b.WriteString(prefix + separator)
+	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved)))
 	for _, text := range kept[rest:] {
 		b.WriteString(text)
 	}
@@ -329,6 +331,18 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
+}
+
+// blankLineAfter returns the newlines that put a blank line after text. It
+// only adds: no byte of what precedes the pointer is ever removed.
+func blankLineAfter(text string) string {
+	switch {
+	case strings.HasSuffix(text, "\n\n"):
+		return ""
+	case strings.HasSuffix(text, "\n"):
+		return "\n"
+	}
+	return "\n\n"
 }
 
 // capNextStep keeps the first 4 KiB of the Next Step group of a Task's

@@ -225,16 +225,20 @@ func (e *Engine) render(cfg RenderConfig, data IssueData, nonce string) (string,
 	if err != nil {
 		return "", err
 	}
-	if nonce != "" {
-		template = markTemplate(template, nonce)
-	}
 
 	mapping := issueMapping(data)
 	for k, v := range configMapping(cfg) {
 		mapping[k] = v
 	}
 
-	result, _, err := (&Renderer{}).Render(template, data.Body, mapping)
+	// Mark what the operator values expanded to: a value may itself hold the
+	// issue body placeholder.
+	template = substituteKeys(template, mapping)
+	if nonce != "" {
+		template = markTemplate(template, nonce)
+	}
+
+	result, _, err := (&Renderer{}).Render(template, data.Body, nil)
 	return result, err
 }
 

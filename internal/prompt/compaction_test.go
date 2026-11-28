@@ -773,3 +773,15 @@ func TestCompactTask_KeepsEveryRuntimeContextTheRuntimeUpdates(t *testing.T) {
 		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
 	}
 }
+
+// An unbalanced fence in the issue can pair with a later one and swallow the
+// real Runtime Context; it is still refreshed rather than duplicated.
+func TestEnsureReviewSettingsContext_RefreshesASwallowedRuntimeContext(t *testing.T) {
+	content := "## Issue\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n## Notes\n\n```\ncode\n"
+
+	got := EnsureReviewSettingsContext(content, "/new", true, 1800)
+
+	if !strings.Contains(got, "- Review command: `/new`") || strings.Contains(got, "/old") || strings.Contains(got, reviewTimeoutContextHeading) {
+		t.Fatalf("got:\n%s", got)
+	}
+}

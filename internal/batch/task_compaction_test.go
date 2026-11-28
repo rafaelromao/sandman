@@ -658,3 +658,84 @@ func TestImplementationLaunch_KeepsATemplateSectionAfterAnUnmarkedNextStep(t *te
 		t.Fatal("history did not move or Next Step was not capped")
 	}
 }
+
+// The agent's input, the worktree Task and the archive agree, protected bytes
+// stay, and old checkpoints move.
+func requireCompactedLaunchKeeps(t *testing.T, launch compactionLaunch, composed string, kept ...string) {
+	t.Helper()
+	written, err := os.ReadFile(filepath.Join(launch.workDir, ".sandman", "task.md"))
+	if err != nil || string(written) != launch.stdin {
+		t.Fatalf("worktree Task differs from the launched one (%v)", err)
+	}
+	for _, text := range kept {
+		if !strings.Contains(launch.stdin, text) {
+			t.Errorf("lost %q", text[:min(len(text), 80)])
+		}
+	}
+	if strings.Contains(launch.stdin, "## Checkpoint 1\n") {
+		t.Error("the old checkpoints did not move")
+	}
+	archives, _ := filepath.Glob(filepath.Join(launch.workDir, ".sandman", "task-history", "*.md"))
+	if len(archives) != 1 {
+		t.Fatalf("archives = %v", archives)
+	}
+	if archived, _ := os.ReadFile(archives[0]); string(archived) != composed {
+		t.Error("the archive is not the composed Task")
+	}
+}
+
+// An operator value can expand to the issue body inside Next Step; the render
+// marks what it actually produced.
+func TestImplementationLaunch_KeepsAnIssueSubstitutedThroughAPromptArg(t *testing.T) {
+	issue := "## Rollback\n\n- [ ] " + strings.Repeat("rollback verified. ", 500)
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{
+		PromptFlag: "# Task\n\n## Next Step\n\nStart.\n\n{{STARTER}}\n\n## Footer\n\nF.\n",
+		PromptArgs: map[string]string{"STARTER": "{{ISSUE_BODY}}"},
+	}, prompt.IssueData{Body: issue}, testTaskNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := withCheckpoints(rendered, 30)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), issue)
+}
+
+// Continuation refreshes the real Runtime Context, never an example in a code
+// block, so compaction cannot move the only copy of the current command.
+func TestImplementationLaunch_KeepsTheRefreshedRuntimeContext(t *testing.T) {
+	example := "\n## Example\n\n```md\n## Runtime Context\n\n- Review command: `/sample-command`\n```\n"
+	task := checkpointTask(30) + example
+	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	if !strings.Contains(task, strings.TrimSpace(example)) {
+		t.Fatal("continuation wrote into the example")
+	}
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "- Review command: `/current-review-command`")
+}
+
+// Replacing the pointer leaves the sections around it byte for byte.
+func TestImplementationLaunch_PointerReplacementKeepsAdjacentSections(t *testing.T) {
+	once, err := CompactWorktreeTask(checkpointTask(30), TaskCompactionRequest{WorkDir: noncedDir(t), Threshold: testTaskCompactBytes, Now: time.Now()})
+	if err != nil || !once.Compacted {
+		t.Fatalf("setup: %v %s", err, once.Reason)
+	}
+	plan := "## Plan\n\n- [ ] Run the rollback verification.\n\n"
+	status := "## Status: already resolved\n"
+	task := strings.Replace(once.Content, "## Sandman Task History\n", plan+"## Sandman Task History\n", 1)
+	task = strings.Replace(task, "<!-- end of Sandman Task History -->\n", "<!-- end of Sandman Task History -->\n"+status, 1)
+	task += checkpointTask(30)[len(checkpointTask(0)):]
+
+	launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), plan, "\n"+status)
+}
+
+// composedFor is the Task a launch composes before compaction.
+func composedFor(t *testing.T, task string) string {
+	t.Helper()
+	return prompt.EnsureManagedTaskContext(prompt.EnsureReviewTimeoutContext(task, 0))
+}
