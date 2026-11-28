@@ -228,6 +228,10 @@ func (s *ContainerSandbox) ExecWithStart(ctx context.Context, command string, st
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	// Nothing is spawned for a caller that has already given up.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
 	}

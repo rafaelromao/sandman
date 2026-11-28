@@ -420,11 +420,12 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	r.launcherStarted = !errors.Is(execErr, sandbox.ErrExecNotStarted)
 	// A refused launch that was asked to compact leaves the previous Task,
-	// whether or not anything moved. An automatic compaction stays, like the
+	// whether or not anything moved, and so does an abort before the launch
+	// that compacted. Otherwise an automatic compaction stays, like the
 	// composed Task it replaces: the next attempt reads from it what this one
 	// was told.
-	if errors.Is(execErr, sandbox.ErrExecNotStarted) && renderCfg.TaskPrompt != "" &&
-		r.forceTaskCompaction && r.compactsTask() &&
+	if errors.Is(execErr, sandbox.ErrExecNotStarted) && renderCfg.TaskPrompt != "" && r.compactsTask() &&
+		(r.forceTaskCompaction || archivePath != "" && ctx.Err() != nil) &&
 		(originalTaskErr == nil || os.IsNotExist(originalTaskErr)) {
 		var rollbackErr error
 		if os.IsNotExist(originalTaskErr) {
@@ -435,7 +436,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if rollbackErr != nil {
 			fmt.Fprintf(logFile, "restore Task after refused launch: %v\n", rollbackErr)
 		} else {
-			r.logCompaction(logFile, "task not compacted: sandbox launcher did not start; previous Task restored")
+			r.logCompaction(logFile, "task not compacted: the launcher did not start; previous Task restored")
 			if archivePath != "" {
 				r.removeUnusedTaskArchive(logFile, archivePath)
 			}

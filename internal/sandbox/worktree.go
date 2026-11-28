@@ -679,6 +679,10 @@ func (s *WorktreeSandbox) ExecWithStart(ctx context.Context, command string, std
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// Nothing is spawned for a caller that has already given up.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecNotStarted, err)
 	}

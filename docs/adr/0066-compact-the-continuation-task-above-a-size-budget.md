@@ -40,8 +40,10 @@ updates it.
   and treats text after it as the agent's. Archives are created and removed
   only inside the worktree, so a symlinked directory that leads out of it is
   an archive failure. An archive failure launches the Task unchanged. An abort
-  while compacting commits nothing: no launcher starts, a `--compact` Task is
-  left as it was and the request is not spent.
+  before the launcher starts commits nothing, whether compaction was automatic
+  or requested: neither sandbox spawns a process for a cancelled caller, a
+  compacted Task is restored and its archive removed, and a `--compact`
+  request is not spent.
 - **Structure is marked, not inferred.** Telling template, issue and agent
   text apart from headings alone is ambiguous: issue bodies, agent checkpoints
   and edited sections can all reuse template titles. A fresh implementation

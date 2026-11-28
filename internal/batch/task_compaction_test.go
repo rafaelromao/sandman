@@ -1020,51 +1020,77 @@ func TestImplementationLaunch_KeepsArchivesInsideTheWorktree(t *testing.T) {
 	}
 }
 
-// An abort while compacting launches nothing, keeps the previous Task and
-// leaves the forced request unspent.
+// cancelingSandbox aborts while the sandbox prepares to start the command.
+type cancelingSandbox struct {
+	*sandbox.WorktreeSandbox
+	cancel func()
+}
+
+func (s cancelingSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	return s.ExecWithStart(ctx, command, stdout, stderr, func() {})
+}
+
+func (s cancelingSandbox) ExecWithStart(ctx context.Context, command string, stdout, stderr io.Writer, started func()) error {
+	s.cancel()
+	return s.WorktreeSandbox.ExecWithStart(ctx, command, stdout, stderr, started)
+}
+
+// An abort before the launcher starts launches nothing, keeps the previous
+// Task and leaves a forced request unspent.
 func TestImplementationLaunch_AbortWhileCompactingLaunchesNothing(t *testing.T) {
-	for _, when := range []string{"after the archive", "after the Task"} {
-		t.Run(when, func(t *testing.T) {
-			root := t.TempDir()
-			initGitRepo(t, root)
-			sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
-			if err := sb.Start(sandbox.SandboxStart{}); err != nil {
-				t.Fatal(err)
-			}
-			recordTestNonce(t, sb.WorkDir())
-			task := checkpointTask(30)
-			if err := sb.WritePrompt(task); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
+	for _, forced := range []bool{true, false} {
+		for _, when := range []string{"after the archive", "after the Task", "while the sandbox prepares"} {
+			t.Run(fmt.Sprintf("forced=%t %s", forced, when), func(t *testing.T) {
+				testAbortedCompactionLaunch(t, forced, when)
+			})
+		}
+	}
+}
+
+func testAbortedCompactionLaunch(t *testing.T, forced bool, when string) {
+	t.Helper()
+	root := t.TempDir()
+	initGitRepo(t, root)
+	sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
+	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+		t.Fatal(err)
+	}
+	recordTestNonce(t, sb.WorkDir())
+	task := checkpointTask(30)
+	if err := sb.WritePrompt(task); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var launcher sandbox.Sandbox = sb
+	if when == "while the sandbox prepares" {
+		launcher = cancelingSandbox{sb, cancel}
+	}
+	run := NewAgentRun(&github.Issue{Number: 7}, "compaction", launcher)
+	run.forceTaskCompaction, run.taskCompactBytes = forced, testTaskCompactBytes
+	run.archiveWriter = func(worktree *os.Root, name string, data []byte, mode os.FileMode) error {
+		if when == "after the archive" {
 			defer cancel()
-			run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
-			run.forceTaskCompaction = true
-			run.archiveWriter = func(worktree *os.Root, name string, data []byte, mode os.FileMode) error {
-				if when == "after the archive" {
-					defer cancel()
-				}
-				return atomicfs.WriteAtomicNew(worktree, name, data, mode)
-			}
-			run.taskWriter = func(path string, data []byte, mode os.FileMode) error {
-				if when == "after the Task" {
-					defer cancel()
-				}
-				return atomicfs.WriteAtomic(path, data, mode)
-			}
+		}
+		return atomicfs.WriteAtomicNew(worktree, name, data, mode)
+	}
+	run.taskWriter = func(path string, data []byte, mode os.FileMode) error {
+		if when == "after the Task" {
+			defer cancel()
+		}
+		return atomicfs.WriteAtomic(path, data, mode)
+	}
 
-			result := run.Run(ctx, &prompt.Engine{}, "touch launched", prompt.RenderConfig{TaskPrompt: task})
+	result := run.Run(ctx, &prompt.Engine{}, "touch launched", prompt.RenderConfig{TaskPrompt: task})
 
-			got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
-			archives, _ := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*"))
-			_, launched := os.Stat(filepath.Join(sb.WorkDir(), "launched"))
-			if result.Status != "aborted" || run.launcherStarted || !os.IsNotExist(launched) {
-				t.Fatalf("status = %s, started = %t, command ran = %t", result.Status, run.launcherStarted, launched == nil)
-			}
-			if err != nil || string(got) != task || len(archives) != 0 {
-				t.Fatalf("Task changed or archives left: %v (%v)", archives, err)
-			}
-		})
+	got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
+	archives, _ := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*"))
+	_, launched := os.Stat(filepath.Join(sb.WorkDir(), "launched"))
+	if result.Status != "aborted" || run.launcherStarted || !os.IsNotExist(launched) {
+		t.Fatalf("status = %s, started = %t, command ran = %t", result.Status, run.launcherStarted, launched == nil)
+	}
+	if err != nil || string(got) != task || len(archives) != 0 {
+		t.Fatalf("Task changed or archives left: %d of %d bytes, %v (%v)", len(got), len(task), archives, err)
 	}
 }
 
