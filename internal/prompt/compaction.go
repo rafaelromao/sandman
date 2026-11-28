@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,6 +93,13 @@ const maxLabel = 120
 // pointerSafe keeps a title the history pointer lists from ending an HTML block
 // left open above it.
 var pointerSafe = strings.NewReplacer("-->", "->", "?>", "? >", "]]>", "]] >", "</", "< /")
+
+// mayJoin reports whether the section would continue whatever paragraph, list
+// or quote precedes it without a blank line, as an underlined title or text
+// without a heading does.
+func (s taskSection) mayJoin() bool {
+	return s.underlined || s.afterPointer
+}
 
 // label names a section in the history pointer's list of moved sections.
 func (s taskSection) label() string {
@@ -314,11 +322,11 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	kept := make([]string, len(tail))
 	var history []int
 	fixed := len(head)
-	// gaps allows for the blank line each underlined section may need once
-	// what preceded it moves (see below).
+	// gaps allows for the blank line a section may need once what preceded it
+	// moves (see below).
 	gaps := 0
 	for i, section := range tail {
-		if section.underlined {
+		if section.mayJoin() {
 			gaps += len("\n\n")
 		}
 		switch {
@@ -345,7 +353,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		if n > 0 {
 			section := tail[history[n-1]]
 			keptSize -= len(section.text)
-			if section.underlined {
+			if section.mayJoin() {
 				gaps -= len("\n\n")
 			}
 			listedBytes += len("- \n") + len(strings.TrimPrefix(section.label(), "## "))
@@ -386,16 +394,15 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	var b strings.Builder
 	b.WriteString(prefix + separator)
 	// headed holds where the pointer and each kept section with a heading
-	// start, to check they are still read as sections.
-	headed := []int{b.Len()}
+	// start: what follows the prefix must be read as exactly those sections.
+	pointerAt := b.Len()
+	headed := []int{pointerAt}
 	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, moved))
 	for i := rest; i < len(tail); i++ {
 		if kept[i] == "" {
 			continue
 		}
-		// An underlined title would continue whatever paragraph, list or quote
-		// now precedes it without a blank line.
-		if tail[i].underlined && (i == 0 || kept[i-1] == "") {
+		if tail[i].mayJoin() && (i == 0 || kept[i-1] == "") {
 			b.WriteString(blankLineAfter(b.String()))
 		}
 		if tail[i].heading != "" {
@@ -404,7 +411,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		b.WriteString(kept[i])
 	}
 	compacted := b.String()
-	if !startsSections(compacted, headed) {
+	if !startsSections(compacted, pointerAt, headed) {
 		result.Reason = "compacting would change how the Task reads"
 		return result
 	}
@@ -421,15 +428,11 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	return result
 }
 
-// startsSections reports whether a section starts at each of offsets.
-func startsSections(content string, offsets []int) bool {
-	doc := readTask(content)
-	for _, offset := range offsets {
-		if len(doc.boundaries(offset, offset+1)) == 0 {
-			return false
-		}
-	}
-	return true
+// startsSections reports whether the sections from offset from on start
+// exactly at offsets: none lost, and none made out of what was text.
+func startsSections(content string, from int, offsets []int) bool {
+	headings := readTask(content).boundaries(from, len(content))
+	return slices.EqualFunc(headings, offsets, func(h markdownHeading, offset int) bool { return h.start == offset })
 }
 
 // settingsSpan returns the byte range of the section a continuation writes the
