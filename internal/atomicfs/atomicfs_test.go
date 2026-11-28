@@ -112,12 +112,13 @@ func TestOpenAppend_CreatesAndAppends(t *testing.T) {
 // An archive must never replace what is already at its path.
 func TestWriteAtomicNew_NeverReplacesAnExistingFile(t *testing.T) {
 	dir := t.TempDir()
+	root := openRoot(t, dir)
 	path := filepath.Join(dir, "history", "archive.md")
 
-	if err := WriteAtomicNew(path, []byte("first"), 0o644); err != nil {
+	if err := WriteAtomicNew(root, "history/archive.md", []byte("first"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := WriteAtomicNew(path, []byte("second"), 0o644)
+	err := WriteAtomicNew(root, "history/archive.md", []byte("second"), 0o644)
 
 	if !errors.Is(err, os.ErrExist) {
 		t.Fatalf("err = %v, want os.ErrExist", err)
@@ -139,16 +140,47 @@ func TestWriteAtomicNew_NeverReplacesAnExistingFile(t *testing.T) {
 func TestWriteAtomicNew_FailedPublicationLeavesNothing(t *testing.T) {
 	failure := errors.New("operation not permitted")
 	saved := link
-	link = func(string, string) error { return failure }
+	link = func(*os.Root, string, string) error { return failure }
 	t.Cleanup(func() { link = saved })
 	dir := t.TempDir()
 
-	err := WriteAtomicNew(filepath.Join(dir, "archive.md"), []byte("content"), 0o644)
+	err := WriteAtomicNew(openRoot(t, dir), "archive.md", []byte("content"), 0o644)
 
 	if !errors.Is(err, failure) {
 		t.Fatalf("err = %v, want the link failure", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("left files behind: %v", entries)
+	}
+}
+
+func openRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	return root
+}
+
+// A symlink that leads out of the root fails the write.
+func TestWriteAtomicNew_NeverWritesOutsideItsRoot(t *testing.T) {
+	for name, target := range map[string]func(root, outside string) string{
+		"absolute": func(_, outside string) string { return outside },
+		"relative": func(root, outside string) string { rel, _ := filepath.Rel(root, outside); return rel },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, outside := t.TempDir(), t.TempDir()
+			if err := os.Symlink(target(dir, outside), filepath.Join(dir, "history")); err != nil {
+				t.Fatal(err)
+			}
+
+			err := WriteAtomicNew(openRoot(t, dir), "history/archive.md", []byte("content"), 0o644)
+
+			if entries, _ := os.ReadDir(outside); err == nil || len(entries) != 0 {
+				t.Fatalf("err = %v, wrote outside: %v", err, entries)
+			}
+		})
 	}
 }

@@ -516,16 +516,21 @@ func historyBytes(sections []taskSection, indexes []int) int {
 func swallowsProtected(body string, topLevel map[string]bool) bool {
 	var open fence
 	example, atStart := false, false
-	previous := ""
+	var paragraph []string
 	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimRight(line, "\r")
-		// A line underlined with dashes is an H2 too.
-		if underline := strings.TrimSpace(line); previous != "" && underline != "" && strings.Trim(underline, "-") == "" {
-			if heading, _ := h2Heading("## " + previous); runtimeHeadings[heading] || isProtectedHeading(heading) {
+		// A paragraph underlined with dashes is an H2 too.
+		switch text := strings.TrimSpace(line); {
+		case text != "" && strings.Trim(text, "-") == "" && len(paragraph) > 0:
+			if underlinesProtected(paragraph) {
 				return true
 			}
+			paragraph = paragraph[:0]
+		case text == "" || strings.HasPrefix(text, "#") || strings.HasPrefix(text, "```") || strings.HasPrefix(text, "~~~"):
+			paragraph = paragraph[:0]
+		default:
+			paragraph = append(paragraph, text)
 		}
-		previous = strings.TrimSpace(line)
 		if marker, ok := parseFence(line); ok {
 			switch {
 			case open.char == 0:
@@ -594,6 +599,26 @@ func runePrefix(text string, limit int) string {
 		limit--
 	}
 	return text[:max(limit, 0)]
+}
+
+// underlinesProtected reports whether an underlined paragraph names a section
+// compaction keeps: by its last line, or by its text from the first line that
+// can begin such a title, however it wraps.
+func underlinesProtected(paragraph []string) bool {
+	titles := []string{paragraph[len(paragraph)-1]}
+	for i, line := range paragraph {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "execution") || strings.HasPrefix(lower, "plan") || strings.HasPrefix(lower, "status:") {
+			titles = append(titles, strings.Join(paragraph[i:], " "))
+			break
+		}
+	}
+	for _, title := range titles {
+		if heading, _ := h2Heading("## " + title); runtimeHeadings[heading] || isProtectedHeading(heading) {
+			return true
+		}
+	}
+	return false
 }
 
 // cutOutsideFence returns the longest prefix of text, ending at a line break

@@ -35,9 +35,13 @@ updates it.
   and names that file in a `## Sandman Task History` section. An archive is
   published by hard-linking a complete temp file and never replaces an
   existing file; a second compaction in the same second takes the next free
-  name, and a file system without hard links fails the archive. The section ends with a marker, so a later compaction
-  replaces only what Sandman wrote and treats text after it as the agent's.
-  An archive failure launches the Task unchanged.
+  name, and a file system without hard links fails the archive. The section
+  ends with a marker, so a later compaction replaces only what Sandman wrote
+  and treats text after it as the agent's. Archives are created and removed
+  only inside the worktree, so a symlinked directory that leads out of it is
+  an archive failure. An archive failure launches the Task unchanged. An abort
+  while compacting commits nothing: no launcher starts, a `--compact` Task is
+  left as it was and the request is not spent.
 - **Structure is marked, not inferred.** Telling template, issue and agent
   text apart from headings alone is ambiguous: issue bodies, agent checkpoints
   and edited sections can all reuse template titles. A fresh implementation

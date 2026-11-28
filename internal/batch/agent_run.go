@@ -84,7 +84,7 @@ type AgentRun struct {
 	taskWriter          func(string, []byte, os.FileMode) error
 	// archiveWriter creates Task history archives without replacing any
 	// file; nil means atomicfs.WriteAtomicNew.
-	archiveWriter  func(string, []byte, os.FileMode) error
+	archiveWriter  func(*os.Root, string, []byte, os.FileMode) error
 	sessionWarning io.Writer
 	now            func() time.Time
 	// credentials reconciles rotating agent credentials between the host and
@@ -347,6 +347,14 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 				taskPrompt, archivePath, compactionSummary = r.compactTask(taskPrompt, renderCfg, logFile)
 			}
 		}
+		// An abort while compacting commits nothing.
+		if ctx.Err() != nil {
+			if archivePath != "" {
+				r.removeUnusedTaskArchive(logFile, archivePath)
+			}
+			r.status = "aborted"
+			return r.Result()
+		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			if archivePath != "" {
 				r.logCompaction(logFile, fmt.Sprintf("task not compacted: %v", err))
@@ -403,7 +411,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if compactionSummary != "" {
 		reportCompaction = sync.OnceFunc(func() { r.logCompaction(logFile, compactionSummary) })
 	}
-	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
+	var execErr error
+	if err := ctx.Err(); err != nil {
+		// Nothing is launched after an abort.
+		execErr = fmt.Errorf("%w: %w", sandbox.ErrExecNotStarted, err)
+	} else {
+		execErr = r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
+	}
 	r.launcherStarted = !errors.Is(execErr, sandbox.ErrExecNotStarted)
 	// A refused launch that was asked to compact leaves the previous Task,
 	// whether or not anything moved. An automatic compaction stays, like the
@@ -428,6 +442,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		}
 	} else if reportCompaction != nil {
 		reportCompaction()
+	}
+	if !r.launcherStarted && ctx.Err() != nil {
+		r.status = "aborted"
+		return r.Result()
 	}
 	r.ciRerunAction = strategy.CIRerunAction(parsedStdout, parsedStderr)
 	r.permissionDenials = parsersPermissionDenials(parsedStdout, parsedStderr)

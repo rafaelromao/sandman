@@ -46,10 +46,10 @@ type TaskCompactionRequest struct {
 	Template  prompt.RenderConfig
 	IssueBody string
 	Now       time.Time
-	// Write creates the archive atomically and must never replace an
-	// existing file, failing with an error wrapping os.ErrExist instead;
-	// nil means atomicfs.WriteAtomicNew.
-	Write func(path string, data []byte, mode os.FileMode) error
+	// Write creates the archive atomically inside the worktree and must never
+	// replace an existing file, failing with an error wrapping os.ErrExist
+	// instead; nil means atomicfs.WriteAtomicNew.
+	Write func(worktree *os.Root, name string, data []byte, mode os.FileMode) error
 }
 
 // CompactWorktreeTask compacts a Task that is about to be launched or
@@ -71,12 +71,18 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		return unchanged, nil
 	}
 	bounds := taskBounds(req, content)
+	// The archive stays inside the worktree, whatever symlinks it holds.
+	worktree, err := os.OpenRoot(req.WorkDir)
+	if err != nil {
+		return unchanged, fmt.Errorf("archive Task: %w", err)
+	}
+	defer worktree.Close()
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.
 	for n := 1; n <= maxArchiveNames; n++ {
 		archive := filepath.ToSlash(filepath.Join(".sandman", "task-history", taskArchiveName(req.Label, req.Now, n)))
-		path := filepath.Join(req.WorkDir, filepath.FromSlash(archive))
-		if _, err := os.Lstat(path); err == nil {
+		name := filepath.FromSlash(archive)
+		if _, err := worktree.Lstat(name); err == nil {
 			continue
 		}
 		result := prompt.CompactTask(content, prompt.TaskCompaction{
@@ -92,10 +98,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 			}
 			return result, nil
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return unchanged, fmt.Errorf("archive Task: %w", err)
-		}
-		err := write(path, []byte(content), 0o644)
+		err := write(worktree, name, []byte(content), 0o644)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
@@ -218,7 +221,12 @@ func (r *AgentRun) logCompaction(log io.Writer, summary string) {
 }
 
 func (r *AgentRun) removeUnusedTaskArchive(log io.Writer, path string) {
-	if err := os.Remove(filepath.Join(r.sandbox.WorkDir(), filepath.FromSlash(path))); err != nil {
+	worktree, err := os.OpenRoot(r.sandbox.WorkDir())
+	if err == nil {
+		err = worktree.Remove(filepath.FromSlash(path))
+		_ = worktree.Close()
+	}
+	if err != nil {
 		r.logCompaction(log, fmt.Sprintf("remove unused Task archive: %v", err))
 	}
 }

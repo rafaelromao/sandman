@@ -41,6 +41,8 @@
 package atomicfs
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -94,37 +96,42 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 }
 
 // link publishes WriteAtomicNew's temp file; tests replace it.
-var link = os.Link
+var link = (*os.Root).Link
 
-// WriteAtomicNew writes data to a new file at path without ever replacing an
-// existing one. The data goes to a unique temp file in the same directory,
-// which is then hard-linked to path, so path appears complete or not at all.
-// It fails with an error wrapping os.ErrExist when path already exists, and
-// with the link error, leaving no file at path, where the file system cannot
-// hard-link.
-func WriteAtomicNew(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create dir for %s: %w", path, err)
+// WriteAtomicNew writes data to a new file at name inside root without ever
+// replacing an existing one, and never outside root: a symlink that leads out
+// of it fails the write. The data goes to a unique temp file in the same
+// directory, which is then hard-linked to name, so the file appears complete
+// or not at all. It fails with an error wrapping os.ErrExist when name already
+// exists, and with the link error, leaving no file at name, where the file
+// system cannot hard-link.
+func WriteAtomicNew(root *os.Root, name string, data []byte, perm os.FileMode) error {
+	if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
+		return fmt.Errorf("create dir for %s: %w", name, err)
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.")
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("name temp for %s: %w", name, err)
+	}
+	tmpName := name + ".tmp." + hex.EncodeToString(suffix[:])
+	tmp, err := root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
-		return fmt.Errorf("create temp for %s: %w", path, err)
+		return fmt.Errorf("create temp for %s: %w", name, err)
 	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp for %s: %w", path, err)
+	defer func() { _ = root.Remove(tmpName) }()
+	_, err = tmp.Write(data)
+	if err == nil {
+		// The umask does not narrow the requested mode.
+		err = tmp.Chmod(perm)
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp for %s: %w", path, err)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
 	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	if err != nil {
+		return fmt.Errorf("write temp for %s: %w", name, err)
 	}
-	if err := link(tmpPath, path); err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
+	if err := link(root, tmpName, name); err != nil {
+		return fmt.Errorf("create %s: %w", name, err)
 	}
 	return nil
 }

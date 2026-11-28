@@ -110,9 +110,9 @@ func launchInWorktree(t *testing.T, root string, renderCfg prompt.RenderConfig, 
 		launch.writes = append(launch.writes, path)
 		return atomicfs.WriteAtomic(path, data, mode)
 	}
-	run.archiveWriter = func(path string, data []byte, mode os.FileMode) error {
-		launch.writes = append(launch.writes, path)
-		return atomicfs.WriteAtomicNew(path, data, mode)
+	run.archiveWriter = func(root *os.Root, name string, data []byte, mode os.FileMode) error {
+		launch.writes = append(launch.writes, filepath.Join(root.Name(), name))
+		return atomicfs.WriteAtomicNew(root, name, data, mode)
 	}
 	for _, apply := range customize {
 		apply(run)
@@ -262,7 +262,7 @@ func TestImplementationLaunch_ArchiveFailureLaunchesTheTaskUnchanged(t *testing.
 	task := checkpointTask(30)
 
 	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
-		run.archiveWriter = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+		run.archiveWriter = func(*os.Root, string, []byte, os.FileMode) error { return errors.New("disk full") }
 	})
 
 	if !strings.Contains(launch.stdin, "## Checkpoint 1\n") || strings.Contains(launch.stdin, "## Sandman Task History") {
@@ -474,7 +474,7 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 		t.Setenv("PATH", t.TempDir())
 	case "cannot spawn shell after an archive failure":
 		command = "true"
-		run.archiveWriter = func(string, []byte, os.FileMode) error { return errors.New("archive refused") }
+		run.archiveWriter = func(*os.Root, string, []byte, os.FileMode) error { return errors.New("archive refused") }
 		t.Setenv("PATH", t.TempDir())
 	case "cannot write Task":
 		command = "true"
@@ -953,6 +953,7 @@ func TestImplementationLaunch_KeepsTheChecklistHoweverItsHeadingIsWritten(t *tes
 		"closing signs, inside a block": "## Log\n\n```\nlog\n\n##  Execution  Checklist ###\n" + items + "```\n",
 		"underlined":                    "## Notes\n\ntext\n\nExecution Checklist\n-------------------\n" + items,
 		"other capitals and a suffix":   "## Execution checklist (updated)\n" + items,
+		"underlined over two lines":     "## Notes\n\ntext\n\nExecution\nChecklist\n---\n" + items,
 	} {
 		t.Run(name, func(t *testing.T) {
 			task := checkpointTask(0) + "\n" + checklist + checkpointTask(30)[len(checkpointTask(0)):]
@@ -997,6 +998,73 @@ func TestImplementationLaunch_KeepsSettingsWrittenPastATabHeading(t *testing.T) 
 				}
 			})
 		}
+	}
+}
+
+// An archive directory that leads out of the worktree fails like any other
+// archive: nothing is written outside and the composed Task is launched.
+func TestImplementationLaunch_KeepsArchivesInsideTheWorktree(t *testing.T) {
+	task, outside := checkpointTask(30), t.TempDir()
+
+	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
+		if err := os.Symlink(outside, filepath.Join(run.sandbox.WorkDir(), ".sandman", "task-history")); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("wrote outside the worktree: %v", entries)
+	}
+	if launch.stdin != composedFor(t, task) {
+		t.Fatal("the composed Task was not launched unchanged")
+	}
+}
+
+// An abort while compacting launches nothing, keeps the previous Task and
+// leaves the forced request unspent.
+func TestImplementationLaunch_AbortWhileCompactingLaunchesNothing(t *testing.T) {
+	for _, when := range []string{"after the archive", "after the Task"} {
+		t.Run(when, func(t *testing.T) {
+			root := t.TempDir()
+			initGitRepo(t, root)
+			sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
+			if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+				t.Fatal(err)
+			}
+			recordTestNonce(t, sb.WorkDir())
+			task := checkpointTask(30)
+			if err := sb.WritePrompt(task); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
+			run.forceTaskCompaction = true
+			run.archiveWriter = func(worktree *os.Root, name string, data []byte, mode os.FileMode) error {
+				if when == "after the archive" {
+					defer cancel()
+				}
+				return atomicfs.WriteAtomicNew(worktree, name, data, mode)
+			}
+			run.taskWriter = func(path string, data []byte, mode os.FileMode) error {
+				if when == "after the Task" {
+					defer cancel()
+				}
+				return atomicfs.WriteAtomic(path, data, mode)
+			}
+
+			result := run.Run(ctx, &prompt.Engine{}, "touch launched", prompt.RenderConfig{TaskPrompt: task})
+
+			got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
+			archives, _ := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*"))
+			_, launched := os.Stat(filepath.Join(sb.WorkDir(), "launched"))
+			if result.Status != "aborted" || run.launcherStarted || !os.IsNotExist(launched) {
+				t.Fatalf("status = %s, started = %t, command ran = %t", result.Status, run.launcherStarted, launched == nil)
+			}
+			if err != nil || string(got) != task || len(archives) != 0 {
+				t.Fatalf("Task changed or archives left: %v (%v)", archives, err)
+			}
+		})
 	}
 }
 
