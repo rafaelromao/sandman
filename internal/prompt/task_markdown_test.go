@@ -880,3 +880,59 @@ func TestCompactTask_ACutWithAKeptSectionStaysCut(t *testing.T) {
 		}
 	}
 }
+
+// Only one separator can count against Next Step's limit, the one after the
+// last text of its own, however many kept sections could join it.
+func TestCompactTask_ReservesOneSeparatorInNextStep(t *testing.T) {
+	kept := strings.Repeat("  ## Status: verified\n\n", 600)
+	for name, tc := range map[string]struct {
+		step  string
+		least int
+	}{
+		"a short step":        {"CURRENT: run the tests.\n\n## Old attempts\n\n" + paragraph("old", 5000) + "\n", 0},
+		"a step at the limit": {"CURRENT: run the tests.\n" + paragraph("now", 6000) + "\n## Old attempts\n\nold\n\n", nextStepLimit - 64},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := strings.Replace(structuredTask(checkpoints(30, 1000)...), "Implement the first slice.\n", tc.step+kept, 1)
+
+			got := compactTo(task, 36*1024, true)
+
+			from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "  ## Status: verified")
+			if !got.Compacted || from < 0 || to < from || !strings.Contains(got.Content[from:to], "CURRENT: run the tests.") {
+				t.Fatalf("compacted = %t (%s), moved %.200q", got.Compacted, got.Reason, got.Moved)
+			}
+			if to-from < tc.least || to-from > nextStepLimit+64 || strings.Count(got.Content, "  ## Status: verified") != 600 {
+				t.Fatalf("kept %d bytes of the step", to-from)
+			}
+			if again := compactTo(got.Content, 36*1024, true); again.Compacted {
+				t.Fatalf("a second compaction moved %.200q", again.Moved)
+			}
+		})
+	}
+}
+
+// A heading inside a list item is read with the list above it, so history moves
+// them together.
+func TestCompactTask_MovesAListsHeadingsWithTheList(t *testing.T) {
+	for name, lines := range map[string]string{
+		"a fence after the heading":   "- - </pre>\n  ## Status: z\n  ```",
+		"deeper text after the title": "- item\n  ## Status: z\n    ***",
+		"a comment in the list":       "- - <!DOCTYPE\n  ## Notes\n    -->",
+		"plain notes":                 "- item\n  ## Notes\n  text",
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := structuredTask(checkpoint(1, 2000), "\n"+lines+"\n", checkpoint(2, 2000), "\n"+lines+"\n", checkpoint(3, 3000))
+
+			got := compact(task, true)
+
+			if !got.Compacted {
+				t.Fatalf("not compacted: %s", got.Reason)
+			}
+			first, _, _ := strings.Cut(lines, "\n")
+			heading := strings.Split(lines, "\n")[1]
+			if strings.Count(got.Content, first+"\n"+heading+"\n") != strings.Count(got.Content, heading+"\n") {
+				t.Fatalf("a heading was parted from its list:\n%s", got.Content[strings.Index(got.Content, TaskHistoryHeading):])
+			}
+		})
+	}
+}

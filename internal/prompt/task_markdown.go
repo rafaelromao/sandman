@@ -46,6 +46,7 @@ type markdownBlock struct {
 	fence      fence  // zero for any other block
 	info       bool   // a fenced block with an info string
 	htmlKind   int    // an HTML block's type, 1 to 5, when it needs a closer
+	indented   bool   // an indented code block
 }
 
 // endsBy reports whether prefix, which cuts the block's last line, already
@@ -430,9 +431,10 @@ func (d *taskDocument) addIndentedCode(node *ast.CodeBlock) {
 		return
 	}
 	d.blocks = append(d.blocks, markdownBlock{
-		start:  lineStart(d.content, node.Lines().At(0).Start),
-		end:    lineEnd(d.content, node.Lines().At(n-1).Start),
-		closed: true,
+		start:    lineStart(d.content, node.Lines().At(0).Start),
+		end:      lineEnd(d.content, node.Lines().At(n-1).Start),
+		closed:   true,
+		indented: true,
 	})
 }
 

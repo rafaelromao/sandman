@@ -112,7 +112,9 @@ updates it.
   Nothing is rendered: what is written is sliced from the original bytes, and
   reading takes time in proportion to the Task's size. A section starts at
   every H2 written as `##` and indented by at most three spaces, inside a list
-  item too, and at every underlined H2 outside lists and block quotes. A line
+  item too, and at every underlined H2 outside lists and block quotes. History
+  moves a section inside a list item together with the section holding the
+  list. A line
   inside a code block, HTML comment or HTML block starts none. A code block
   that crosses the end of the structure stays whole, with the pointer after
   it, and a Next Step whose bounds fall inside a code or HTML block is not
@@ -131,8 +133,8 @@ updates it.
   cannot continue the paragraph, list or quote now above it; an indented one,
   which a list would still take in, also gets a `***` rule above it. A compaction is
   not applied unless its result reads as it was put together: sections
-  starting, and code and HTML blocks starting and ending, exactly where they
-  were written, and no block left open that was not. Before giving up it cuts
+  starting, and fenced code and HTML blocks starting and ending, exactly where
+  they were written, and no block left open that was not. Before giving up it cuts
   Next Step only between blocks, then leaves it whole. Titles the pointer lists are escaped, so they can
   neither open a block there nor end one left open above it. A parser failure
   leaves the Task unchanged.
