@@ -168,73 +168,6 @@ func inCodeBlock(content string, offset int) bool {
 	return i < len(lines) && fencedLines(lines)[i]
 }
 
-// fencedLines reports which lines belong to a fenced code block, delimiters
-// included. A fence with no closer (a truncated log, say) is read as text, so
-// it cannot swallow the headings after it.
-func fencedLines(lines []string) []bool {
-	fences := make([]fence, len(lines))
-	for i, line := range lines {
-		fences[i], _ = parseFence(strings.TrimRight(line, "\r\n"))
-	}
-	// closable[i] reports whether a later line closes a block opened at i.
-	closable := make([]bool, len(lines))
-	longest := map[byte]int{} // the longest bare fence further down
-	for i := len(lines) - 1; i >= 0; i-- {
-		if f := fences[i]; f.char != 0 {
-			closable[i] = longest[f.char] >= f.length
-			if !f.info {
-				longest[f.char] = max(longest[f.char], f.length)
-			}
-		}
-	}
-	fenced := make([]bool, len(lines))
-	var open fence
-	for i, f := range fences {
-		switch {
-		case open.char != 0:
-			fenced[i] = true
-			if f.closes(open) {
-				open = fence{}
-			}
-		case closable[i]:
-			open, fenced[i] = f, true
-		}
-	}
-	return fenced
-}
-
-// fence is a fenced code block delimiter: its character and length, and
-// whether an info string follows it.
-type fence struct {
-	char   byte
-	length int
-	info   bool
-}
-
-// parseFence recognises a fence line, indented by at most three spaces.
-func parseFence(line string) (fence, bool) {
-	trimmed := strings.TrimLeft(line, " ")
-	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 || trimmed[0] != '`' && trimmed[0] != '~' {
-		return fence{}, false
-	}
-	char := trimmed[0]
-	length := 0
-	for length < len(trimmed) && trimmed[length] == char {
-		length++
-	}
-	rest := trimmed[length:]
-	if length < 3 || char == '`' && strings.Contains(rest, "`") {
-		return fence{}, false
-	}
-	return fence{char: char, length: length, info: strings.TrimSpace(rest) != ""}, true
-}
-
-// closes reports whether f ends the block open started: the same character,
-// at least as long, and no info string.
-func (f fence) closes(open fence) bool {
-	return f.char == open.char && f.length >= open.length && !f.info
-}
-
 // isProtectedHeading reports whether a section holds agent state that is
 // never moved: the checklist, a plan or a status line, in any capitalisation.
 func isProtectedHeading(heading string) bool {
@@ -514,7 +447,7 @@ func historyBytes(sections []taskSection, indexes []int) int {
 // heading, which also heads a real section, closed by a bare fence with no
 // fence inside.
 func swallowsProtected(body string, topLevel map[string]bool) bool {
-	var open fence
+	var scanner fenceScanner
 	example, atStart := false, false
 	var paragraph []string
 	for line := range strings.SplitSeq(body, "\n") {
@@ -531,19 +464,28 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 		default:
 			paragraph = append(paragraph, text)
 		}
-		if marker, ok := parseFence(line); ok {
-			switch {
-			case open.char == 0:
-				open, atStart = marker, true
-			case marker.closes(open):
-				open, example = fence{}, false
-			case example:
-				return true
-			}
+		before := scanner.open
+		scanner.next(line, true)
+		switch {
+		case scanner.open != before && scanner.open.char != 0:
+			atStart = true
 			continue
+		case scanner.open != before:
+			// The block ended, at its closer or with its list item.
+			example = false
+			if before.closedBy(line) {
+				continue
+			}
+		case before.char != 0:
+			if _, ok := parseFence(line); ok {
+				if example {
+					return true
+				}
+				continue
+			}
 		}
 		if heading, ok := h2Heading(strings.TrimSpace(line)); ok && (runtimeHeadings[heading] || isProtectedHeading(heading)) {
-			if !open.info || !atStart || !topLevel[heading] {
+			if !scanner.open.info || !atStart || !topLevel[heading] {
 				return true
 			}
 			example = true
@@ -563,30 +505,13 @@ func cutInside(text string, limit int) string {
 	if open.char == 0 {
 		return prefix
 	}
-	closer := "\n" + strings.Repeat(string(open.char), open.length)
+	closer := "\n" + strings.Repeat(" ", open.column) + strings.Repeat(string(open.char), open.length)
 	short := runePrefix(text, limit-len(closer))
 	if openFence(short) != open {
 		// The block's delimiter and its closer do not both fit.
 		return cutOutsideFence(text, limit)
 	}
 	return short + closer
-}
-
-// openFence returns the delimiter of the code block text leaves open, or the
-// zero fence.
-func openFence(text string) fence {
-	var open fence
-	for line := range strings.SplitSeq(text, "\n") {
-		if f, ok := parseFence(strings.TrimRight(line, "\r")); ok {
-			switch {
-			case open.char == 0:
-				open = f
-			case f.closes(open):
-				open = fence{}
-			}
-		}
-	}
-	return open
 }
 
 // runePrefix returns the longest prefix of text of at most limit bytes that
@@ -629,21 +554,14 @@ func cutOutsideFence(text string, limit int) string {
 		return text
 	}
 	safe, offset := 0, 0
-	var open fence
+	var scanner fenceScanner
 	for _, line := range strings.SplitAfter(text, "\n") {
 		if offset+len(line) > limit || !strings.HasSuffix(line, "\n") {
 			break
 		}
-		if f, ok := parseFence(strings.TrimRight(line, "\r\n")); ok {
-			switch {
-			case open.char == 0:
-				open = f
-			case f.closes(open):
-				open = fence{}
-			}
-		}
+		scanner.next(line, true)
 		offset += len(line)
-		if open.char == 0 {
+		if scanner.open.char == 0 {
 			safe = offset
 		}
 	}

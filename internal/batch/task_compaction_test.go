@@ -1094,6 +1094,40 @@ func testAbortedCompactionLaunch(t *testing.T, forced bool, when string) {
 	}
 }
 
+// A code block opened on a list item's line holds no headings: neither history
+// nor a template is split inside it.
+func TestImplementationLaunch_ReadsCodeBlocksInListItems(t *testing.T) {
+	block := "- ```text\n  ## Example output\n  ```\n"
+	checklist := "## Execution Checklist: release\n\n" + block + "- [ ] Verify rollback\n"
+	for name, tc := range map[string]struct {
+		task   string
+		forced bool
+	}{
+		"in marked history":   {task: checkpointTask(0) + "\n" + checklist + checkpointTask(30)[len(checkpointTask(0)):]},
+		"in unmarked history": {task: unmarkedTask(0) + "\n" + checklist + checkpointTask(30)[len(checkpointTask(0)):], forced: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: tc.task}, testTaskCompactBytes, nil, func(run *AgentRun) {
+				run.forceTaskCompaction = tc.forced
+			})
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, tc.task), checklist)
+		})
+	}
+	t.Run("in a template", func(t *testing.T) {
+		example := "- ```text\n  ## Next Step\n  " + strings.Repeat("example output. ", 400) + "\n  ```\n"
+		rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: "# Task\n\n## Guide\n\n" + example + "\n## Footer\n\nF.\n"}, prompt.IssueData{}, testTaskNonce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := withCheckpoints(rendered, 30)
+
+		launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+		requireCompactedLaunchKeeps(t, launch, composedFor(t, task), example)
+	})
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

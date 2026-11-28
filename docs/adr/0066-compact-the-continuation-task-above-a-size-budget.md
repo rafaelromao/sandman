@@ -99,7 +99,8 @@ updates it.
   change the span is not applied. If an agent removes the Next Step markers
   the step is kept whole; if it removes the closing marker and the layout
   cannot be verified, the Task is left unchanged.
-- **Code blocks.** They are read across the whole Task. One that crosses the
+- **Code blocks.** They are read across the whole Task, including those a list
+  item opens on its own line, which end with the item. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
   whose bounds fall inside one is not capped.
 - **Where.** Compaction happens once, where the composed Task is written before

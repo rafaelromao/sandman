@@ -931,3 +931,26 @@ func BenchmarkSplitTaskSections_UnmatchedFences(b *testing.B) {
 		splitTaskSections(content)
 	}
 }
+
+// A list item can open a code block on its own line; its lines are code until
+// the block is closed or the item ends.
+func TestSplitTaskSections_ReadsCodeBlocksOpenedByListItems(t *testing.T) {
+	for name, tc := range map[string]struct{ content, want string }{
+		"bullet":                {"- ```text\n  ## code\n  ```\n## After\n", "## After"},
+		"ordered, tilde":        {"1. ~~~\n   ## code\n   ~~~\n## After\n", "## After"},
+		"nested":                {"- - ```\n    ## code\n    ```\n## After\n", "## After"},
+		"tab after the marker":  {"-\t```\n    ## code\n    ```\n## After\n", "## After"},
+		"blank lines inside":    {"* ```\n\n  ## code\n\n  ```\n## After\n", "## After"},
+		"ends with its item":    {"- ```\n  ## code\ntext\n## After\n", "## After"},
+		"heading ends the item": {"- ```\n## After\n", "## After"},
+		"not a list marker":     {"-```\n  ## Real\n", "## Real"},
+		"fence after the text":  {"- run ``` here\n  ## Real\n", "## Real"},
+	} {
+		if got := strings.Join(headingsIn(tc.content), "|"); got != tc.want {
+			t.Errorf("%s: headings = %q, want %q", name, got, tc.want)
+		}
+	}
+	if open := openFence("- ```text\n  x\n"); open.column != 2 {
+		t.Errorf("open = %+v", open)
+	}
+}
