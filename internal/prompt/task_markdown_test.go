@@ -651,3 +651,31 @@ func TestBuiltInTaskBounds_ChecksATemplateInLinearMemory(t *testing.T) {
 		t.Fatalf("twice the headings allocate %d bytes, over three times %d", large, small)
 	}
 }
+
+// Wherever the limit falls, a cut Next Step leaves no block open, whatever
+// looks like a delimiter inside it or would once a line is cut short.
+func TestCompactTask_NeverLeavesABlockOpenAtTheLimit(t *testing.T) {
+	more := strings.Repeat("more output\n", 100)
+	for name, tc := range map[string]struct{ before, after string }{
+		"a fence indented too far":      {"```markdown\n", "\n    ```\n" + more + "```\n"},
+		"a quoted fence in a fence":     {"```markdown\n", "\n> ```\n" + more + "```\n"},
+		"a tabbed fence in a fence":     {"```markdown\n", "\n\t```\n" + more + "```\n"},
+		"a fence with words in a fence": {"```\n", "\n```bash\n" + more + "```\n"},
+		"an inline span cut short":      {"``` ", " `x`\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for padding := 3950; padding < 4060; padding++ {
+				step := tc.before + strings.Repeat("x", padding) + tc.after
+				task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1) +
+					"\n## Plan\n\n```\nkeep\n```\n"
+
+				got := compact(task, true)
+
+				to := strings.Index(got.Content, "## Required Order")
+				if !got.Compacted || to < 0 || openFence(got.Content[:to]).char != 0 {
+					t.Fatalf("padding %d: compacted = %t (%s)", padding, got.Compacted, got.Reason)
+				}
+			}
+		})
+	}
+}

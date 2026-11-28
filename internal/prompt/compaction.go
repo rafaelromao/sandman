@@ -689,21 +689,52 @@ func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
 // cutInside returns at most limit bytes of the section, ending between
 // characters and closing a code or HTML block the cut leaves open.
 func cutInside(section taskSection, limit int) string {
-	prefix := runePrefix(section.text, limit)
-	block, open := section.leftOpen(len(prefix))
-	if !open {
+	prefix := section.cutLine(limit)
+	closer, delimited := section.closerAfter(prefix)
+	if closer == "" {
 		return prefix
 	}
-	closer := "\n" + block.closer
-	short := runePrefix(section.text, limit-len(closer))
-	if len(short) < block.start+block.opening {
+	short := section.cutLine(limit - len(closer))
+	if len(short) < delimited {
 		// The block's delimiter and its closer do not both fit.
 		return cutOutsideBlocks(section, limit)
 	}
-	if again, open := section.leftOpen(len(short)); !open || again.start != block.start {
+	if again, _ := section.closerAfter(short); again == "" {
 		return short
 	}
 	return short + closer
+}
+
+// cutLine returns at most limit bytes of the section, without a last line that
+// cut short would close the block holding it.
+func (s taskSection) cutLine(limit int) string {
+	prefix := runePrefix(s.text, limit)
+	start := lineStart(prefix, len(prefix))
+	_, _, closes := closingFence(strings.TrimLeft(prefix[start:], " \t>"))
+	_, _, did := closingFence(strings.TrimLeft(s.text[start:lineEnd(s.text, start)], " \t>"))
+	if closes && !did {
+		return prefix[:start]
+	}
+	return prefix
+}
+
+// closerAfter returns what a prefix of the section needs after it to leave no
+// block open, and how long a prefix must be to hold the delimiter it closes.
+func (s taskSection) closerAfter(prefix string) (string, int) {
+	if block, open := s.leftOpen(len(prefix)); open {
+		return "\n" + block.closer, block.start + block.opening
+	}
+	// A line cut short can open a fence the whole line, with a backtick after
+	// its delimiter, does not.
+	start := lineStart(prefix, len(prefix))
+	line := prefix[start:]
+	if !isFenceLine(line) || isFenceLine(s.text[start:lineEnd(s.text, start)]) {
+		return "", 0
+	}
+	trimmed := strings.TrimLeft(line, " ")
+	indent := len(line) - len(trimmed)
+	delimiter := trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, trimmed[:1]))]
+	return "\n" + line[:indent] + delimiter, start + indent + len(delimiter)
 }
 
 // leftOpen returns the block a cut at offset at leaves needing a closing line.
@@ -713,7 +744,10 @@ func (s taskSection) leftOpen(at int) (markdownBlock, bool) {
 			break
 		}
 		if at < block.end {
-			return block, block.closer != "" && !(block.closed && block.endsBy(s.text[:at]))
+			// Only the block's own last line can already close it: one like it
+			// above is part of the block.
+			closed := block.closed && lineStart(s.text, at) == lineStart(s.text, block.end-1) && block.endsBy(s.text[:at])
+			return block, block.closer != "" && !closed
 		}
 	}
 	return markdownBlock{}, false
