@@ -102,12 +102,15 @@ updates it.
   left to the automatic rule. The CLI itself writes no Task. A restart before
   the first launch drops the request. Command and environment validation and
   opening the required run log all happen before the continuation Task or
-  archive is written. If the sandbox definitively refuses before spawning the
-  launcher, Sandman restores the previous Task, whether or not anything moved,
-  and removes any unused archive. It retains the archive if restoration fails
-  or the launcher started. A failed atomic Task write also removes the unused
-  archive; the run log reports success only once the launch is no longer
-  subject to this rollback.
+  archive is written. If the sandbox definitively refuses to spawn that
+  launch, Sandman restores the previous Task, whether or not anything moved,
+  and removes any unused archive. An automatic compaction is not rolled back:
+  like the uncompacted Task, the compacted one stays with its archive, and the
+  next attempt reads from it what was composed, such as review evidence or the
+  recovery guard. It retains the archive if restoration fails or the launcher
+  started. A failed atomic Task write also removes the unused archive; the run
+  log reports success only once the launch is no longer subject to this
+  rollback.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

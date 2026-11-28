@@ -405,10 +405,12 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 	execErr := r.execute(attemptCtx, renderedCmd, stdout, stderr, parsedStdout, parsedStderr, logFile, reportCompaction)
 	r.launcherStarted = !errors.Is(execErr, sandbox.ErrExecNotStarted)
-	// A refused launch that replaced the Task for compaction, or was asked to
-	// compact it, leaves the previous Task, whether or not anything moved.
+	// A refused launch that was asked to compact leaves the previous Task,
+	// whether or not anything moved. An automatic compaction stays, like the
+	// composed Task it replaces: the next attempt reads from it what this one
+	// was told.
 	if errors.Is(execErr, sandbox.ErrExecNotStarted) && renderCfg.TaskPrompt != "" &&
-		(archivePath != "" || r.forceTaskCompaction && r.compactsTask()) &&
+		r.forceTaskCompaction && r.compactsTask() &&
 		(originalTaskErr == nil || os.IsNotExist(originalTaskErr)) {
 		var rollbackErr error
 		if os.IsNotExist(originalTaskErr) {

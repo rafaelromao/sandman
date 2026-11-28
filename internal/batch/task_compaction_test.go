@@ -502,6 +502,30 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	}
 }
 
+// An automatically compacted Task stays after a refused start, so the next
+// attempt still reads what this launch composed, such as the recovery guard.
+func TestImplementationLaunch_RefusalKeepsAnAutomaticCompaction(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+	sb := sandbox.NewWorktreeSandbox(root, filepath.Join(root, "worktrees"), "compaction", "main")
+	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
+		t.Fatal(err)
+	}
+	recordTestNonce(t, sb.WorkDir())
+	task := prompt.ContextRecoveryTaskPromptWithReviewSettings(checkpointTask(30), "/sandman review", true, 1800)
+	run := NewAgentRun(&github.Issue{Number: 7}, "compaction", sb)
+	run.taskCompactBytes = testTaskCompactBytes
+	t.Setenv("PATH", t.TempDir())
+
+	result := run.Run(context.Background(), &prompt.Engine{}, "true", prompt.RenderConfig{TaskPrompt: task, ContextRecovery: true})
+
+	got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
+	archives, _ := filepath.Glob(filepath.Join(sb.WorkDir(), ".sandman", "task-history", "*.md"))
+	if result.Status != "failure" || err != nil || len(got) >= len(task) || !strings.Contains(string(got), "## Context Recovery Guard") || len(archives) != 1 {
+		t.Fatalf("status = %s, Task %d of %d bytes, archives %v (%v)", result.Status, len(got), len(task), archives, err)
+	}
+}
+
 // The row driver hands a forced compaction to the first execution only;
 // re-entry after a wait launches without it.
 func TestRowDriverForcesCompactionOnlyAtTheFirstLaunch(t *testing.T) {
