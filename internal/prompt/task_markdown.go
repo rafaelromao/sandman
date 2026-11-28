@@ -45,12 +45,10 @@ type markdownBlock struct {
 	info       bool   // a fenced block with an info string
 }
 
-// fence is the delimiter of a fenced code block: its character and length, and
-// the column it starts at, past any list or block quote markers.
+// fence is the delimiter of a fenced code block: its character and length.
 type fence struct {
 	char   byte
 	length int
-	column int
 }
 
 type taskDocument struct {
@@ -85,9 +83,11 @@ type containerParser struct{ parser.BlockParser }
 
 func (p containerParser) Open(parent ast.Node, reader text.Reader, context parser.Context) (ast.Node, parser.State) {
 	depth := 0
-	for node := parent; node != nil && node.Kind() != ast.KindDocument; node = node.Parent() {
-		if depth++; depth >= maxContainerDepth {
-			return nil, parser.NoChildren
+	for node := parent; node != nil; node = node.Parent() {
+		if kind := node.Kind(); kind == ast.KindList || kind == ast.KindBlockquote {
+			if depth++; depth >= maxContainerDepth {
+				return nil, parser.NoChildren
+			}
 		}
 	}
 	return p.BlockParser.Open(parent, reader, context)
@@ -350,7 +350,7 @@ func (d *taskDocument) addFence(node *ast.FencedCodeBlock) {
 		start:  start,
 		end:    lineEnd(d.content, start),
 		closer: prefix + strings.Repeat(first[column:column+1], length),
-		fence:  fence{char: first[column], length: length, column: column},
+		fence:  fence{char: first[column], length: length},
 		info:   node.Info != nil,
 	}
 	if n := node.Lines().Len(); n > 0 {
@@ -459,11 +459,4 @@ func openBlock(content string) (markdownBlock, bool) {
 		return doc.blocks[n-1], true
 	}
 	return markdownBlock{}, false
-}
-
-// openFence returns the delimiter of the code block text leaves open, or the
-// zero fence.
-func openFence(content string) fence {
-	block, _ := openBlock(content)
-	return block.fence
 }

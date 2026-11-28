@@ -9,6 +9,18 @@ import (
 	"github.com/yuin/goldmark/parser"
 )
 
+// openFence returns the delimiter of the code block content leaves open and the
+// column it starts at, past any list or block quote markers, or zeros.
+func openFence(content string) (open struct {
+	char   byte
+	column int
+}) {
+	if block, ok := openBlock(content); ok && block.fence.char != 0 {
+		open.char, open.column = block.fence.char, len(block.closer)-block.fence.length
+	}
+	return open
+}
+
 // planBeforeHistory is a Task whose given section is the oldest thing the agent
 // appended, so it is the first to move if compaction does not keep it.
 func planBeforeHistory(section string) string {

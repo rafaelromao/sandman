@@ -238,8 +238,8 @@ func lastTemplateSection(template string) string {
 // Next Step` section itself is editable: without markers nothing proves that
 // the sections after it were added by the agent and not by the template. It is
 // editable only if the Task holds exactly one before the requirements, and
-// neither it nor the template's holds a heading sections are not split at, nor
-// the template's a placeholder.
+// neither it nor the template's holds or ends at an H1 or underlined heading,
+// nor the template's holds a placeholder.
 func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (bounds TaskBounds, located bool) {
 	defer func() {
 		if recover() != nil {
@@ -290,7 +290,7 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (bounds Task
 }
 
 // unverifiableNextStep reports whether a template's Next Step section holds a
-// placeholder or a heading it is not split at, or ends at one.
+// placeholder, or holds or ends at an H1 or underlined heading.
 func unverifiableNextStep(template string) bool {
 	doc := readTask(template)
 	offset := 0

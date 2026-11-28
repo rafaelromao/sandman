@@ -159,18 +159,12 @@ func splitAtPointerEnd(sections []taskSection) []taskSection {
 // them (see boundaries). Text before the first heading is the preamble
 // section.
 func splitTaskSections(content string) []taskSection {
-	return splitTaskSectionsFrom(content, 0)
-}
-
-// splitTaskSectionsFrom splits content from the line starting at byte offset
-// from. The Task is read whole, so a block that crosses from stays in the
-// preamble and its lines are never headings.
-func splitTaskSectionsFrom(content string, from int) []taskSection {
-	return readTask(content).sections(from, len(content))
+	return readTask(content).sections(0, len(content))
 }
 
 // sections splits the content between two line starts, slicing the original
-// bytes.
+// bytes. The Task is read whole, so a block that crosses from stays in the
+// preamble and its lines are never headings.
 func (d taskDocument) sections(from, to int) []taskSection {
 	headings := d.boundaries(from, to)
 	sections := make([]taskSection, len(headings)+1)
