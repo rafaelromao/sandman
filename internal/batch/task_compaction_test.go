@@ -964,6 +964,42 @@ func TestImplementationLaunch_KeepsTheChecklistHoweverItsHeadingIsWritten(t *tes
 	}
 }
 
+// Composition does not take a tab after "##" for a heading, so it can write the
+// settings into what follows; compaction keeps that and moves the rest.
+func TestImplementationLaunch_KeepsSettingsWrittenPastATabHeading(t *testing.T) {
+	field := "- Review command: `/current-review-command`"
+	timeout := "- Delegated review response timeout: `1800` seconds"
+	for name, delimiter := range map[string]string{"tab": "##\t", "space": "## "} {
+		for layout, tc := range map[string]struct{ template, history string }{
+			"before Next Step": {template: "# Task\n\n## Runtime Context\n\n- Current branch: `b`\n\n" + delimiter + "Next Step\n\nStart.\n\n## Footer\n\nF.\n"},
+			"before history": {
+				template: "# Task\n\n## Next Step\n\nStart.\n\n## Runtime Context\n\n- Current branch: `b`\n",
+				history:  "\n" + delimiter + "Old checkpoint\n\n" + strings.Repeat("old detail. ", 300) + "\n",
+			},
+		} {
+			t.Run(name+" "+layout, func(t *testing.T) {
+				rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: tc.template}, prompt.IssueData{}, testTaskNonce)
+				if err != nil {
+					t.Fatal(err)
+				}
+				task := rendered + tc.history
+				task = strings.Replace(task, "Start.\n", "Start.\n"+strings.Repeat("Obsolete step.\n", 1000), 1)
+				task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+				task += checkpointTask(30)[len(checkpointTask(0)):]
+
+				launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+				requireCompactedLaunchKeeps(t, launch, composedFor(t, task), field, timeout)
+				for _, line := range []string{field, timeout} {
+					if n := strings.Count(launch.stdin, line); n != 1 {
+						t.Errorf("%d %q lines, want 1", n, line)
+					}
+				}
+			})
+		}
+	}
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

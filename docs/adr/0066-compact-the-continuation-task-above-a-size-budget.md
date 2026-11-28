@@ -87,7 +87,10 @@ updates it.
   while a real one exists. Any section with a line a continuation takes for a
   Runtime Context heading, even inside a code block, is also kept, so
   compaction never moves review settings. How a continuation picks the section
-  it writes them to is unchanged. If an agent removes the Next Step markers
+  it writes them to is unchanged. Composition and compaction do not read every
+  heading alike, so every section that span runs into, as composition reads
+  it, is kept, the pointer goes after it, and a compaction that would still
+  change the span is not applied. If an agent removes the Next Step markers
   the step is kept whole; if it removes the closing marker and the layout
   cannot be verified, the Task is left unchanged.
 - **Code blocks.** They are read across the whole Task. One that crosses the

@@ -292,22 +292,37 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	for _, section := range splitTaskSections(content) {
 		topLevel[section.heading] = true
 	}
+	// Sections the settings span runs into are kept whole too: composition
+	// ends a section where it reads a heading, which compaction may not.
+	settingsFrom, settingsTo := settingsSpan(content)
+	keeps := func(offset int, section taskSection) bool {
+		return isKeptSection(section, topLevel) || offset < settingsTo && offset+len(section.text) > settingsFrom
+	}
 	// A Next Step whose bounds fall inside a code block is not capped: cutting
 	// there would split the block.
 	from, to := bounds.NextStepStart, bounds.NextStepEnd
 	if inCodeBlock(content, from) || inCodeBlock(content, to) {
 		from, to = 0, 0
 	}
-	head, moved, changed := capNextStep(content[:bounds.StructureEnd], from, to, topLevel)
+	head, moved, changed := capNextStep(content[:bounds.StructureEnd], from, to, keeps)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
 	// goes right after it, so text the agent appends later never becomes part
 	// of the pointer.
 	tail := splitAtPointerEnd(splitTaskSectionsFrom(content, bounds.StructureEnd))
+	offsets := make([]int, len(tail))
+	for i, offset := 0, bounds.StructureEnd; i < len(tail); i++ {
+		offsets[i], offset = offset, offset+len(tail[i].text)
+	}
 	prefix, rest := head, 0
 	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
 		prefix, rest = head+tail[0].text, 1
+	}
+	// Nor does the pointer go inside the settings span.
+	for rest < len(tail) && settingsFrom < offsets[rest] && offsets[rest] < settingsTo {
+		prefix += tail[rest].text
+		rest++
 	}
 	separator := blankLineAfter(prefix)
 	kept := make([]string, len(tail))
@@ -317,7 +332,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		switch {
 		case section.generatedPointer:
 			continue
-		case section.heading == "" && !section.afterPointer, isKeptSection(section, topLevel):
+		case section.heading == "" && !section.afterPointer, keeps(offsets[i], section):
 			kept[i] = section.text
 			fixed += len(section.text)
 		default:
@@ -380,6 +395,10 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		b.WriteString(text)
 	}
 	compacted := b.String()
+	if activeSettings(compacted) != activeSettings(content) {
+		result.Reason = "compacting would change the active review settings"
+		return result
+	}
 	if len(compacted) >= len(content) {
 		result.Reason = "protected content exceeds the target, and moving the rest would not shrink the Task"
 		return result
@@ -387,6 +406,35 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
+}
+
+// settingsSpan returns the byte range of the section a continuation writes the
+// review settings in, read as composition reads it, or -1, -1.
+func settingsSpan(content string) (int, int) {
+	lines := strings.Split(content, "\n")
+	first, end := runtimeContextSection(lines)
+	if first < 0 {
+		return -1, -1
+	}
+	from := 0
+	for _, line := range lines[:first] {
+		from += len(line) + 1
+	}
+	to := from
+	for _, line := range lines[first:end] {
+		to += len(line) + 1
+	}
+	return from, min(to, len(content))
+}
+
+// activeSettings returns the text of the settings span, without the blank space
+// that ends it.
+func activeSettings(content string) string {
+	from, to := settingsSpan(content)
+	if from < 0 {
+		return ""
+	}
+	return strings.TrimRight(content[from:to], " \t\r\n")
 }
 
 // blankLineAfter returns the newlines that put a blank line after text. It
@@ -404,17 +452,19 @@ func blankLineAfter(text string) string {
 // capNextStep keeps the first 4 KiB of the Next Step group of a Task's
 // structure, the bytes from from to to. Once cut, what follows in the group
 // moves too: the group keeps a prefix, never fragments from beyond the limit.
-// Kept sections inside it stay and do not count.
-func capNextStep(structure string, from, to int, topLevel map[string]bool) (string, []string, bool) {
+// Sections keeps reports, given their offset, stay and do not count.
+func capNextStep(structure string, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
 	if from >= to {
 		return structure, nil, false
 	}
 	sections := splitTaskSections(structure[from:to])
+	kept := make([]bool, len(sections))
 	size := 0
-	for _, section := range sections {
-		if !isKeptSection(section, topLevel) {
-			size += len(section.text)
+	for i, offset := 0, from; i < len(sections); i++ {
+		if kept[i] = keeps(offset, sections[i]); !kept[i] {
+			size += len(sections[i].text)
 		}
+		offset += len(sections[i].text)
 	}
 	if size <= nextStepLimit {
 		return structure, nil, false
@@ -424,10 +474,10 @@ func capNextStep(structure string, from, to int, topLevel map[string]bool) (stri
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
 	cut := false
-	for _, section := range sections {
+	for i, section := range sections {
 		switch {
 		case section.text == "":
-		case isKeptSection(section, topLevel):
+		case kept[i]:
 			b.WriteString(section.text)
 		case !cut && len(section.text) <= room:
 			b.WriteString(section.text)
