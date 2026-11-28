@@ -507,7 +507,7 @@ func TestCompactTask_BudgetsAgainstThePointerItWrites(t *testing.T) {
 	base := structuredTask()
 	oldest := checkpoint(1, 5000)
 	opts := TaskCompaction{Threshold: 1, Target: testTarget, Force: true, ArchivePath: ".sandman/task-history/a.md"}
-	pointer := renderHistoryPointer(opts, len(base)+len(oldest)+testTarget, []string{"## Checkpoint 1"}, 1)
+	pointer := renderHistoryPointer(opts, len(base)+len(oldest)+testTarget, []string{"## Checkpoint 1"})
 	heading := "\n## Checkpoint 2\n\n"
 	room := testTarget - len(base) - len(pointer) - 2 - 8
 	task := base + oldest + heading + strings.Repeat("y", room-len(heading)-1) + "\n"
@@ -830,5 +830,24 @@ func TestCompactTask_NeverLeavesAnOversizedDelimiterOpen(t *testing.T) {
 	next := strings.Index(got.Content, "## Required Order")
 	if !got.Compacted || next < 0 || openFence(got.Content[:next]).char != 0 {
 		t.Fatalf("compacted = %t, left a block open before the next section", got.Compacted)
+	}
+}
+
+// The pointer names every moved section, however many.
+func TestCompactTask_NamesEveryMovedSection(t *testing.T) {
+	got := compact(structuredTask(checkpoints(40, 300)...), true)
+
+	if !got.Compacted || len(got.Moved) <= 20 {
+		t.Fatalf("compacted = %t, moved %d sections", got.Compacted, len(got.Moved))
+	}
+	for i := 1; i <= 40; i++ {
+		kept := strings.Contains(got.Content, fmt.Sprintf("\n## Checkpoint %d\n", i))
+		named := strings.Contains(got.Content, fmt.Sprintf("\n- Checkpoint %d\n", i))
+		if kept == named {
+			t.Fatalf("Checkpoint %d: kept = %t, named = %t:\n%s", i, kept, named, got.Content)
+		}
+	}
+	if len(got.Content) > testTarget {
+		t.Fatalf("%d bytes, over the target", len(got.Content))
 	}
 }

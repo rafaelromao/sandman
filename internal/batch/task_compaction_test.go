@@ -800,6 +800,45 @@ func TestImplementationLaunch_KeepsTheSettingsWhereverContinuationWroteThem(t *t
 	}
 }
 
+// Rewriting the sections above Next Step neither takes its marker nor leaves
+// lines inside the step: it is still capped and the settings stay whole.
+func TestImplementationLaunch_CapsNextStepWhateverIsComposedAboveIt(t *testing.T) {
+	command := "/review " + strings.TrimSpace(strings.Repeat("focus ", 1100))
+	for name, tc := range map[string]struct {
+		above, kept string
+		compose     func(string) string
+	}{
+		"managed handoff, at the fresh render": {above: "## Sandman Managed Handoff Context\n\nold"},
+		"review evidence, at re-entry": {above: "## Review Evidence\n\nold", compose: func(task string) string {
+			return prompt.TaskWithReviewEvidence(task, map[string]any{"reason": "REVIEW_CHANGES_REQUESTED"})
+		}},
+		"runtime context, with a long review command": {
+			above: "## Runtime Context\n\n- Current branch: `b`",
+			kept:  "- Review command: `" + command + "`\n",
+			compose: func(task string) string {
+				return prompt.ContinuationTaskPromptWithReviewSettings(task, command, true, 1800)
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n" + tc.above + "\n\n## Next Step\n\nStart.\n\n## Footer\n\nF.\n"
+			fresh := launchInWorktree(t, root, prompt.RenderConfig{PromptFlag: template}, testTaskCompactBytes, &prompt.Engine{})
+			task := withCheckpoints(strings.Replace(fresh.stdin, "Start.\n", "Start.\n"+strings.Repeat("Obsolete step.\n", 1000), 1), 30)
+			if tc.compose != nil {
+				task = tc.compose(task)
+			}
+
+			launch := launchInWorktree(t, root, prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil)
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "## Next Step\n\nStart.\n", tc.kept)
+			if n := strings.Count(launch.stdin, "Obsolete step."); n >= 300 {
+				t.Errorf("Next Step was not capped: %d lines remain", n)
+			}
+		})
+	}
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

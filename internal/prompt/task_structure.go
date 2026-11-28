@@ -41,6 +41,19 @@ func structureMarker(name, nonce string) string {
 	return "<!-- " + name + " " + nonce + " -->"
 }
 
+// isStructureMarker reports whether a trimmed line is one of the markers a
+// fresh render writes. Composition ends the section it rewrites there, so it
+// neither removes a marker with the section above it nor inserts lines below
+// it.
+func isStructureMarker(line string) bool {
+	for _, name := range []string{nextStepStartMarker, nextStepEndMarker, nextStepLastMarker, taskEndMarker} {
+		if strings.HasPrefix(line, "<!-- "+name+" ") && strings.HasSuffix(line, " -->") {
+			return true
+		}
+	}
+	return false
+}
+
 // markTemplate writes the structure markers into a template before any
 // substitution, so they sit at the template's own headings whatever the
 // substituted values and the issue body hold. The structure ends after the
@@ -131,7 +144,7 @@ func findLine(content, line string) (int, int) {
 
 // MarkedTaskBounds locates the structure a fresh render marked with nonce. It
 // reports false when the end marker is gone. A Next Step marker that is gone
-// or moved leaves the group unlocated.
+// or moved, or a renamed heading, leaves the group unlocated.
 func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 	if nonce == "" {
 		return TaskBounds{}, false
@@ -157,7 +170,15 @@ func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 		return bounds, true
 	}
 	if from < to {
-		bounds.NextStepStart, bounds.NextStepEnd = from, to
+		// The step starts at its heading, never at anything above it.
+		offset := from
+		for _, section := range splitTaskSectionsFrom(content, from) {
+			if offset < to && section.heading == nextStepHeading {
+				bounds.NextStepStart, bounds.NextStepEnd = offset, to
+				break
+			}
+			offset += len(section.text)
+		}
 	}
 	return bounds, true
 }

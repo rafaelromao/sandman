@@ -22,9 +22,6 @@ const nextStepHeading = "## Next Step"
 // nextStepLimit caps the Next Step group of a compacted Task.
 const nextStepLimit = 4 * 1024
 
-// movedHeadingsListed bounds the moved headings the history pointer names.
-const movedHeadingsListed = 20
-
 // runtimeHeadings are the sections Sandman composes or rewrites at launches,
 // including both Runtime Context headings it updates (see
 // holdsRuntimeContext), so compaction always keeps them.
@@ -312,21 +309,16 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 	// naming exactly what moves, to fit the target; if none fits, move all.
 	keepFrom := len(history)
 	keptSize := fixed + historyBytes(tail, history)
-	listed := append([]string(nil), moved[:min(len(moved), movedHeadingsListed)]...)
 	listedBytes := 0
-	for _, heading := range listed {
+	for _, heading := range moved {
 		listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
 	}
-	basePointerSize := len(renderHistoryPointer(opts, 0, nil, 0)) - 1 + len(separator)
+	basePointerSize := len(renderHistoryPointer(opts, 0, nil)) - 1 + len(separator)
 	for n := 0; n <= len(history); n++ {
 		if n > 0 {
 			section := tail[history[n-1]]
 			keptSize -= len(section.text)
-			if len(listed) < movedHeadingsListed {
-				heading := section.label()
-				listed = append(listed, heading)
-				listedBytes += len("- \n") + len(strings.TrimPrefix(heading, "## "))
-			}
+			listedBytes += len("- \n") + len(strings.TrimPrefix(section.label(), "## "))
 		}
 		if n == 0 && !changed {
 			if len(content) <= opts.Target {
@@ -339,9 +331,6 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 		count := len(moved) + n
 		if count > 0 {
 			pointerSize += len(movedSectionsHeading) + listedBytes
-		}
-		if more := count - len(listed); more > 0 {
-			pointerSize += len("- and  more\n") + len(strconv.Itoa(more))
 		}
 		if keptSize+pointerSize <= opts.Target {
 			keepFrom = n
@@ -366,7 +355,7 @@ func CompactTask(content string, opts TaskCompaction) TaskCompactionResult {
 
 	var b strings.Builder
 	b.WriteString(prefix + separator)
-	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, listed, len(moved)))
+	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, moved))
 	for _, text := range kept[rest:] {
 		b.WriteString(text)
 	}
@@ -561,17 +550,14 @@ func cutOutsideFence(text string, limit int) string {
 
 const movedSectionsHeading = "\nMoved sections:\n\n"
 
-func renderHistoryPointer(opts TaskCompaction, movedBytes int, listed []string, movedCount int) string {
+func renderHistoryPointer(opts TaskCompaction, movedBytes int, moved []string) string {
 	var b strings.Builder
 	b.WriteString(TaskHistoryHeading + "\n\n")
 	fmt.Fprintf(&b, "Sandman moved %d bytes of earlier Task content to `%s` to keep this Task near %d bytes. That file holds the complete Task as it was before. It is history: read it only when a detail you need is missing here and in the live repository, pull request and checks.\n", movedBytes, opts.ArchivePath, opts.Target)
-	if movedCount > 0 {
+	if len(moved) > 0 {
 		b.WriteString(movedSectionsHeading)
-		for _, heading := range listed {
+		for _, heading := range moved {
 			fmt.Fprintf(&b, "- %s\n", strings.TrimPrefix(heading, "## "))
-		}
-		if more := movedCount - len(listed); more > 0 {
-			fmt.Fprintf(&b, "- and %d more\n", more)
 		}
 	}
 	b.WriteString("\n" + taskHistoryEnd + "\n")

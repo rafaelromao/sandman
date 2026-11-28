@@ -49,7 +49,10 @@ updates it.
   sections Sandman removes and rewrites at launches may follow the end marker.
   Issue text cannot forge the nonce. A Next Step with a placeholder anywhere
   from its heading to the next one is not marked: what it expands to is
-  unknown, and it can be the issue body.
+  unknown, and it can be the issue body. When Sandman rewrites a section at a
+  launch, that section ends at a marker, so rewriting the one above Next Step
+  neither removes its marker nor puts lines inside it. The editable step
+  starts at the marked `## Next Step` heading.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that
   `--continue --compact` can. On request it is located only for the built-in
