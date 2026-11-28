@@ -141,9 +141,14 @@ type blockClosers struct {
 	// fences holds the bare fence lines of each character in order, each with
 	// the longest such fence from it on.
 	fences map[byte][]fenceLine
-	// html holds, by HTML block type 1 to 5, where the lines with the type's
-	// end condition start.
-	html [6][]int
+	// html holds, by HTML block type 1 to 5, the lines with the type's end
+	// condition.
+	html [6][]htmlLine
+}
+
+type htmlLine struct {
+	start  int
+	marker bool // a Sandman marker line
 }
 
 type fenceLine struct{ start, longest int }
@@ -176,9 +181,10 @@ func findClosers(content string) *blockClosers {
 		if f, info, ok := parseFence(line); ok && !info {
 			c.fences[f.char] = append(c.fences[f.char], fenceLine{start, f.length})
 		}
+		marker := isSandmanMarker(line)
 		for kind := 1; kind < len(c.html); kind++ {
 			if holdsHTMLEnd(line, kind) {
-				c.html[kind] = append(c.html[kind], start)
+				c.html[kind] = append(c.html[kind], htmlLine{start, marker})
 			}
 		}
 	}
@@ -214,8 +220,8 @@ func (c *blockClosers) ends(node ast.Node, line []byte, offset int) bool {
 			return true // types 6 and 7 end at a blank line
 		}
 		lines := c.html[kind]
-		next := sort.SearchInts(lines, start)
-		return next < len(lines) && (lines[next] == start || !isSandmanMarker(c.content[lines[next]:lineEnd(c.content, lines[next])]))
+		next := sort.Search(len(lines), func(n int) bool { return lines[n].start >= start })
+		return next < len(lines) && (lines[next].start == start || !lines[next].marker)
 	}
 	return true
 }
@@ -338,18 +344,10 @@ func (d *taskDocument) addFence(node *ast.FencedCodeBlock) {
 	for column+length < len(first) && first[column+length] == first[column] {
 		length++
 	}
-	// The closing line repeats what holds the block, with spaces for list
-	// markers.
-	prefix := strings.Map(func(r rune) rune {
-		if r == '>' || r == ' ' || r == '\t' {
-			return r
-		}
-		return ' '
-	}, first[:column])
 	block := markdownBlock{
 		start:  start,
 		end:    lineEnd(d.content, start),
-		closer: prefix + strings.Repeat(first[column:column+1], length),
+		closer: closerPrefix(first[:column]) + strings.Repeat(first[column:column+1], length),
 		fence:  fence{char: first[column], length: length},
 		info:   node.Info != nil,
 	}
@@ -375,18 +373,30 @@ func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
 			block.end = lineEnd(d.content, node.ClosureLine.Start)
 		}
 		block.closed = node.HasClosure() || holdsHTMLEnd(first, kind)
-		block.closer = htmlEnds[kind]
+		end := htmlEnds[kind]
 		if kind == 1 {
 			lower := strings.ToLower(first)
 			for _, tag := range rawTags {
 				if strings.Contains(lower, "<"+tag) {
-					block.closer = "</" + tag + ">"
+					end = "</" + tag + ">"
 					break
 				}
 			}
 		}
+		block.closer = closerPrefix(first[:max(strings.IndexByte(first, '<'), 0)]) + end
 	}
 	d.blocks = append(d.blocks, block)
+}
+
+// closerPrefix is what a block's closing line starts with, given what precedes
+// its opening on the first line: the same, with spaces for list markers.
+func closerPrefix(before string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '>' || r == ' ' || r == '\t' {
+			return r
+		}
+		return ' '
+	}, before)
 }
 
 // splitsBlock reports whether cutting at the line starting at offset would cut

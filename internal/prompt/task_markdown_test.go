@@ -75,6 +75,20 @@ func TestCompactTask_KeepsSectionsWhoseBlocksSwallowedProtectedTitles(t *testing
 	}
 }
 
+// A fence that ends only because its list item does was never closed, so what
+// it holds is no bounded example.
+func TestCompactTask_KeepsASectionWhoseExampleWasNeverClosed(t *testing.T) {
+	for name, section := range map[string]string{
+		"ended by the next item": "\n## Notes\n\n- new plan:\n  ```text\n  ## Plan\n- [ ] Verify the rollback.\n",
+		"ended by prose":         "\n## Notes\n\n- new plan:\n  ```text\n  ## Plan\n\nVerify the rollback.\n",
+		"ended by another block": "\n## Notes\n\n- new plan:\n  ```text\n  ## Plan\n```text\nVerify the rollback.\n```\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireKept(t, planBeforeHistory("\n## Plan\n\nreal\n"+section), section)
+		})
+	}
+}
+
 // Code blocks held by lists and block quotes are code; an ATX heading indented
 // inside a list item still starts a section.
 func TestSplitTaskSections_ReadsNestedCodeBlocks(t *testing.T) {
@@ -265,6 +279,20 @@ func TestCompactTask_KeepsANoteApartFromWhatNowPrecedesIt(t *testing.T) {
 	}
 }
 
+// Headings kept before the pointer are checked too: here an indented one in
+// Next Step would become part of the list item above it.
+func TestCompactTask_ChecksHeadingsBeforeThePointer(t *testing.T) {
+	step := "Implement the first slice.\n" + paragraph("now", 5000) + "## Plan\n\n- last plan step\n## Old\n\n```\n" +
+		paragraph("old", 3000) + "```\n  Other\n  ---\n\n```\n## Plan\n```\n"
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	got := compact(task, true)
+
+	if got.Compacted || got.Content != task || got.Reason != "compacting would change how the Task reads" {
+		t.Fatalf("compacted = %t, reason = %q:\n%s", got.Compacted, got.Reason, got.Content)
+	}
+}
+
 // Where no blank line can keep a heading apart, the Task is left alone.
 func TestCompactTask_LeavesTasksThatWouldReadDifferently(t *testing.T) {
 	task := structuredTask("\n## Plan\n\n- last plan step\n## Old\n\n```\n" + paragraph("old", 6000) + "```\n  Newest title\n  ---\n")
@@ -307,12 +335,13 @@ func TestCompactTask_CapsNextStepWithAddedHeadings(t *testing.T) {
 
 // Cutting inside an HTML block closes it, as cutting a code block does.
 func TestCompactTask_ClosesAnHTMLBlockItCutsInNextStep(t *testing.T) {
-	for name, block := range map[string]struct{ open, closer string }{
-		"comment": {"<!--\n", "-->"},
-		"raw tag": {"<pre>\n", "</pre>"},
+	for name, block := range map[string]struct{ open, prefix, closer string }{
+		"comment":          {"<!--\n", "", "-->"},
+		"raw tag":          {"<pre>\n", "", "</pre>"},
+		"quoted a comment": {"> <!--\n", "> ", "> -->"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			step := block.open + "NOW: fix the test.\n" + strings.Repeat("FAIL some test line\n", 300) + block.closer
+			step := block.open + block.prefix + "NOW: fix the test.\n" + strings.Repeat(block.prefix+"FAIL some test line\n", 300) + block.closer
 			task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Implement the first slice.", step, 1)
 
 			got := compact(task, true)
@@ -418,6 +447,8 @@ func TestCompactTask_LeavesTheTaskAloneWhenTheParserFails(t *testing.T) {
 func TestSplitTaskSections_ReadsAdversarialTasksQuickly(t *testing.T) {
 	for name, content := range map[string]string{
 		"comments":             strings.Repeat("<!--\ntext\n", 100_000),
+		"fences":               strings.Repeat("```go\ntext\n", 100_000),
+		"a long marker line":   strings.Repeat("<!--\n", 100_000) + strings.Repeat(" ", 5_000_000) + "<!-- sandman:x -->\n",
 		"nested quotes":        strings.Repeat(">", 400_000) + "\n",
 		"nested lists":         strings.Repeat("- ", 200_000) + "x\n",
 		"deep lines":           strings.Repeat(strings.Repeat("> ", 100)+"x\n", 5_000),

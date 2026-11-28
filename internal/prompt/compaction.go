@@ -292,7 +292,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	if doc.splitsBlock(from) || doc.splitsBlock(to) {
 		from, to = 0, 0
 	}
-	head, moved, changed := capNextStep(doc, bounds.StructureEnd, from, to, keeps)
+	head, headings, moved, changed := capNextStep(doc, bounds.StructureEnd, from, to, keeps)
 
 	// What follows the structure is history, except what is always kept. The
 	// text before the first heading stays with the structure, and the pointer
@@ -309,6 +309,9 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	}
 	// Nor does the pointer go inside the settings span.
 	for rest < len(tail) && settingsFrom < offsets[rest] && offsets[rest] < settingsTo {
+		if tail[rest].heading != "" {
+			headings = append(headings, len(prefix))
+		}
 		prefix += tail[rest].text
 		rest++
 	}
@@ -387,10 +390,9 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 
 	var b strings.Builder
 	b.WriteString(prefix + separator)
-	// headed holds where the pointer and each kept section with a heading
-	// start: what follows the prefix must be read as exactly those sections.
-	pointerAt := b.Len()
-	headed := []int{pointerAt}
+	// headings holds where each section with a heading starts, the pointer
+	// among them: the result must be read as exactly those sections.
+	headings = append(headings, b.Len())
 	b.WriteString(renderHistoryPointer(opts, len(content)-keptSize, moved))
 	for i := rest; i < len(tail); i++ {
 		if kept[i] == "" {
@@ -400,12 +402,12 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 			b.WriteString(blankLineAfter(b.String()))
 		}
 		if tail[i].heading != "" {
-			headed = append(headed, b.Len())
+			headings = append(headings, b.Len())
 		}
 		b.WriteString(kept[i])
 	}
 	compacted := b.String()
-	if !startsSections(compacted, pointerAt, headed) {
+	if !startsSections(compacted, headings) {
 		result.Reason = "compacting would change how the Task reads"
 		return result
 	}
@@ -422,10 +424,10 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	return result
 }
 
-// startsSections reports whether the sections from offset from on start
-// exactly at offsets: none lost, and none made out of what was text.
-func startsSections(content string, from int, offsets []int) bool {
-	headings := readTask(content).boundaries(from, len(content))
+// startsSections reports whether content's sections start exactly at offsets:
+// none lost, and none made out of what was text.
+func startsSections(content string, offsets []int) bool {
+	headings := readTask(content).boundaries(0, len(content))
 	return slices.EqualFunc(headings, offsets, func(h markdownHeading, offset int) bool { return h.start == offset })
 }
 
@@ -474,11 +476,25 @@ func blankLineAfter(text string) string {
 // structure, which ends at end: the bytes from from to to. Once cut, what
 // follows in the group moves too: the group keeps a prefix, never fragments
 // from beyond the limit. Sections keeps reports, given their offset, stay and
-// do not count.
-func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSection) bool) (string, []string, bool) {
+// do not count. It returns the structure, where its headings start, what moved
+// and whether anything did.
+func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSection) bool) (string, []int, []string, bool) {
 	structure := doc.content[:end]
+	var headings []int
+	// starts records the headings of what is copied from offset at on, which
+	// moves by shift.
+	starts := func(at, to, shift int) {
+		for _, h := range doc.boundaries(at, to) {
+			headings = append(headings, h.start+shift)
+		}
+	}
+	unchanged := func() (string, []int, []string, bool) {
+		headings = nil
+		starts(0, end, 0)
+		return structure, headings, nil, false
+	}
 	if from >= to {
-		return structure, nil, false
+		return unchanged()
 	}
 	sections := doc.sections(from, to)
 	kept := make([]bool, len(sections))
@@ -490,27 +506,31 @@ func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSectio
 		offset += len(sections[i].text)
 	}
 	if size <= nextStepLimit {
-		return structure, nil, false
+		return unchanged()
 	}
+	starts(0, from, 0)
 	var b strings.Builder
 	var moved []string
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
 	cut, dropped := false, false
-	write := func(section taskSection) {
+	write := func(section taskSection, text string) {
 		if section.underlined && dropped {
 			b.WriteString(blankLineAfter(b.String()))
 		}
-		b.WriteString(section.text)
+		if section.heading != "" {
+			headings = append(headings, from+b.Len())
+		}
+		b.WriteString(text)
 		dropped = false
 	}
 	for i, section := range sections {
 		switch {
 		case section.text == "":
 		case kept[i]:
-			write(section)
+			write(section, section.text)
 		case !cut && len(section.text) <= room:
-			write(section)
+			write(section, section.text)
 			room -= len(section.text)
 		// An underlined heading is only cut after all its lines.
 		case !cut && room > len(section.heading) && (!section.underlined || room >= section.headingLength):
@@ -519,10 +539,7 @@ func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSectio
 				// A long line or code block would waste most of the limit.
 				prefix = cutInside(section.text, room)
 			}
-			if section.underlined && dropped {
-				b.WriteString(blankLineAfter(b.String()))
-			}
-			b.WriteString(trimTrailingNewlines(prefix) + "\n\n")
+			write(section, trimTrailingNewlines(prefix)+"\n\n")
 			cut = true
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
 		default:
@@ -530,7 +547,8 @@ func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSectio
 			moved = append(moved, section.label())
 		}
 	}
-	return structure[:from] + b.String() + structure[to:], moved, true
+	starts(to, end, from+b.Len()-to)
+	return structure[:from] + b.String() + structure[to:], headings, moved, true
 }
 
 func historyBytes(sections []taskSection, indexes []int) int {
@@ -578,11 +596,15 @@ func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
 		if len(fences) > 0 && fences[0].start < end {
 			block = &fences[0]
 		}
+		// The closing line ends an example; one left behind any other way was
+		// never closed.
+		if example && (block == nil || block.start >= start) {
+			return true
+		}
 		switch {
 		case block == nil:
-			example = false
 		case block.start >= start:
-			example, atStart = false, true
+			atStart = true
 			continue
 		case block.closed && block.end == end:
 			example = false
