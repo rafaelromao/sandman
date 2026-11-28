@@ -776,45 +776,6 @@ func TestCompactTask_KeepsEveryRuntimeContextTheRuntimeUpdates(t *testing.T) {
 	}
 }
 
-// The settings are only rewritten where they unambiguously are. When the
-// section holding them sits inside a code block, a section is appended and no
-// existing byte changes.
-func TestEnsureReviewSettingsContext_NeverRewritesAnAmbiguousSection(t *testing.T) {
-	for name, content := range map[string]string{
-		"swallowed section":               "## Issue\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n## Notes\n\n```\ncode\n",
-		"issue heading beside swallowed":  "## Runtime Context\n\nThe issue's text.\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n```\n",
-		"issue settings beside swallowed": "## Runtime Context\n\n- Review command: `/issue`\n\n```\nlog\n\n## Runtime Context\n\n- Review command: `/old`\n\n```\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := EnsureReviewSettingsContext(content, "/new", true, 1800)
-
-			appended := strings.TrimPrefix(got, strings.TrimRight(content, "\n"))
-			if appended == got || !strings.HasPrefix(appended, "\n\n"+reviewTimeoutContextHeading+"\n") || !strings.Contains(appended, "- Review command: `/new`") {
-				t.Fatalf("got:\n%s", got)
-			}
-			if again := EnsureReviewSettingsContext(got, "/new", true, 1800); again != got {
-				t.Fatalf("not stable:\n%s", again)
-			}
-		})
-	}
-}
-
-// A code sample inside the section keeps its lines; the real fields after it
-// are the ones updated.
-func TestEnsureReviewSettingsContext_LeavesCodeSamplesInsideTheSection(t *testing.T) {
-	sample := "```md\n- Review command: `/sample`\n- Delegated review response timeout: `1` seconds\n```\n"
-	content := "## Runtime Context\n\n" + sample + "\n- Review command: `/old`\n- Delegated review response timeout: `9` seconds\n"
-
-	for _, got := range []string{
-		EnsureReviewSettingsContext(content, "/new", true, 1800),
-		EnsureReviewTimeoutContext(content, 1800),
-	} {
-		if !strings.Contains(got, sample) || !strings.Contains(got, "- Delegated review response timeout: `1800` seconds") || strings.Contains(got, "`9` seconds") {
-			t.Fatalf("got:\n%s", got)
-		}
-	}
-}
-
 // The offsets are exact whether or not the issue body ends its last line.
 func TestBuiltInTaskBounds_LocatesExactOffsets(t *testing.T) {
 	for _, body := range []string{"The issue.", "The issue.\n", "The issue.\n\n"} {
@@ -859,16 +820,15 @@ func TestCompactTask_KeepsTheBeginningOfALongNextStep(t *testing.T) {
 	}
 }
 
-// A custom template's Runtime Context without settings yet still gets them,
-// not an issue's quotation of that section.
-func TestEnsureReviewSettingsContext_LeavesAnIssuesQuotationAlone(t *testing.T) {
-	quoted := "## Runtime Context\n\n- Review command: `/old review`\n- Delegated review response timeout: `600` seconds\n"
-	content := "## Issue Context\n\n" + quoted + "\n## Runtime Context\n\n- Current branch: `b`\n\n## Completion Requirements\n"
+// A delimiter too long to close within the limit is not left open.
+func TestCompactTask_NeverLeavesAnOversizedDelimiterOpen(t *testing.T) {
+	delimiter := strings.Repeat("`", 5000)
+	task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Implement the first slice.", delimiter+"\nlog\n"+delimiter, 1)
 
-	got := EnsureReviewSettingsContext(content, "/oc review", true, 1800)
+	got := compact(task, true)
 
-	if !strings.HasPrefix(got, "## Issue Context\n\n"+quoted+"\n## Runtime Context\n") ||
-		!strings.Contains(got, "- Current branch: `b`\n- Review command: `/oc review`\n") {
-		t.Fatalf("got:\n%s", got)
+	next := strings.Index(got.Content, "## Required Order")
+	if !got.Compacted || next < 0 || openFence(got.Content[:next]).char != 0 {
+		t.Fatalf("compacted = %t, left a block open before the next section", got.Compacted)
 	}
 }

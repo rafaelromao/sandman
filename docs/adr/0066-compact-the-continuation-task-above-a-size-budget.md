@@ -69,25 +69,20 @@ updates it.
   Step keeps its first 4 KiB, a prefix that never resumes past the cut. It is
   cut at a line break outside code blocks; when a long line or block would
   leave less than half the limit used that way, it is cut inside and an open
-  block closed. The rest of the structure, both Runtime Context headings the
-  runtime updates, every `## Plan`, execution checklists, status lines and
-  Sandman's sections are kept byte for byte. So is a section whose code block
-  swallowed one of those, unless the block is clearly a language-tagged
-  example that starts with that heading while a real one exists. If an agent
-  removes the Next Step markers the step is kept whole; if it removes the
-  closing marker and the layout cannot be verified, the Task is left
-  unchanged.
+  block closed, unless the block's delimiter and its closer do not both fit.
+  The rest of the structure, every `## Plan`, execution checklists, status
+  lines and Sandman's sections are kept byte for byte. So is a section whose
+  code block swallowed one of those, unless the block is clearly a
+  language-tagged example that starts with that heading while a real one
+  exists. Any section with a line a continuation takes for a Runtime Context
+  heading, even inside a code block, is also kept, so compaction never moves
+  review settings. How a continuation picks the section it writes them to is
+  unchanged. If an agent removes the Next Step markers the step is kept whole;
+  if it removes the closing marker and the layout cannot be verified, the Task
+  is left unchanged.
 - **Code blocks.** They are read across the whole Task. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
   whose bounds fall inside one is not capped.
-- **Review settings.** A continuation refreshes them in the last Runtime
-  Context section, chosen by position and never by what a section quotes.
-  Clear code samples are left out: a closed, language-tagged block with no
-  other H2, inside another section. Lines in code blocks are not rewritten,
-  and when the chosen heading is inside a block, Sandman appends a `## Sandman
-  Runtime Context` section, reused afterwards, rather than rewrite an earlier
-  one. A template without the section still takes an issue's section of that
-  name for it, as before.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches

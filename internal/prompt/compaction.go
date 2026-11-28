@@ -27,7 +27,7 @@ const movedHeadingsListed = 20
 
 // runtimeHeadings are the sections Sandman composes or rewrites at launches,
 // including both Runtime Context headings it updates (see
-// runtimeContextSection), so compaction always keeps them.
+// holdsRuntimeContext), so compaction always keeps them.
 var runtimeHeadings = map[string]bool{
 	runtimeContextHeading:             true,
 	reviewTimeoutContextHeading:       true,
@@ -230,15 +230,30 @@ func isProtectedHeading(heading string) bool {
 	return heading == "## Plan" || strings.HasPrefix(heading, "## Plan ") || strings.HasPrefix(heading, "## Plan:")
 }
 
+// holdsRuntimeContext reports whether any line is one a continuation takes for
+// a Runtime Context heading, in a code block or not: the review settings may be
+// written below it.
+func holdsRuntimeContext(text string) bool {
+	for line := range strings.SplitSeq(text, "\n") {
+		switch strings.TrimSpace(line) {
+		case reviewTimeoutContextHeading, runtimeContextHeading:
+			return true
+		}
+	}
+	return false
+}
+
 // isKeptSection reports whether compaction keeps a section byte for byte
-// wherever it is: Sandman's sections, protected state, and text whose fenced
-// block swallowed one of those, including a note without a heading of its own.
+// wherever it is: Sandman's sections, protected state, text a continuation may
+// write the review settings into, and text whose fenced block swallowed one of
+// those, including a note without a heading of its own.
 func isKeptSection(section taskSection, topLevel map[string]bool) bool {
 	body := section.text
 	if section.heading != "" {
 		_, body, _ = strings.Cut(body, "\n")
 	}
-	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) || swallowsProtected(body, topLevel)
+	return runtimeHeadings[section.heading] || isProtectedHeading(section.heading) ||
+		holdsRuntimeContext(section.text) || swallowsProtected(body, topLevel)
 }
 
 // CompactTask moves the oldest agent-written history out of an oversized Task
@@ -473,8 +488,24 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 // closing a code block left open.
 func cutInside(text string, limit int) string {
 	prefix := runePrefix(text, limit)
+	open := openFence(prefix)
+	if open.char == 0 {
+		return prefix
+	}
+	closer := "\n" + strings.Repeat(string(open.char), open.length)
+	short := runePrefix(text, limit-len(closer))
+	if openFence(short) != open {
+		// The block's delimiter and its closer do not both fit.
+		return cutOutsideFence(text, limit)
+	}
+	return short + closer
+}
+
+// openFence returns the delimiter of the code block text leaves open, or the
+// zero fence.
+func openFence(text string) fence {
 	var open fence
-	for line := range strings.SplitSeq(prefix, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if f, ok := parseFence(strings.TrimRight(line, "\r")); ok {
 			switch {
 			case open.char == 0:
@@ -484,11 +515,7 @@ func cutInside(text string, limit int) string {
 			}
 		}
 	}
-	if open.char == 0 {
-		return prefix
-	}
-	closer := "\n" + strings.Repeat(string(open.char), open.length)
-	return runePrefix(text, limit-len(closer)) + closer
+	return open
 }
 
 // runePrefix returns the longest prefix of text of at most limit bytes that

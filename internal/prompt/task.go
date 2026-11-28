@@ -201,13 +201,12 @@ func EnsureReviewSettingsContext(content, reviewCommand string, reviewCommandSet
 
 func upsertRuntimeContextLines(content string, managedLines []string) string {
 	lines := strings.Split(content, "\n")
-	start, end, fenced := runtimeContextSection(lines)
+	start, end := runtimeContextSection(lines)
 	if start < 0 {
 		content = trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n"
 		lines = strings.Split(content, "\n")
 		start = len(lines) - 2
 		end = len(lines)
-		fenced = make([]bool, len(lines))
 	}
 
 	prefixes := make(map[string]string, len(managedLines))
@@ -222,12 +221,11 @@ func upsertRuntimeContextLines(content string, managedLines []string) string {
 	seen := make(map[string]bool, len(prefixes))
 	section := make([]string, 0, end-start+len(managedLines))
 	section = append(section, lines[start])
-	for i := start + 1; i < end; i++ {
-		line := lines[i]
+	for _, line := range lines[start+1 : end] {
 		trimmed := strings.TrimSpace(line)
 		matched := ""
 		for prefix := range prefixes {
-			if !fenced[i] && strings.HasPrefix(trimmed, prefix) {
+			if strings.HasPrefix(trimmed, prefix) {
 				matched = prefix
 				break
 			}
@@ -423,14 +421,11 @@ func removeReviewEvidenceSection(content string) string {
 func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 	effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
 	lines := strings.Split(content, "\n")
-	sectionStart, sectionEnd, fenced := runtimeContextSection(lines)
+	sectionStart, sectionEnd := runtimeContextSection(lines)
 	blindReview := false
 	reviewModeUnspecified := false
 	if sectionStart >= 0 {
 		for i := sectionStart + 1; i < sectionEnd; i++ {
-			if fenced[i] {
-				continue
-			}
 			trimmed := strings.TrimSpace(lines[i])
 			if strings.TrimSpace(strings.TrimPrefix(trimmed, reviewModeContextPrefix)) == "blind review" &&
 				strings.HasPrefix(trimmed, reviewModeContextPrefix) {
@@ -456,7 +451,7 @@ func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 			line += " (review mode unspecified)"
 		}
 		for i := sectionStart + 1; i < sectionEnd; i++ {
-			if !fenced[i] && strings.HasPrefix(strings.TrimSpace(lines[i]), reviewTimeoutContextPrefix) {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), reviewTimeoutContextPrefix) {
 				lines[i] = line
 				return strings.Join(lines, "\n")
 			}
@@ -469,79 +464,29 @@ func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 	return trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n\n" + line + "\n"
 }
 
-// runtimeContextSection returns the last runtime-context section, so an issue
-// body containing similarly named text is never treated as Sandman metadata,
-// and which lines belong to code blocks. A code sample of the section does not
-// count. It returns -1, -1 when there is none, or when the last one is inside
-// a code block: the caller then appends a section rather than rewrite issue
-// text or a code block on a guess.
-func runtimeContextSection(lines []string) (start, end int, fenced []bool) {
-	fenced = fencedLines(lines)
+// runtimeContextSection returns the last runtime-context section so an issue
+// body containing similarly named text is never treated as Sandman metadata.
+func runtimeContextSection(lines []string) (start, end int) {
 	start = -1
 	for i, line := range lines {
-		if isRuntimeContextHeading(line) && !(fenced[i] && isSample(lines, fenced, i)) {
+		switch strings.TrimSpace(line) {
+		case reviewTimeoutContextHeading, "## Runtime Context":
 			start = i
 		}
 	}
-	if start < 0 || fenced[start] {
-		return -1, -1, fenced
+	if start < 0 {
+		return -1, -1
 	}
 
 	end = len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if !fenced[i] && (strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##"))) {
+		if strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
 			end = i
 			break
 		}
 	}
-	return start, end, fenced
-}
-
-func isRuntimeContextHeading(line string) bool {
-	if !strings.HasPrefix(line, "## ") {
-		return false
-	}
-	heading := strings.TrimSpace(line)
-	return heading == reviewTimeoutContextHeading || heading == runtimeContextHeading
-}
-
-// isSample reports whether the heading at is clearly an example: it is in a
-// closed, language-tagged code block that holds no other H2, inside a section
-// that is not itself a Runtime Context. A block that swallowed the template's
-// sections holds their headings.
-func isSample(lines []string, fenced []bool, at int) bool {
-	var opener fence
-	from, section := -1, ""
-	for i := 0; i < at; i++ {
-		if !fenced[i] {
-			if strings.HasPrefix(lines[i], "## ") {
-				section = lines[i]
-			}
-			continue
-		}
-		if f, ok := parseFence(strings.TrimRight(lines[i], "\r\n")); ok {
-			switch {
-			case from < 0:
-				opener, from = f, i
-			case f.closes(opener):
-				from = -1
-			}
-		}
-	}
-	if from < 0 || !opener.info || isRuntimeContextHeading(section) {
-		return false
-	}
-	for i := from + 1; i < len(lines) && fenced[i]; i++ {
-		line := strings.TrimRight(lines[i], "\r\n")
-		if f, ok := parseFence(line); ok && f.closes(opener) {
-			return i > at
-		}
-		if i != at && strings.HasPrefix(line, "## ") {
-			return false
-		}
-	}
-	return false
+	return start, end
 }
 
 func insertLine(lines []string, index int, line string) []string {

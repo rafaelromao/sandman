@@ -718,6 +718,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return err
 				}
 			}
+			// Specification expansion and closed-issue filtering can leave no
+			// issue, which the batch runner would launch as prompt-only.
+			if compactFlag && len(req.Issues) == 0 &&
+				(req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
+				return MarkUsage(fmt.Errorf("--compact applies to issue Runs, not prompt-only continuations"))
+			}
 			req.PhaseWriter = phaseWriter
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()

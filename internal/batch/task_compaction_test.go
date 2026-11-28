@@ -712,21 +712,6 @@ func TestImplementationLaunch_KeepsAnIssueSubstitutedThroughAPromptArg(t *testin
 	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), issue)
 }
 
-// Continuation refreshes the real Runtime Context, never an example in a code
-// block, so compaction cannot move the only copy of the current command.
-func TestImplementationLaunch_KeepsTheRefreshedRuntimeContext(t *testing.T) {
-	example := "\n## Example\n\n```md\n## Runtime Context\n\n- Review command: `/sample-command`\n```\n"
-	task := checkpointTask(30) + example
-	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
-
-	launch := launchWithCompaction(t, task, testTaskCompactBytes)
-
-	if !strings.Contains(task, strings.TrimSpace(example)) {
-		t.Fatal("continuation wrote into the example")
-	}
-	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), "- Review command: `/current-review-command`")
-}
-
 // Replacing the pointer leaves the sections around it byte for byte.
 func TestImplementationLaunch_PointerReplacementKeepsAdjacentSections(t *testing.T) {
 	once, err := CompactWorktreeTask(checkpointTask(30), TaskCompactionRequest{WorkDir: noncedDir(t), Threshold: testTaskCompactBytes, Now: time.Now()})
@@ -783,54 +768,16 @@ func TestImplementationLaunch_KeepsACodeBlockThatCrossesTheStructure(t *testing.
 	}
 }
 
-// A code sample inside Runtime Context keeps its lines; continuation updates
-// the real field and compaction keeps it.
-func TestImplementationLaunch_KeepsACodeSampleInsideRuntimeContext(t *testing.T) {
-	sample := "\n```md\n- Review command: `/sample-command`\n```\n"
-	task := strings.Replace(checkpointTask(30), "## Runtime Context\n", "## Runtime Context\n"+sample, 1)
-	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
-
-	launch := launchWithCompaction(t, task, testTaskCompactBytes)
-
-	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), sample, "- Review command: `/current-review-command`")
-}
-
-// When the real Runtime Context sits inside a code block, the issue's section
-// of the same name is not rewritten: the settings go in a section of their own.
-func TestImplementationLaunch_LeavesTheIssuesRuntimeContextAlone(t *testing.T) {
-	issue := "## Runtime Context\n\nThe issue's own section.\n\n```\nlog\n"
-	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{}, prompt.IssueData{Number: 7, Body: issue}, testTaskNonce)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task := withCheckpoints(rendered+"\n```\n", 30)
-	task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
-
-	launch := launchWithCompaction(t, task, testTaskCompactBytes)
-
-	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), issue,
-		"## Sandman Runtime Context\n- Review command: `/current-review-command`")
-}
-
-// The settings go to the runtime's section, never to issue text or a sample,
-// whatever settings those quote.
-func TestImplementationLaunch_PlacesSettingsByPositionNotContent(t *testing.T) {
-	quoted := "## Runtime Context\n\n- Review command: `/issue-command`\n"
-	template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Runtime Context\n\n- Current branch: `b`\n\n## Footer\n\nF.\n"
-	field := "- Review command: `/current-review-command`"
-	for name, tc := range map[string]struct {
-		issue, history, kept, want string
-	}{
-		"issue quotation before a section without settings": {issue: quoted, kept: quoted, want: "- Current branch: `b`\n" + field},
-		"later sample that starts with another heading": {
-			history: "\n## Notes\n\n```md\n# Example Task\n\n## Runtime Context\n\n- Review command: `/sample-command`\n```\n",
-			kept:    "- Review command: `/sample-command`\n```\n",
-			want:    "- Current branch: `b`\n" + field,
-		},
-		"tagged issue fence before the section": {
-			issue: quoted + "\n```bash\nlog\n", history: "\n```\n",
-			kept: quoted + "\n```bash\nlog\n",
-			want: "## Sandman Runtime Context\n" + field,
+// Compaction keeps whatever a continuation wrote the review settings into,
+// and leaves the issue's text as it was.
+func TestImplementationLaunch_KeepsTheSettingsWhereverContinuationWroteThem(t *testing.T) {
+	template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Runtime Context\n\n- Current branch: `b`\n"
+	for name, tc := range map[string]struct{ issue, history string }{
+		"later tagged sample":   {history: "\n## Example\n\n```md\n## Runtime Context\n\n- Review command: `/sample-command`\n```\n"},
+		"later indented sample": {history: "\n## Log\n\n```\n  ## Runtime Context\n- Review command: `/sample-command`\n```\n"},
+		"final section inside the issue's block": {
+			issue:   "## Runtime Context\n\n- Review command: `/issue-command`\n\n## Captured output\n\n```text\nlog\n",
+			history: "\n```\n",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -843,7 +790,12 @@ func TestImplementationLaunch_PlacesSettingsByPositionNotContent(t *testing.T) {
 
 			launch := launchWithCompaction(t, task, testTaskCompactBytes)
 
-			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), tc.kept, tc.want)
+			composed := composedFor(t, task)
+			requireCompactedLaunchKeeps(t, launch, composed, tc.issue)
+			field := "- Review command: `/current-review-command`"
+			if got, want := strings.Count(launch.stdin, field), strings.Count(composed, field); want == 0 || got != want {
+				t.Errorf("the launch holds %d of %d current settings", got, want)
+			}
 		})
 	}
 }

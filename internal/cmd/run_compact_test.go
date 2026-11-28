@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -159,6 +160,35 @@ func TestRun_CompactUsageErrorsTouchNothing(t *testing.T) {
 				t.Fatal("a refused command touched the Task or ran the batch")
 			}
 		})
+	}
+}
+
+// closedSelection answers an is:closed query with its issues and has nothing
+// open.
+type closedSelection struct{ *fakeGitHubClient }
+
+func (c closedSelection) SearchIssues(_ context.Context, query string) ([]github.Issue, error) {
+	if strings.Contains(query, "is:closed") {
+		return []github.Issue{*c.issues[100]}, nil
+	}
+	return []github.Issue{}, nil
+}
+
+// A selection that expansion and closed-issue filtering empty would launch as
+// prompt-only, so it is refused like one.
+func TestRun_ContinueCompact_RefusesASelectionFilteredToNothing(t *testing.T) {
+	f := newCompactFixture(t, nil)
+	spec := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #42\n"
+	f.deps.GitHubClient = closedSelection{&fakeGitHubClient{issues: map[int]*github.Issue{
+		100: {Number: 100, Title: "Specification", Body: spec, State: "closed"},
+		42:  {Number: 42, Title: "Child", Body: "## Parent\n\n#100\n\n## What\n\n", State: "closed"},
+	}, prs: map[string]*github.PR{}}}
+
+	out, err := f.run(t, "--continue", "--compact", "--prompt", "Run this standalone task", "--query", "is:closed")
+
+	var usage *UsageError
+	if !errors.As(err, &usage) || f.spy.called || !strings.Contains(out, "Issue #42 is closed") {
+		t.Fatalf("err = %v, batch ran = %t, want a usage error after filtering\n%s", err, f.spy.called, out)
 	}
 }
 
