@@ -59,15 +59,16 @@ updates it.
   reads as no markers, without waiting on it. Issue text cannot forge the
   nonce. A Next Step with a placeholder anywhere from its heading to the next
   one is not marked: what it expands to is unknown, and it can be the issue
-  body. Neither is one holding an H1 or underlined heading, since sections are
-  split at H2 headings (indented by up to three spaces, as Markdown allows)
-  and where it ends is not established. The marker is written twice around the
-  Next Step heading because launches rewrite sections: rewriting the one above
-  takes only the upper copy, and an agent rewriting the step takes only the
-  lower one. The lower marker names the heading right above it; the upper one
-  names the first such heading after it, so neither reaches back into the
-  issue. Composing a launch does not read the markers, and a marker with
-  another nonce is text.
+  body. Neither is one holding or ending at an H1 or underlined heading, nor
+  one whose own heading is underlined: where such a step ends is not
+  established, and a marker would break an underlined heading apart. A marked
+  step keeps its bounds whatever headings the agent adds to it. The marker is
+  written twice around the Next Step heading because launches rewrite
+  sections: rewriting the one above takes only the upper copy, and an agent
+  rewriting the step takes only the lower one. The lower marker names the
+  heading right above it; the upper one names the first such heading after it,
+  so neither reaches back into the issue. Composing a launch does not read the
+  markers, and a marker with another nonce is text.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that
   `--continue --compact` can. On request it is located only for the built-in
@@ -76,8 +77,8 @@ updates it.
   Requirements`, and the Task holds the current issue body and those
   requirements verbatim. Only its `## Next Step` section is capped, and only
   when the Task holds exactly one before the requirements, neither it nor the
-  template's holds an H1 or underlined heading, and the template's holds no
-  placeholder: nothing proves that the sections after it were added by the
+  template's holds or ends at an H1 or underlined heading, and the template's
+  holds no placeholder: nothing proves that the sections after it were added by the
   agent rather than the template. This cannot prove that an older template had
   no section after the requirements, which would move into the archive; the
   operator accepts that by asking. Anything else is left unchanged.
@@ -85,34 +86,59 @@ updates it.
   oldest sections move for the Task, with a pointer naming exactly what moved,
   to fit; a result that would not be smaller is not written. The located Next
   Step keeps its first 4 KiB, a prefix that never resumes past the cut. It is
-  cut at a line break outside code blocks; when a long line or block would
-  leave less than half the limit used that way, it is cut inside and an open
-  block closed, unless the block's delimiter and its closer do not both fit.
-  The rest of the structure, every `## Plan`, execution checklists, status
+  cut at a line break outside code and HTML blocks; when a long line or block
+  would leave less than half the limit used that way, it is cut inside and an
+  open block closed, unless the block's delimiter and its closer do not both
+  fit. The rest of the structure, every `## Plan`, execution checklists, status
   lines and Sandman's sections are kept byte for byte. Those headings are
   recognised indented, with a tab or closing number signs, underlined, in any
-  capitalisation, and with a suffix after `Plan` or `Execution Checklist`. So
-  is a section whose code block swallowed one of those, unless the block is
-  clearly a language-tagged example that starts with that heading while a real
-  one exists. Any section with a line a continuation takes for a Runtime
-  Context heading, even inside a code block, is also kept, so compaction never
+  capitalisation, and with a suffix after `Plan` or `Execution Checklist`. An
+  underline is easily written under a line by accident, so an underlined one of
+  those keeps the section above it too. So is a section that holds one of those
+  where it is not read as a heading, as in a code or HTML block that swallowed
+  it, unless the block is clearly a language-tagged code example that starts
+  with that heading while a real one exists. Any section with a line a
+  continuation takes for a Runtime Context heading, even inside a code block, is also kept, so compaction never
   moves review settings. How a continuation picks the section it writes them
-  to is unchanged. Composition and compaction do not read every heading alike,
+  to is unchanged: that is composition, which reads lines, and compaction does
+  not depend on it. Composition and compaction do not read every heading alike,
   so every section that span runs into, as composition reads it, is kept, the
   pointer goes after it, and a compaction that would still change the span is
   not applied. If an agent removes the Next Step markers the step is kept
   whole; if it removes the closing marker and the layout cannot be verified,
   the Task is left unchanged.
-- **Code blocks.** They are read across the whole Task, including those a list
-  item opens on its own line, which end with the item. One that crosses the
-  end of the structure stays whole, with the pointer after it, and a Next Step
-  whose bounds fall inside one is not capped.
-- **Known limit.** Compaction reads Markdown with its own line scanner, not a
-  parser. Some constructs are misread: a `##` line inside an HTML comment or
-  block counts as a heading, and an underlined heading does not start a
-  section. Text can then move that should have stayed; nothing is lost,
-  because the complete Task is archived before anything moves. Reading the
-  Task with a Markdown parser is a separate change (#3047).
+- **Reading.** A CommonMark parser (goldmark, block parsing only) reads the
+  Task for the byte offsets of its headings and of its code and HTML blocks.
+  Nothing is rendered: what is written is sliced from the original bytes, and
+  reading takes time in proportion to the Task's size. A section starts at
+  every H2 written as `##` and indented by at most three spaces, inside a list
+  item too, and at every underlined H2 outside lists and block quotes. A
+  section inside a list item stays with the section holding the list, in
+  history and in what follows Next Step's own section. A line
+  inside a code block, HTML comment or HTML block starts none. A code block
+  that crosses the end of the structure stays whole, with the pointer after
+  it, and a Next Step whose bounds fall inside a code or HTML block is not
+  capped. Next Step is cut by the block ranges of that one reading, never by
+  reading a section again, so text read as outside any block gets no closing
+  line.
+- **Departures from CommonMark.** A top-level fenced code block, or HTML
+  comment, raw-text, processing-instruction, declaration or CDATA block, that
+  nothing closes is read as text, so a truncated log swallows nothing; a
+  Sandman marker line never closes a comment it did not open. An ATX heading
+  indented inside a list item still starts a section. Block quotes and lists
+  nest at most 64 deep, and link reference definitions are read only in
+  paragraphs of at most 64 lines, because both otherwise cost quadratic time.
+- **Joining what is left.** A blank line is added before a kept underlined
+  title, or note left after an earlier pointer, whose predecessor moved, so it
+  cannot continue the paragraph, list or quote now above it; an indented one,
+  which a list would still take in, also gets a `***` rule above it. A compaction is
+  not applied unless its result reads as it was put together: sections
+  starting, inside a list or not, and code and HTML blocks starting and
+  ending, exactly where they were written, and no block left open that was
+  not. Before giving up it cuts
+  Next Step only between blocks, then leaves it whole. Titles the pointer lists are escaped, so they can
+  neither open a block there nor end one left open above it. A parser failure
+  leaves the Task unchanged.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
@@ -148,7 +174,9 @@ content except what compaction moves into the archive.
 Long Runs keep a bounded prompt, and nothing is lost. The heuristics (later
 sections are newer, the beginning of `## Next Step` is current) can keep an
 older checkpoint or move a newer one; the archive and the live repository
-cover both cases.
+cover both cases. A line of `---` written directly under text makes that text a
+heading, as it renders, even inside a `## Plan`: the plan ends there, and what
+follows is history.
 
 The built-in template and a current review report are kept, so a Task with a
 large report can stay above the target. A replay with that Task's shape,
