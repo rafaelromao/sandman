@@ -116,7 +116,9 @@ updates it.
   inside a code block, HTML comment or HTML block starts none. A code block
   that crosses the end of the structure stays whole, with the pointer after
   it, and a Next Step whose bounds fall inside a code or HTML block is not
-  capped.
+  capped. Next Step is cut by the block ranges of that one reading, never by
+  reading a section again, so text read as outside any block gets no closing
+  line.
 - **Departures from CommonMark.** A top-level fenced code block, or HTML
   comment, raw-text, processing-instruction, declaration or CDATA block, that
   nothing closes is read as text, so a truncated log swallows nothing; a

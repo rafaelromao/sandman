@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -39,10 +40,27 @@ type markdownHeading struct {
 // Markdown.
 type markdownBlock struct {
 	start, end int    // its lines
-	closed     bool   // nothing more is needed to end it
-	closer     string // the line that ends it, for a block left open
-	fence      fence  // zero for an HTML block
+	opening    int    // bytes from start through its opening delimiter
+	closed     bool   // a line of its own, or none, ends it
+	closer     string // the line that ends it, for a block cut short
+	fence      fence  // zero for any other block
 	info       bool   // a fenced block with an info string
+	htmlKind   int    // an HTML block's type, 1 to 5, when it needs a closer
+}
+
+// endsBy reports whether prefix, which cuts the block's last line, already
+// holds enough of that line to end the block.
+func (b markdownBlock) endsBy(prefix string) bool {
+	at := lineStart(prefix, len(prefix))
+	line := prefix[at:]
+	if at <= b.start || isSandmanMarker(line) {
+		return false
+	}
+	if b.fence.char == 0 {
+		return holdsHTMLEnd(line, b.htmlKind)
+	}
+	char, length, ok := closingFence(strings.TrimLeft(line, "> \t"))
+	return ok && char == b.fence.char && length >= b.fence.length
 }
 
 // fence is the delimiter of a fenced code block: its character and length.
@@ -189,35 +207,45 @@ func (l *lineList) from(offset int) int {
 	return l.cursor
 }
 
+// closingFence returns the delimiter of a line that would close a top-level
+// fenced code block, by the parser's own test: its blank space is ASCII's.
+func closingFence(line string) (char byte, length int, ok bool) {
+	width, at := util.IndentWidth([]byte(line[:min(len(line), 4)]), 0)
+	if width > 3 || at >= len(line) || line[at] != '`' && line[at] != '~' {
+		return 0, 0, false
+	}
+	for at+length < len(line) && line[at+length] == line[at] {
+		length++
+	}
+	return line[at], length, length >= 3 && util.IsBlank([]byte(line[at+length:]))
+}
+
+// rawTagEnd is the parser's end condition of HTML block type 1.
+var rawTagEnd = regexp.MustCompile(`(?i)^.*</(?:script|pre|style|textarea)>.*`)
+
 // htmlEnds are the end conditions of HTML block types 2 to 5.
 var htmlEnds = [6]string{2: "-->", 3: "?>", 4: ">", 5: "]]>"}
 
 var rawTags = []string{"script", "pre", "style", "textarea"}
 
+// htmlOpeners are the lengths of the openers of HTML block types 2 to 5.
+var htmlOpeners = [6]int{2: len("<!--"), 3: len("<?"), 4: len("<!"), 5: len("<![CDATA[")}
+
 func holdsHTMLEnd(line string, kind int) bool {
 	if kind != 1 {
 		return strings.Contains(line, htmlEnds[kind])
 	}
-	if !strings.Contains(line, "</") {
-		return false
-	}
-	lower := strings.ToLower(line)
-	for _, tag := range rawTags {
-		if strings.Contains(lower, "</"+tag+">") {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(line, "</") && rawTagEnd.MatchString(strings.TrimRight(line, "\r\n"))
 }
 
 func findClosers(content string) *blockClosers {
 	c := &blockClosers{content: content, fences: map[byte]*fenceLines{'`': {}, '~': {}}}
 	for start := 0; start < len(content); start = lineEnd(content, start) {
 		line := content[start:lineEnd(content, start)]
-		if f, info, ok := parseFence(line); ok && !info {
-			lines := c.fences[f.char]
+		if char, length, ok := closingFence(line); ok {
+			lines := c.fences[char]
 			lines.starts = append(lines.starts, start)
-			lines.longest = append(lines.longest, f.length)
+			lines.longest = append(lines.longest, length)
 		}
 		if isSandmanMarker(line) {
 			continue
@@ -269,24 +297,16 @@ func isSandmanMarker(line string) bool {
 	return line == taskHistoryEnd || strings.HasPrefix(line, "<!-- sandman:")
 }
 
-// parseFence recognises a fence line, indented by at most three spaces, and
-// reports whether an info string follows the delimiter.
-func parseFence(line string) (f fence, info, ok bool) {
+// isFenceLine recognises a line written as a code fence, indented by at most
+// three spaces.
+func isFenceLine(line string) bool {
 	line = strings.TrimRight(line, "\r\n")
 	trimmed := strings.TrimLeft(line, " ")
 	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 || trimmed[0] != '`' && trimmed[0] != '~' {
-		return fence{}, false, false
+		return false
 	}
-	char := trimmed[0]
-	length := 0
-	for length < len(trimmed) && trimmed[length] == char {
-		length++
-	}
-	rest := trimmed[length:]
-	if length < 3 || char == '`' && strings.Contains(rest, "`") {
-		return fence{}, false, false
-	}
-	return fence{char: char, length: length}, strings.TrimSpace(rest) != "", true
+	length := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
+	return length >= 3 && (trimmed[0] != '`' || !strings.Contains(trimmed[length:], "`"))
 }
 
 // lineStart returns the offset of the line holding offset.
@@ -310,7 +330,7 @@ func readTask(content string) taskDocument {
 	return readMarkdown(content, context)
 }
 
-// readMarkdown reads content as CommonMark does, subject to context.
+// readMarkdown reads content as CommonMark does, but for what context asks.
 func readMarkdown(content string, context parser.Context) taskDocument {
 	doc := taskDocument{content: content}
 	root := parseMarkdown([]byte(content), context)
@@ -385,11 +405,12 @@ func (d *taskDocument) addFence(node *ast.FencedCodeBlock) {
 		length++
 	}
 	block := markdownBlock{
-		start:  start,
-		end:    lineEnd(d.content, start),
-		closer: closerPrefix(first[:column]) + strings.Repeat(first[column:column+1], length),
-		fence:  fence{char: first[column], length: length},
-		info:   node.Info != nil,
+		start:   start,
+		end:     lineEnd(d.content, start),
+		opening: column + length,
+		closer:  closerPrefix(first[:column]) + strings.Repeat(first[column:column+1], length),
+		fence:   fence{char: first[column], length: length},
+		info:    node.Info != nil,
 	}
 	if n := node.Lines().Len(); n > 0 {
 		block.end = lineEnd(d.content, node.Lines().At(n-1).Start)
@@ -426,17 +447,19 @@ func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
 			block.end = lineEnd(d.content, node.ClosureLine.Start)
 		}
 		block.closed = node.HasClosure() || holdsHTMLEnd(first, kind)
-		end := htmlEnds[kind]
+		at := max(strings.IndexByte(first, '<'), 0)
+		end, opener := htmlEnds[kind], htmlOpeners[kind]
 		if kind == 1 {
 			lower := strings.ToLower(first)
 			for _, tag := range rawTags {
 				if strings.Contains(lower, "<"+tag) {
-					end = "</" + tag + ">"
+					end, opener = "</"+tag+">", len("<"+tag)
 					break
 				}
 			}
 		}
-		block.closer = closerPrefix(first[:max(strings.IndexByte(first, '<'), 0)]) + end
+		block.htmlKind, block.opening = kind, at+opener
+		block.closer = closerPrefix(first[:at]) + end
 	}
 	d.blocks = append(d.blocks, block)
 }
@@ -494,8 +517,9 @@ func (d taskDocument) holdsOtherHeading(from, to int) bool {
 // nextATXSection returns where the next section an ATX heading starts after
 // offset, or the end of the content.
 func (d taskDocument) nextATXSection(offset int) int {
-	for _, h := range d.boundaries(offset+1, len(d.content)) {
-		if !h.underlined {
+	i := sort.Search(len(d.headings), func(n int) bool { return d.headings[n].start > offset })
+	for _, h := range d.headings[i:] {
+		if h.level == 2 && !h.underlined {
 			return h.start
 		}
 	}
@@ -512,14 +536,4 @@ func (d taskDocument) atxSectionAt(offset int, heading string) bool {
 		}
 	}
 	return false
-}
-
-// openBlock returns the fenced code or HTML block that text, read as
-// CommonMark does, leaves open.
-func openBlock(content string) (markdownBlock, bool) {
-	doc := readMarkdown(content, parser.NewContext())
-	if n := len(doc.blocks); n > 0 && !doc.blocks[n-1].closed && doc.blocks[n-1].end == len(content) {
-		return doc.blocks[n-1], true
-	}
-	return markdownBlock{}, false
 }

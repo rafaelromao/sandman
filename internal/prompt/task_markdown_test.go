@@ -16,8 +16,9 @@ func openFence(content string) (open struct {
 	char   byte
 	column int
 }) {
-	if block, ok := openBlock(content); ok && block.fence.char != 0 {
-		open.char, open.column = block.fence.char, len(block.closer)-block.fence.length
+	blocks := readMarkdown(content, parser.NewContext()).blocks
+	if n := len(blocks); n > 0 && !blocks[n-1].closed && blocks[n-1].end == len(content) && blocks[n-1].fence.char != 0 {
+		open.char, open.column = blocks[n-1].fence.char, len(blocks[n-1].closer)-blocks[n-1].fence.length
 	}
 	return open
 }
@@ -581,5 +582,72 @@ func TestCompactTask_SizesTheBlankLinesItWrites(t *testing.T) {
 				t.Fatalf("at a target of %d bytes it moved %q instead of %q", got.After, exact.Moved, got.Moved)
 			}
 		})
+	}
+}
+
+// The cut reads the Task as section discovery does: a marker line inside a
+// comment does not end it, so the cut goes before the comment, or closes it.
+func TestCompactTask_CutsNextStepAsTheTaskIsRead(t *testing.T) {
+	comment := "<!-- real comment\n<!-- sandman:note abc -->\n" + strings.Repeat("comment line\n", 200) + "-->\n"
+	for name, tc := range map[string]struct {
+		before int
+		inside bool
+	}{
+		"before the comment": {before: 2600},
+		"inside the comment": {before: 100, inside: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			step := "Implement the first slice.\n\n" + paragraph("now", tc.before) + "\n" + comment
+			task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+			got := compact(task, true)
+
+			from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "## Required Order")
+			if !got.Compacted || from < 0 || to < from {
+				t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+			}
+			kept := got.Content[from:to]
+			if strings.Contains(kept, "comment line") != tc.inside || tc.inside && !strings.Contains(kept, "comment li\n-->\n") && !strings.Contains(kept, "\n-->\n") {
+				t.Fatalf("kept %d comment lines: %q", strings.Count(kept, "comment line"), kept[max(len(kept)-200, 0):])
+			}
+		})
+	}
+}
+
+// What ends a fence is exactly what the parser takes to end it.
+func TestSplitTaskSections_ClosesFencesAsTheParserDoes(t *testing.T) {
+	for name, tc := range map[string]struct{ content, want string }{
+		"a non-breaking space after":  {"```text\n``` \n## Visible\n", "## Visible"},
+		"spaces and tabs after":       {"```text\n## code\n``` \t\n## Visible\n", "## Visible"},
+		"CRLF":                        {"```text\r\n## code\r\n```\r\n## Visible\r\n", "## Visible"},
+		"indented by a tab":           {"```text\n\t```\n## Visible\n", "## Visible"},
+		"indented by three":           {"```text\n## code\n   ```\n## Visible\n", "## Visible"},
+		"a non-breaking space before": {"```text\n ```\n## Visible\n", "## Visible"},
+		"a raw tag's closer":          {"<pre>\n## code\n</PRE >\n## Visible\n", "## code|## Visible"},
+	} {
+		if got := strings.Join(headingsIn(tc.content), "|"); got != tc.want {
+			t.Errorf("%s: headings = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// Checking a template's Next Step sections looks at each heading once.
+func TestBuiltInTaskBounds_ChecksATemplateInLinearMemory(t *testing.T) {
+	task := strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", testIssue, 1)
+	allocated := func(steps int) uint64 {
+		template := strings.Replace(DefaultPrompt(), "## Completion Requirements\n",
+			strings.Repeat("## Next Step\n\nx\n\n", steps)+"## Completion Requirements\n", 1)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, ok := BuiltInTaskBounds(RenderConfig{PromptFlag: template}, task, testIssue)
+		runtime.ReadMemStats(&after)
+		if !ok {
+			t.Fatal("the layout was not located")
+		}
+		return after.TotalAlloc - before.TotalAlloc
+	}
+
+	if small, large := allocated(4_000), allocated(8_000); large > 3*small {
+		t.Fatalf("twice the headings allocate %d bytes, over three times %d", large, small)
 	}
 }

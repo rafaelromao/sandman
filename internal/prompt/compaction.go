@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/yuin/goldmark/parser"
 )
 
 // TaskHistoryHeading names the Sandman-owned section that points a compacted
@@ -592,18 +590,13 @@ func capNextStep(doc taskDocument, end, from, to int, keeps func(int, taskSectio
 			room -= len(section.text)
 		// A section is only cut after all of its heading's lines.
 		case !cut && room >= section.headingLength:
-			prefix := cutOutsideBlocks(section.text, room)
+			prefix := cutOutsideBlocks(section, room)
 			if nextStepLimit-room+len(prefix) < nextStepLimit/2 {
 				// A long line or code block would waste most of the limit.
-				prefix = cutInside(section.text, room)
+				prefix = cutInside(section, room)
 			}
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
-			text := trimTrailingNewlines(prefix) + "\n\n"
-			// Closing a block the Task read as text can take the title with it.
-			if len(readTask(text).boundaries(0, 1)) == 0 {
-				section.heading = ""
-			}
-			write(section, text)
+			write(section, trimTrailingNewlines(prefix)+"\n\n")
 			cut = true
 		default:
 			cut, dropped = true, true
@@ -673,7 +666,7 @@ func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
 			example = false
 			continue
 		default:
-			if _, _, ok := parseFence(line); ok {
+			if isFenceLine(line) {
 				if example {
 					return true
 				}
@@ -693,21 +686,37 @@ func swallowsProtected(section taskSection, topLevel map[string]bool) bool {
 	return example
 }
 
-// cutInside returns at most limit bytes of text, ending between characters and
-// closing a code or HTML block left open.
-func cutInside(text string, limit int) string {
-	prefix := runePrefix(text, limit)
-	open, ok := openBlock(prefix)
-	if !ok {
+// cutInside returns at most limit bytes of the section, ending between
+// characters and closing a code or HTML block the cut leaves open.
+func cutInside(section taskSection, limit int) string {
+	prefix := runePrefix(section.text, limit)
+	block, open := section.leftOpen(len(prefix))
+	if !open {
 		return prefix
 	}
-	closer := "\n" + open.closer
-	short := runePrefix(text, limit-len(closer))
-	if again, ok := openBlock(short); !ok || again.start != open.start || again.closer != open.closer {
+	closer := "\n" + block.closer
+	short := runePrefix(section.text, limit-len(closer))
+	if len(short) < block.start+block.opening {
 		// The block's delimiter and its closer do not both fit.
-		return cutOutsideBlocks(text, limit)
+		return cutOutsideBlocks(section, limit)
+	}
+	if again, open := section.leftOpen(len(short)); !open || again.start != block.start {
+		return short
 	}
 	return short + closer
+}
+
+// leftOpen returns the block a cut at offset at leaves needing a closing line.
+func (s taskSection) leftOpen(at int) (markdownBlock, bool) {
+	for _, block := range s.blocks {
+		if block.start >= at {
+			break
+		}
+		if at < block.end {
+			return block, block.closer != "" && !(block.closed && block.endsBy(s.text[:at]))
+		}
+	}
+	return markdownBlock{}, false
 }
 
 // runePrefix returns the longest prefix of text of at most limit bytes that
@@ -742,17 +751,20 @@ func underlinesProtected(paragraph []string) bool {
 	return false
 }
 
-// cutOutsideBlocks returns the longest prefix of text, ending at a line break
-// outside any code or HTML block, that is at most limit bytes long. The text
-// starts outside a block, as every section does.
-func cutOutsideBlocks(text string, limit int) string {
+// cutOutsideBlocks returns the longest prefix of the section, ending at a line
+// break outside any of its code and HTML blocks, that is at most limit bytes
+// long. The blocks are those the whole Task was read with.
+func cutOutsideBlocks(section taskSection, limit int) string {
+	text := section.text
 	if len(text) <= limit {
 		return text
 	}
-	doc := readMarkdown(text, parser.NewContext())
-	safe := 0
+	safe, blocks := 0, section.blocks
 	for end := lineEnd(text, 0); end <= limit && text[end-1] == '\n'; end = lineEnd(text, end) {
-		if !doc.splitsBlock(end) {
+		for len(blocks) > 0 && blocks[0].end <= end {
+			blocks = blocks[1:]
+		}
+		if len(blocks) == 0 || blocks[0].start >= end {
 			safe = end
 		}
 	}
