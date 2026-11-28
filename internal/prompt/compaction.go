@@ -303,39 +303,41 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	for i, offset := 0, bounds.StructureEnd; i < len(tail); i++ {
 		offsets[i], offset = offset, offset+len(tail[i].text)
 	}
-	prefix, rest := head, 0
+	rest := 0
 	if len(tail) > 0 && tail[0].heading == "" && !tail[0].afterPointer {
-		prefix, rest = head+tail[0].text, 1
+		rest = 1
 	}
 	// Nor does the pointer go inside the settings span.
 	for rest < len(tail) && settingsFrom < offsets[rest] && offsets[rest] < settingsTo {
 		if tail[rest].heading != "" {
-			headings = append(headings, len(prefix))
+			headings = append(headings, len(head)+offsets[rest]-bounds.StructureEnd)
 		}
-		prefix += tail[rest].text
 		rest++
 	}
+	// What precedes the pointer is one piece of the Task.
+	prefixEnd := len(content)
+	if rest < len(tail) {
+		prefixEnd = offsets[rest]
+	}
+	prefix := head + content[bounds.StructureEnd:prefixEnd]
 	separator := blankLineAfter(prefix)
+	// kept holds what is written of each section: everything but old pointers,
+	// until history moves.
 	kept := make([]string, len(tail))
 	var history []int
 	fixed := len(head)
-	// gaps allows for the blank line a section may need once what preceded it
-	// moves (see below).
-	gaps := 0
 	for i, section := range tail {
-		if section.mayJoin() {
-			gaps += len("\n\n")
-		}
 		switch {
 		case section.generatedPointer:
 			continue
 		case section.heading == "" && !section.afterPointer, keeps(offsets[i], section):
-			kept[i] = section.text
 			fixed += len(section.text)
 		default:
 			history = append(history, i)
 		}
+		kept[i] = section.text
 	}
+	gaps := newGapCount(tail, kept, rest)
 
 	// Move the fewest oldest history sections for the Task, with the pointer
 	// naming exactly what moves, to fit the target; if none fits, move all.
@@ -350,9 +352,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		if n > 0 {
 			section := tail[history[n-1]]
 			keptSize -= len(section.text)
-			if section.mayJoin() {
-				gaps -= len("\n\n")
-			}
+			gaps.drop(history[n-1])
 			listedBytes += len("- \n") + len(strings.TrimPrefix(section.label(), "## "))
 		}
 		if n == 0 && !changed {
@@ -367,13 +367,10 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		if count > 0 {
 			pointerSize += len(movedSectionsHeading) + listedBytes
 		}
-		if keptSize+gaps+pointerSize <= opts.Target {
+		if keptSize+gaps.total+pointerSize <= opts.Target {
 			keepFrom = n
 			break
 		}
-	}
-	for _, i := range history[keepFrom:] {
-		kept[i] = tail[i].text
 	}
 	for _, i := range history[:keepFrom] {
 		moved = append(moved, tail[i].label())
@@ -398,9 +395,7 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 		if kept[i] == "" {
 			continue
 		}
-		if tail[i].mayJoin() && (i == 0 || kept[i-1] == "") {
-			b.WriteString(blankLineAfter(b.String()))
-		}
+		b.WriteString(gapBefore(b.String(), tail, kept, i))
 		if tail[i].heading != "" {
 			headings = append(headings, b.Len())
 		}
@@ -422,6 +417,69 @@ func CompactTask(content string, opts TaskCompaction) (result TaskCompactionResu
 	result.Content, result.Compacted, result.After, result.Moved = compacted, true, len(compacted), moved
 	result.ArchivePath = opts.ArchivePath
 	return result
+}
+
+// gapBefore returns what is written between written and section i: the blank
+// line an underlined title or a note needs, once what preceded it is gone, not
+// to continue the paragraph, list or quote now above it.
+func gapBefore(written string, tail []taskSection, kept []string, i int) string {
+	if !tail[i].mayJoin() || i > 0 && kept[i-1] != "" {
+		return ""
+	}
+	return blankLineAfter(written)
+}
+
+// gapCount follows the size of the blank lines gapBefore adds as history is
+// dropped, oldest first.
+type gapCount struct {
+	tail  []taskSection
+	kept  []string
+	sizes []int
+	total int
+	// previous is what is written before the section being dropped, found
+	// by looking at each section once.
+	previous string
+	scanned  int
+}
+
+// pointerEnd is how the history pointer, written before every section counted,
+// ends.
+const pointerEnd = taskHistoryEnd + "\n"
+
+func newGapCount(tail []taskSection, kept []string, rest int) *gapCount {
+	g := &gapCount{tail: tail, kept: kept, sizes: make([]int, len(tail)), previous: pointerEnd, scanned: rest}
+	previous := pointerEnd
+	for i := rest; i < len(tail); i++ {
+		if kept[i] != "" {
+			g.set(i, previous)
+			previous = kept[i]
+		}
+	}
+	return g
+}
+
+func (g *gapCount) set(i int, written string) {
+	size := len(gapBefore(written, g.tail, g.kept, i))
+	g.total += size - g.sizes[i]
+	g.sizes[i] = size
+}
+
+// drop stops writing section i, which follows every section dropped before.
+func (g *gapCount) drop(i int) {
+	g.kept[i] = ""
+	g.total -= g.sizes[i]
+	g.sizes[i] = 0
+	for ; g.scanned < i; g.scanned++ {
+		if g.kept[g.scanned] != "" {
+			g.previous = g.kept[g.scanned]
+		}
+	}
+	for next := i + 1; next < len(g.tail); next++ {
+		if g.kept[next] != "" {
+			g.set(next, g.previous)
+			return
+		}
+	}
 }
 
 // startsSections reports whether content's sections start exactly at offsets:

@@ -120,7 +120,7 @@ updates it.
 - **Departures from CommonMark.** A top-level fenced code block, or HTML
   comment, raw-text, processing-instruction, declaration or CDATA block, that
   nothing closes is read as text, so a truncated log swallows nothing; a
-  Sandman marker line does not close a comment it did not open. An ATX heading
+  Sandman marker line never closes a comment it did not open. An ATX heading
   indented inside a list item still starts a section. Block quotes and lists
   nest at most 64 deep, and link reference definitions are read only in
   paragraphs of at most 64 lines, because both otherwise cost quadratic time.

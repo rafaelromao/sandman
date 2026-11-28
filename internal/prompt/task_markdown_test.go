@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -399,6 +400,7 @@ func TestCompactTask_ClosesAnHTMLBlockItCutsInNextStep(t *testing.T) {
 func FuzzCompactTask(f *testing.F) {
 	for _, seed := range []string{
 		"## Plan\n\n<!--\n## draft\n-->\n",
+		"    indented\n\n<!--\n<!-- sandman:x -->\n## Hidden\n-->\nNotes\n---\n",
 		"Title\n---\n\n- item\n  ```\n  ## code\n",
 		"```text\nlog\n## Plan\n```\n",
 		"> quote\n## Old\nExecution\nChecklist\n---\n",
@@ -486,6 +488,7 @@ func TestSplitTaskSections_ReadsAdversarialTasksQuickly(t *testing.T) {
 		"link definitions":     strings.Repeat("[a]: b\n", 300_000),
 		"underlined headings":  strings.Repeat("a\n---\n\n", 50_000),
 		"one long paragraph":   strings.Repeat("word `x` [y]( <z\n", 100_000),
+		"markers in a comment": "<!--" + strings.Repeat(" ", 1_000_000) + "\n" + strings.Repeat("<!-- sandman:x -->\n", 100_000) + "-->\n",
 		"closed code and HTML": strings.Repeat("```\nx\n```\n<!-- y -->\n## H\n", 20_000),
 	} {
 		start := time.Now()
@@ -504,5 +507,79 @@ func TestCompactTask_CompactsALargeTaskQuickly(t *testing.T) {
 
 	if elapsed := time.Since(start); !got.Compacted || elapsed > 20*time.Second {
 		t.Fatalf("compacted = %t (%s) in %s", got.Compacted, got.Reason, elapsed)
+	}
+}
+
+// Sections the review settings run into go before the pointer in one piece, so
+// a long run of them costs memory in proportion to its length: twice as many
+// allocate about twice as much, not four times.
+func TestCompactTask_KeepsALongSettingsSpanInLinearMemory(t *testing.T) {
+	template := "# Task\n\n## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n\n## Runtime Context\n\n- Base branch: `main`\n"
+	allocated := func(sections int) uint64 {
+		task := renderMarked(template, "Issue.") + "\n" + strings.Repeat("a\n---\n\n", sections) + "## Checkpoint 1\n\n" + paragraph("c", 3000)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := compact(task, true)
+		runtime.ReadMemStats(&after)
+		if !got.Compacted || strings.Contains(got.Content, "## Checkpoint 1\n") {
+			t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+		}
+		return after.TotalAlloc - before.TotalAlloc
+	}
+
+	if small, large := allocated(8_000), allocated(16_000); large > 3*small {
+		t.Fatalf("twice the sections allocate %d bytes, over three times %d", large, small)
+	}
+}
+
+// An indented code block is code too: the cut goes before it.
+func TestCompactTask_CutsNextStepOutsideIndentedCode(t *testing.T) {
+	step := "Implement the first slice.\n\n" + paragraph("now", 2600) + "\n" + strings.Repeat("    trace line here\n", 200)
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", step, 1)
+
+	got := compact(task, true)
+
+	if !got.Compacted || !strings.Contains(got.Content, "now now") || strings.Contains(got.Content, "trace line here") {
+		t.Fatalf("compacted = %t (%s), %d log lines kept", got.Compacted, got.Reason, strings.Count(got.Content, "trace line here"))
+	}
+}
+
+// A marker does not end a comment, and does not stop the comment's own closer
+// from ending it.
+func TestSplitTaskSections_ReadsPastMarkersToACommentsCloser(t *testing.T) {
+	for name, tc := range map[string]struct{ content, want string }{
+		"closed after a marker": {"<!--\n## Hidden\n<!-- sandman:note abc -->\nmore comment\n-->\n\n## Visible\n", "## Visible"},
+		"only a marker":         {"<!--\n## Real\n<!-- sandman:note abc -->\n## After\n", "## Real|## After"},
+		"after the pointer end": {"<!--\n" + taskHistoryEnd + "\n## Hidden\n-->\n## Visible\n", "## Visible"},
+		"a marker on its own":   {"<!-- sandman:note abc -->\n## Real\n-->\n", "## Real"},
+	} {
+		if got := strings.Join(headingsIn(tc.content), "|"); got != tc.want {
+			t.Errorf("%s: headings = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// The budget counts exactly the blank lines compaction writes, so a Task that
+// fits keeps everything that fits.
+func TestCompactTask_SizesTheBlankLinesItWrites(t *testing.T) {
+	notes := "Notes\n-----\n\n" + paragraph("n", 1000)
+	for name, history := range map[string][]string{
+		"none written": {checkpoint(1, 5000), checkpoint(2, 1000), "\n" + notes},
+		"one written":  {"\n## Plan\n\nlast plan step\n", "## Old\n\n```\n" + paragraph("old", 6000) + "```\n", notes},
+		"two written":  {"\n## Plan\n\nlast plan step", "\n## Old\n\n```\n" + paragraph("old", 6000) + "```\n", notes},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := structuredTask(history...)
+			got := compact(task, true)
+			if !got.Compacted || !strings.Contains(got.Content, notes) {
+				t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+			}
+
+			exact := compactTo(task, got.After, true)
+
+			if strings.Join(exact.Moved, "|") != strings.Join(got.Moved, "|") || exact.After != got.After {
+				t.Fatalf("at a target of %d bytes it moved %q instead of %q", got.After, exact.Moved, got.Moved)
+			}
+		})
 	}
 }

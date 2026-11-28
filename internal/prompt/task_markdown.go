@@ -35,7 +35,7 @@ type markdownHeading struct {
 	title      []string // the lines of an underlined title
 }
 
-// markdownBlock is a fenced code or HTML block, the blocks whose lines are not
+// markdownBlock is a code or HTML block, the blocks whose lines are not
 // Markdown.
 type markdownBlock struct {
 	start, end int    // its lines
@@ -119,12 +119,32 @@ func (p leafParser) Open(parent ast.Node, reader text.Reader, context parser.Con
 }
 
 func (p leafParser) Continue(node ast.Node, reader text.Reader, context parser.Context) parser.State {
-	_, segment := reader.PeekLine()
+	line, segment := reader.PeekLine()
+	if html, ok := node.(*ast.HTMLBlock); ok && context.Get(closersKey) != nil && passesMarker(html, string(line), reader.Source()) {
+		node.Lines().Append(segment)
+		reader.AdvanceToEOL()
+		return parser.Continue | parser.NoChildren
+	}
 	state := p.BlockParser.Continue(node, reader, context)
 	if state&parser.Continue == 0 && node.Kind() == ast.KindFencedCodeBlock {
 		node.SetAttributeString(closedAt, segment.Stop)
 	}
 	return state
+}
+
+// passesMarker reports whether line is a Sandman marker line that would end a
+// block it did not open, and so is part of it.
+func passesMarker(node *ast.HTMLBlock, line string, source []byte) bool {
+	kind := int(node.HTMLBlockType)
+	if kind >= len(htmlEnds) || !isSandmanMarker(line) || !holdsHTMLEnd(line, kind) {
+		return false
+	}
+	// A block its first line ends closes here, before this line is read.
+	if node.Lines().Len() != 1 {
+		return true
+	}
+	first := node.Lines().At(0)
+	return !holdsHTMLEnd(string(first.Value(source)), kind)
 }
 
 type shortReferences struct{}
@@ -138,20 +158,36 @@ func (shortReferences) Transform(node *ast.Paragraph, reader text.Reader, contex
 // blockClosers indexes the lines that could end a top-level block.
 type blockClosers struct {
 	content string
-	// fences holds the bare fence lines of each character in order, each with
-	// the longest such fence from it on.
-	fences map[byte][]fenceLine
+	// fences holds the bare fence lines of each character, each with the
+	// longest such fence from it on.
+	fences map[byte]*fenceLines
 	// html holds, by HTML block type 1 to 5, the lines with the type's end
-	// condition.
-	html [6][]htmlLine
+	// condition, but for Sandman's marker lines.
+	html [6]lineList
 }
 
-type htmlLine struct {
-	start  int
-	marker bool // a Sandman marker line
+type fenceLines struct {
+	lineList
+	longest []int
 }
 
-type fenceLine struct{ start, longest int }
+// lineList holds where some lines start, in order. The parser reads forward,
+// so a cursor finds the next of them without searching.
+type lineList struct {
+	starts []int
+	cursor int
+}
+
+// from returns the index of the first line starting at or after offset.
+func (l *lineList) from(offset int) int {
+	if l.cursor > 0 && l.starts[l.cursor-1] >= offset {
+		l.cursor = 0
+	}
+	for l.cursor < len(l.starts) && l.starts[l.cursor] < offset {
+		l.cursor++
+	}
+	return l.cursor
+}
 
 // htmlEnds are the end conditions of HTML block types 2 to 5.
 var htmlEnds = [6]string{2: "-->", 3: "?>", 4: ">", 5: "]]>"}
@@ -175,30 +211,34 @@ func holdsHTMLEnd(line string, kind int) bool {
 }
 
 func findClosers(content string) *blockClosers {
-	c := &blockClosers{content: content, fences: map[byte][]fenceLine{}}
+	c := &blockClosers{content: content, fences: map[byte]*fenceLines{'`': {}, '~': {}}}
 	for start := 0; start < len(content); start = lineEnd(content, start) {
 		line := content[start:lineEnd(content, start)]
 		if f, info, ok := parseFence(line); ok && !info {
-			c.fences[f.char] = append(c.fences[f.char], fenceLine{start, f.length})
+			lines := c.fences[f.char]
+			lines.starts = append(lines.starts, start)
+			lines.longest = append(lines.longest, f.length)
 		}
-		marker := isSandmanMarker(line)
+		if isSandmanMarker(line) {
+			continue
+		}
 		for kind := 1; kind < len(c.html); kind++ {
 			if holdsHTMLEnd(line, kind) {
-				c.html[kind] = append(c.html[kind], htmlLine{start, marker})
+				c.html[kind].starts = append(c.html[kind].starts, start)
 			}
 		}
 	}
 	for _, lines := range c.fences {
-		for i := len(lines) - 2; i >= 0; i-- {
-			lines[i].longest = max(lines[i].longest, lines[i+1].longest)
+		for i := len(lines.longest) - 2; i >= 0; i-- {
+			lines.longest[i] = max(lines.longest[i], lines.longest[i+1])
 		}
 	}
 	return c
 }
 
 // ends reports whether something ends the top-level block node, opened by line
-// at offset. A Sandman marker line does not end a comment it did not open:
-// what an agent or an issue left open is text.
+// at offset. A Sandman marker line does not end a comment it did not open (see
+// leafParser.Continue): what an agent or an issue left open is text.
 func (c *blockClosers) ends(node ast.Node, line []byte, offset int) bool {
 	start := lineStart(c.content, offset)
 	switch node := node.(type) {
@@ -212,16 +252,14 @@ func (c *blockClosers) ends(node ast.Node, line []byte, offset int) bool {
 			length++
 		}
 		lines := c.fences[line[i]]
-		next := sort.Search(len(lines), func(n int) bool { return lines[n].start > start })
-		return next < len(lines) && lines[next].longest >= length
+		next := lines.from(start + 1)
+		return next < len(lines.starts) && lines.longest[next] >= length
 	case *ast.HTMLBlock:
 		kind := int(node.HTMLBlockType)
 		if kind >= len(c.html) {
 			return true // types 6 and 7 end at a blank line
 		}
-		lines := c.html[kind]
-		next := sort.Search(len(lines), func(n int) bool { return lines[n].start >= start })
-		return next < len(lines) && (lines[next].start == start || !lines[next].marker)
+		return holdsHTMLEnd(string(line), kind) || c.html[kind].from(start+1) < len(c.html[kind].starts)
 	}
 	return true
 }
@@ -283,6 +321,8 @@ func readMarkdown(content string, context parser.Context) taskDocument {
 		switch node := node.(type) {
 		case *ast.Heading:
 			doc.addHeading(node)
+		case *ast.CodeBlock:
+			doc.addIndentedCode(node)
 		case *ast.FencedCodeBlock:
 			doc.addFence(node)
 		case *ast.HTMLBlock:
@@ -358,6 +398,19 @@ func (d *taskDocument) addFence(node *ast.FencedCodeBlock) {
 		block.end, block.closed = stop.(int), true
 	}
 	d.blocks = append(d.blocks, block)
+}
+
+// addIndentedCode records an indented code block, which needs no closing line.
+func (d *taskDocument) addIndentedCode(node *ast.CodeBlock) {
+	n := node.Lines().Len()
+	if n == 0 {
+		return
+	}
+	d.blocks = append(d.blocks, markdownBlock{
+		start:  lineStart(d.content, node.Lines().At(0).Start),
+		end:    lineEnd(d.content, node.Lines().At(n-1).Start),
+		closed: true,
+	})
 }
 
 func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
