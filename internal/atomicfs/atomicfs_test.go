@@ -184,3 +184,38 @@ func TestWriteAtomicNew_NeverWritesOutsideItsRoot(t *testing.T) {
 		})
 	}
 }
+
+// WriteAtomicIn replaces a file inside its root, and a symlink that leads out
+// of the root fails the write without touching what it points at.
+func TestWriteAtomicIn_ReplacesOnlyInsideItsRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := openRoot(t, dir)
+	for _, data := range []string{"first", "second"} {
+		if err := WriteAtomicIn(root, "state/file", []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "state", "file")); err != nil || string(got) != "second" {
+		t.Fatalf("file = %q, %v", got, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "state")); len(entries) != 1 {
+		t.Fatalf("left behind: %v", entries)
+	}
+
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "file"), []byte("sibling"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAtomicIn(root, "escape/file", []byte("new"), 0o644); err == nil {
+		t.Fatal("wrote through a symlink leading out of the root")
+	}
+	if got, _ := os.ReadFile(filepath.Join(outside, "file")); string(got) != "sibling" {
+		t.Fatalf("outside file = %q", got)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 1 {
+		t.Fatalf("wrote outside: %v", entries)
+	}
+}

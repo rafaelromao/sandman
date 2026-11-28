@@ -87,7 +87,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		}
 		result := prompt.CompactTask(content, prompt.TaskCompaction{
 			Threshold:   threshold,
-			Target:      threshold * 3 / 4,
+			Target:      threeQuarters(threshold),
 			Force:       req.Force,
 			ArchivePath: archive,
 			Bounds:      bounds,
@@ -144,8 +144,8 @@ func taskArchiveName(label string, now time.Time, n int) string {
 // operator asked for the compaction: the layout cannot prove that an older
 // template had no section after it. It returns nil when nothing is located.
 func taskBounds(req TaskCompactionRequest, content string) *prompt.TaskBounds {
-	if data, err := os.ReadFile(filepath.Join(req.WorkDir, ".sandman", taskAnchorsFile)); err == nil {
-		if bounds, ok := prompt.MarkedTaskBounds(content, strings.TrimSpace(string(data))); ok {
+	if nonce, ok := readTaskNonce(req.WorkDir); ok {
+		if bounds, ok := prompt.MarkedTaskBounds(content, nonce); ok {
 			return &bounds
 		}
 	}
@@ -156,6 +156,32 @@ func taskBounds(req TaskCompactionRequest, content string) *prompt.TaskBounds {
 		return &bounds
 	}
 	return nil
+}
+
+// readTaskNonce returns the nonce recorded in a worktree. One that cannot be
+// read inside the worktree, such as through a symlink leading out of it, is
+// unavailable.
+func readTaskNonce(workDir string) (string, bool) {
+	worktree, err := os.OpenRoot(workDir)
+	if err != nil {
+		return "", false
+	}
+	defer worktree.Close()
+	data, err := worktree.ReadFile(taskAnchorsName())
+	if err != nil {
+		return "", false
+	}
+	nonce := strings.TrimSpace(string(data))
+	return nonce, nonce != ""
+}
+
+func taskAnchorsName() string {
+	return filepath.Join(".sandman", taskAnchorsFile)
+}
+
+// threeQuarters is the floor of three quarters of n, for any n.
+func threeQuarters(n int) int {
+	return n/4*3 + n%4*3/4
 }
 
 // newTaskNonce returns the nonce a fresh render marks its Task with.
@@ -173,11 +199,12 @@ func (r *AgentRun) recordTaskNonce(nonce string) {
 	if nonce == "" {
 		return
 	}
-	path := filepath.Join(r.sandbox.WorkDir(), ".sandman", taskAnchorsFile)
-	// Not through the Task writer: the nonce is not the Task.
-	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	// Not through the Task writer: the nonce is not the Task. Like the
+	// archive, it stays inside the worktree, whatever symlinks it holds.
+	worktree, err := os.OpenRoot(r.sandbox.WorkDir())
 	if err == nil {
-		err = atomicfs.WriteAtomic(path, []byte(nonce+"\n"), 0o644)
+		err = atomicfs.WriteAtomicIn(worktree, taskAnchorsName(), []byte(nonce+"\n"), 0o644)
+		_ = worktree.Close()
 	}
 	if err != nil && r.warningWriter() != nil {
 		fmt.Fprintf(r.warningWriter(), "warning: record Task markers: %v\n", err)

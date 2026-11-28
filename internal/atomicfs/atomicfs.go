@@ -1,4 +1,4 @@
-// Package atomicfs owns the three atomic-write idioms used across Sandman:
+// Package atomicfs owns the atomic-write idioms used across Sandman:
 //
 //   - WriteAtomic / WriteAtomicJSON: rename-style atomicity, where the
 //     destination is replaced via os.CreateTemp in the same directory
@@ -6,6 +6,10 @@
 //     previous file intact; readers either see the previous-good bytes or
 //     the new bytes, never a torn mix. This is the pattern already used by
 //     batches.json, run.json, and config.yaml.
+//
+//   - WriteAtomicIn / WriteAtomicNew: the same idioms confined to an os.Root,
+//     replacing a file by rename or publishing a new one by hard link, never
+//     outside the root.
 //
 //   - OpenAppend: O_APPEND-style atomicity, where the file is opened with
 //     O_APPEND|O_CREATE|O_WRONLY. The kernel positions every write at the
@@ -106,6 +110,30 @@ var link = (*os.Root).Link
 // exists, and with the link error, leaving no file at name, where the file
 // system cannot hard-link.
 func WriteAtomicNew(root *os.Root, name string, data []byte, perm os.FileMode) error {
+	return writeInRoot(root, name, data, perm, func(tmpName string) error {
+		if err := link(root, tmpName, name); err != nil {
+			return fmt.Errorf("create %s: %w", name, err)
+		}
+		return nil
+	})
+}
+
+// WriteAtomicIn writes data to name inside root, replacing any file there, and
+// never outside root: a symlink that leads out of it fails the write. The data
+// goes to a unique temp file in the same directory, which is then renamed over
+// name, so readers see the previous file or the new one, never a torn mix.
+func WriteAtomicIn(root *os.Root, name string, data []byte, perm os.FileMode) error {
+	return writeInRoot(root, name, data, perm, func(tmpName string) error {
+		if err := root.Rename(tmpName, name); err != nil {
+			return fmt.Errorf("replace %s: %w", name, err)
+		}
+		return nil
+	})
+}
+
+// writeInRoot writes data to a unique temp file beside name inside root and
+// hands its name to publish. The temp file is removed whatever publish does.
+func writeInRoot(root *os.Root, name string, data []byte, perm os.FileMode, publish func(tmpName string) error) error {
 	if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
 		return fmt.Errorf("create dir for %s: %w", name, err)
 	}
@@ -130,10 +158,7 @@ func WriteAtomicNew(root *os.Root, name string, data []byte, perm os.FileMode) e
 	if err != nil {
 		return fmt.Errorf("write temp for %s: %w", name, err)
 	}
-	if err := link(root, tmpName, name); err != nil {
-		return fmt.Errorf("create %s: %w", name, err)
-	}
-	return nil
+	return publish(tmpName)
 }
 
 // WriteAtomicJSON marshals v with json.MarshalIndent ("", "  ") and

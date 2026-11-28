@@ -53,17 +53,20 @@ updates it.
   Next Step`, after the heading of the section that follows it (or with a
   distinct marker when it is last), and after the template and everything
   substituted into it. Only sections Sandman removes and rewrites at launches
-  may follow the end marker. Issue text cannot forge the nonce. A Next Step
-  with a placeholder anywhere from its heading to the next one is not marked:
-  what it expands to is unknown, and it can be the issue body. Neither is one
-  holding an H1 or underlined heading, since sections are split at H2 headings
-  (indented by up to three spaces, as Markdown allows) and where it ends is
-  not established. The marker is written twice around the Next Step heading
-  because launches rewrite sections: rewriting the one above takes only the
-  upper copy, and an agent rewriting the step takes only the lower one. The
-  lower marker names the heading right above it; the upper one names the first
-  such heading after it, so neither reaches back into the issue. Composing a
-  launch does not read the markers, and a marker with another nonce is text.
+  may follow the end marker. The nonce is written and read inside the worktree
+  only, like the archive: a sidecar reached through a symlink leading out of
+  it is not written, and reads as no markers. Issue text cannot forge the
+  nonce. A Next Step with a placeholder anywhere from its heading to the next
+  one is not marked: what it expands to is unknown, and it can be the issue
+  body. Neither is one holding an H1 or underlined heading, since sections are
+  split at H2 headings (indented by up to three spaces, as Markdown allows)
+  and where it ends is not established. The marker is written twice around the
+  Next Step heading because launches rewrite sections: rewriting the one above
+  takes only the upper copy, and an agent rewriting the step takes only the
+  lower one. The lower marker names the heading right above it; the upper one
+  names the first such heading after it, so neither reaches back into the
+  issue. Composing a launch does not read the markers, and a marker with
+  another nonce is text.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that
   `--continue --compact` can. On request it is located only for the built-in
