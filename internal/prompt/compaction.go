@@ -399,7 +399,7 @@ func capNextStep(structure string, from, to int, topLevel map[string]bool) (stri
 	var moved []string
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
-	cut, hasText := false, false
+	cut := false
 	for _, section := range sections {
 		switch {
 		case section.text == "":
@@ -408,11 +408,10 @@ func capNextStep(structure string, from, to int, topLevel map[string]bool) (stri
 		case !cut && len(section.text) <= room:
 			b.WriteString(section.text)
 			room -= len(section.text)
-			hasText = hasText || textBelowHeading(section, section.text)
 		case !cut && room > len(section.heading):
 			prefix := cutOutsideFence(section.text, room)
-			if !hasText && !textBelowHeading(section, prefix) {
-				// The first line or code block alone exceeds the limit.
+			if nextStepLimit-room+len(prefix) < nextStepLimit/2 {
+				// A long line or code block would waste most of the limit.
 				prefix = cutInside(section.text, room)
 			}
 			b.WriteString(trimTrailingNewlines(prefix) + "\n\n")
@@ -468,12 +467,6 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 		}
 	}
 	return example
-}
-
-// textBelowHeading reports whether prefix, a prefix of the section, holds
-// anything besides its heading.
-func textBelowHeading(section taskSection, prefix string) bool {
-	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(prefix), section.heading)) != ""
 }
 
 // cutInside returns at most limit bytes of text, ending between characters and

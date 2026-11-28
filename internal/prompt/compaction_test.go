@@ -488,7 +488,8 @@ func TestCompactTask_KeepsANoteWrittenAfterThePointer(t *testing.T) {
 			noted := strings.Replace(once.Content, taskHistoryEnd+"\n", taskHistoryEnd+"\n\n### Late note\n\nthe newest finding\n", 1)
 			grown := strings.Replace(noted, "Implement the first slice.\n", "Implement the first slice.\n"+paragraph("now", 4200), 1)
 
-			twice := compact(grown, true)
+			// Room for the capped Next Step and the note.
+			twice := compactTo(grown, testTarget+nextStepLimit, true)
 
 			if !twice.Compacted || !strings.Contains(twice.Content, "the newest finding") {
 				t.Fatalf("compacted = %t; the note was dropped:\n%s", twice.Compacted, twice.Content)
@@ -830,13 +831,16 @@ func TestBuiltInTaskBounds_LocatesExactOffsets(t *testing.T) {
 	}
 }
 
-// A Next Step whose first line or code block is longer than the limit keeps
-// its beginning rather than only its heading, and leaves no block open.
+// A Next Step with a line or code block longer than the limit keeps about the
+// limit rather than the little before it, and leaves no block open.
 func TestCompactTask_KeepsTheBeginningOfALongNextStep(t *testing.T) {
 	for name, step := range map[string]string{
 		"one long paragraph":   "NOW: fix the test. " + strings.Repeat("h\u00e9 earlier context. ", 400),
 		"leading code block":   "```\nNOW: fix the test.\n" + strings.Repeat("FAIL some test line\n", 300) + "```",
 		"after a bare heading": "## Current state\n\nNOW: fix the test. " + strings.Repeat("earlier context. ", 400),
+		"after a short line":   "Read this.\n\nNOW: fix the test. " + strings.Repeat("earlier context. ", 400),
+		"after a subheading":   "### Current position\n\nNOW: fix the test. " + strings.Repeat("earlier context. ", 400),
+		"after an intro line":  "Failing now:\n\n```\nNOW: fix the test.\n" + strings.Repeat("FAIL some test line\n", 300) + "```",
 	} {
 		t.Run(name, func(t *testing.T) {
 			task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Implement the first slice.", step, 1)

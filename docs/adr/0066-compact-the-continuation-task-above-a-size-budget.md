@@ -67,16 +67,16 @@ updates it.
   oldest sections move for the Task, with a pointer naming exactly what moved,
   to fit; a result that would not be smaller is not written. The located Next
   Step keeps its first 4 KiB, a prefix that never resumes past the cut. It is
-  cut at a line break outside code blocks; when the first line or block alone
-  exceeds the limit, it is cut inside and the block closed, so the step is
-  never reduced to its heading. The rest of the structure, both Runtime
-  Context headings the runtime updates, every `## Plan`, execution checklists,
-  status lines and Sandman's sections are kept byte for byte. So is a section
-  whose code block swallowed one of those, unless the block is clearly a
-  language-tagged example that starts with that heading while a real one
-  exists. If an agent removes the Next Step markers the step is kept whole; if
-  it removes the closing marker and the layout cannot be verified, the Task is
-  left unchanged.
+  cut at a line break outside code blocks; when a long line or block would
+  leave less than half the limit used that way, it is cut inside and an open
+  block closed. The rest of the structure, both Runtime Context headings the
+  runtime updates, every `## Plan`, execution checklists, status lines and
+  Sandman's sections are kept byte for byte. So is a section whose code block
+  swallowed one of those, unless the block is clearly a language-tagged
+  example that starts with that heading while a real one exists. If an agent
+  removes the Next Step markers the step is kept whole; if it removes the
+  closing marker and the layout cannot be verified, the Task is left
+  unchanged.
 - **Code blocks.** They are read across the whole Task. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
   whose bounds fall inside one is not capped.
