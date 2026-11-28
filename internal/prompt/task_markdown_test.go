@@ -1005,3 +1005,30 @@ func TestReadTask_AQuoteMarkerClosesNoDeclaration(t *testing.T) {
 		}
 	}
 }
+
+// Reading and compacting cost memory in proportion to the Task's length
+// whatever it holds: twice the blocks allocate about twice as much.
+func TestCompactTask_AllocatesInProportionToTheTask(t *testing.T) {
+	for name, unit := range map[string]string{
+		"one-line comments":   "<!-- comment -->\n",
+		"declarations":        "<!X y>\n",
+		"quoted declarations": "> <!X\n> y>\n\n",
+		"one-line raw blocks": "<pre>x</pre>\n",
+		"fences":              "```\nx\n```\n",
+		"list headings":       "- x\n  ## H\n",
+		"underlined titles":   "a\n---\n\n",
+		"protected sections":  "## Plan\n\nx\n",
+	} {
+		allocated := func(units int) uint64 {
+			task := structuredTask("\n"+strings.Repeat(unit, units), checkpoint(1, 3000))
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			compact(task, true)
+			runtime.ReadMemStats(&after)
+			return after.TotalAlloc - before.TotalAlloc
+		}
+		if small, large := allocated(2_000), allocated(4_000); large > 3*small {
+			t.Errorf("%s: twice the units allocate %d bytes, over three times %d", name, large, small)
+		}
+	}
+}

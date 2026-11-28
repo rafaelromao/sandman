@@ -463,7 +463,7 @@ func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
 		}
 		// The first line as the parser takes it, without what holds the block.
 		opening := node.Lines().At(0)
-		block.closed = node.HasClosure() || holdsHTMLEnd(string(opening.Value([]byte(d.content))), kind)
+		block.closed = node.HasClosure() || holdsHTMLEnd(d.content[opening.Start:opening.Stop], kind)
 		at := max(strings.IndexByte(first, '<'), 0)
 		end, opener := htmlEnds[kind], htmlOpeners[kind]
 		if kind == 1 {
