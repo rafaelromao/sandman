@@ -79,15 +79,17 @@ updates it.
   leave less than half the limit used that way, it is cut inside and an open
   block closed, unless the block's delimiter and its closer do not both fit.
   The rest of the structure, every `## Plan`, execution checklists, status
-  lines and Sandman's sections are kept byte for byte. So is a section whose
-  code block swallowed one of those, unless the block is clearly a
-  language-tagged example that starts with that heading while a real one
-  exists. Any section with a line a continuation takes for a Runtime Context
-  heading, even inside a code block, is also kept, so compaction never moves
-  review settings. How a continuation picks the section it writes them to is
-  unchanged. If an agent removes the Next Step markers the step is kept whole;
-  if it removes the closing marker and the layout cannot be verified, the Task
-  is left unchanged.
+  lines and Sandman's sections are kept byte for byte. Those headings are
+  recognised however Markdown allows them to be written, including underlined
+  and in any capitalisation, with a suffix after `Plan` or `Execution
+  Checklist`. So is a section whose code block swallowed one of those, unless
+  the block is clearly a language-tagged example that starts with that heading
+  while a real one exists. Any section with a line a continuation takes for a
+  Runtime Context heading, even inside a code block, is also kept, so
+  compaction never moves review settings. How a continuation picks the section
+  it writes them to is unchanged. If an agent removes the Next Step markers
+  the step is kept whole; if it removes the closing marker and the layout
+  cannot be verified, the Task is left unchanged.
 - **Code blocks.** They are read across the whole Task. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
   whose bounds fall inside one is not capped.

@@ -891,9 +891,9 @@ func TestMarkedTaskBounds_LocatesNextStepFromEitherMarker(t *testing.T) {
 
 // Markdown allows an H2 to be indented by up to three spaces.
 func TestSplitTaskSections_ReadsIndentedHeadings(t *testing.T) {
-	content := "## A\n  ## B\n   ##\tC\n    ## code\n##D\n### E\n"
+	content := "## A\n  ## B\n   ##\tC\n    ## code\n##D\n### E\n## F  G ##\n## H#\n"
 
-	if got := headingsIn(content); strings.Join(got, "|") != "## A|## B|## C" {
+	if got := headingsIn(content); strings.Join(got, "|") != "## A|## B|## C|## F G|## H#" {
 		t.Fatalf("headings = %q", got)
 	}
 }

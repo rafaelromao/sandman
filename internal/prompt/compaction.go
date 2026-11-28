@@ -134,15 +134,21 @@ func splitTaskSectionsFrom(content string, from int) []taskSection {
 	return sections
 }
 
-// h2Heading reports whether a line is an H2, which Markdown allows to be
-// indented by up to three spaces, and returns it as "## title".
+// h2Heading reports whether a line is an H2, indented by up to three spaces as
+// Markdown allows, and names it as "## title" for classification, whatever
+// blank space or closing number signs it is written with.
 func h2Heading(line string) (string, bool) {
 	line = strings.TrimRight(line, "\r\n")
 	body := strings.TrimLeft(line, " ")
-	if len(line)-len(body) > 3 || body != "##" && !strings.HasPrefix(body, "## ") && !strings.HasPrefix(body, "##\t") {
+	rest, ok := strings.CutPrefix(body, "##")
+	if !ok || len(line)-len(body) > 3 || rest != "" && rest[0] != ' ' && rest[0] != '\t' {
 		return "", false
 	}
-	return strings.TrimSpace("## " + strings.TrimSpace(body[2:])), true
+	words := strings.Fields(rest)
+	if n := len(words); n > 0 && strings.Trim(words[n-1], "#") == "" {
+		words = words[:n-1]
+	}
+	return strings.TrimSpace("## " + strings.Join(words, " ")), true
 }
 
 // lineAt returns the index of the first line starting at or after byte offset.
@@ -230,15 +236,15 @@ func (f fence) closes(open fence) bool {
 }
 
 // isProtectedHeading reports whether a section holds agent state that is
-// never moved: the checklist, a plan or a status line.
+// never moved: the checklist, a plan or a status line, in any capitalisation.
 func isProtectedHeading(heading string) bool {
-	if heading == "## Execution Checklist" {
-		return true
+	heading = strings.ToLower(heading)
+	for _, title := range []string{"## execution checklist", "## plan"} {
+		if rest, ok := strings.CutPrefix(heading, title); ok && (rest == "" || rest[0] == ' ' || rest[0] == ':') {
+			return true
+		}
 	}
-	if strings.HasPrefix(heading, "## Status:") {
-		return true
-	}
-	return heading == "## Plan" || strings.HasPrefix(heading, "## Plan ") || strings.HasPrefix(heading, "## Plan:")
+	return strings.HasPrefix(heading, "## status:")
 }
 
 // holdsRuntimeContext reports whether any line is one a continuation takes for
@@ -460,8 +466,16 @@ func historyBytes(sections []taskSection, indexes []int) int {
 func swallowsProtected(body string, topLevel map[string]bool) bool {
 	var open fence
 	example, atStart := false, false
+	previous := ""
 	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimRight(line, "\r")
+		// A line underlined with dashes is an H2 too.
+		if underline := strings.TrimSpace(line); previous != "" && underline != "" && strings.Trim(underline, "-") == "" {
+			if heading, _ := h2Heading("## " + previous); runtimeHeadings[heading] || isProtectedHeading(heading) {
+				return true
+			}
+		}
+		previous = strings.TrimSpace(line)
 		if marker, ok := parseFence(line); ok {
 			switch {
 			case open.char == 0:
@@ -473,14 +487,13 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 			}
 			continue
 		}
-		heading := strings.TrimSpace(line)
-		if strings.HasPrefix(heading, "## ") && (runtimeHeadings[heading] || isProtectedHeading(heading)) {
+		if heading, ok := h2Heading(strings.TrimSpace(line)); ok && (runtimeHeadings[heading] || isProtectedHeading(heading)) {
 			if !open.info || !atStart || !topLevel[heading] {
 				return true
 			}
 			example = true
 		}
-		if heading != "" {
+		if strings.TrimSpace(line) != "" {
 			atStart = false
 		}
 	}

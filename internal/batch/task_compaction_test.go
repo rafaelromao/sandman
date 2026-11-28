@@ -942,6 +942,28 @@ func TestImplementationLaunch_CapsOnlyTheTemplatesNextStep(t *testing.T) {
 	}
 }
 
+// The checklist stays however its heading is written, also when a code block
+// swallows it.
+func TestImplementationLaunch_KeepsTheChecklistHoweverItsHeadingIsWritten(t *testing.T) {
+	items := "\n- [x] Build the release\n- [ ] Verify rollback\n"
+	for name, checklist := range map[string]string{
+		"closing number signs":          "## Execution Checklist ##\n" + items,
+		"a tab":                         "##\tExecution Checklist\n" + items,
+		"a tab, inside a log block":     "## Log\n\n```\nlog\n\n##\tExecution Checklist\n" + items + "```\n",
+		"closing signs, inside a block": "## Log\n\n```\nlog\n\n##  Execution  Checklist ###\n" + items + "```\n",
+		"underlined":                    "## Notes\n\ntext\n\nExecution Checklist\n-------------------\n" + items,
+		"other capitals and a suffix":   "## Execution checklist (updated)\n" + items,
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := checkpointTask(0) + "\n" + checklist + checkpointTask(30)[len(checkpointTask(0)):]
+
+			launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), checklist)
+		})
+	}
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()
