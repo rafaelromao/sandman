@@ -262,7 +262,7 @@ Task text costs about 4.4 bytes per token, so the default is about 11k tokens, 4
 | 400k | `81920` |
 | 1M | `98304` |
 
-To compact one Task now, whatever its size, continue with `sandman run --continue --compact <issue>`.
+To compact one Task now, even under the threshold, continue with `sandman run --continue --compact <issue>`. It aims for the same size as automatic compaction, so a Task already that small is left alone.
 
 ## Context rollover phrases
 

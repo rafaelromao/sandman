@@ -110,6 +110,34 @@ func TestRun_ContinueWithoutCompact_LeavesTheTaskAlone(t *testing.T) {
 	}
 }
 
+// Selecting a Specification selects the issues it expands to.
+func TestRun_ContinueCompact_SelectingASpecificationCompactsItsChildren(t *testing.T) {
+	f := newCompactFixture(t, nil)
+	spec := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #42\n"
+	f.deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
+		100: {Number: 100, Title: "Specification", Body: spec, State: "open"},
+		42:  {Number: 42, Title: "Child", Body: "## Parent\n\n#100\n\n## What\n\n", State: "open"},
+	}, prs: map[string]*github.PR{}}
+
+	out, err := f.run(t, "--continue", "--compact", "100")
+
+	if err != nil || len(f.spy.req.CompactTasks) != 1 || !f.spy.req.CompactTasks[42] {
+		t.Fatalf("err = %v, CompactTasks = %v\n%s", err, f.spy.req.CompactTasks, out)
+	}
+}
+
+// Asking for compaction when no row can be compacted says so.
+func TestRun_ContinueCompact_SaysWhenNothingIsSelected(t *testing.T) {
+	f := newCompactFixture(t, nil)
+	f.deps.EventLog = &fakeEventLog{}
+
+	out, err := f.run(t, "--continue", "--compact", "42")
+
+	if err != nil || len(f.spy.req.CompactTasks) != 0 || !strings.Contains(out, "[--compact] no continued issue is selected") {
+		t.Fatalf("err = %v, CompactTasks = %v\n%s", err, f.spy.req.CompactTasks, out)
+	}
+}
+
 func TestRun_CompactUsageErrorsTouchNothing(t *testing.T) {
 	for name, args := range map[string][]string{
 		"without --continue":    {"--compact", "42"},

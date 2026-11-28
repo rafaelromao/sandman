@@ -437,7 +437,7 @@ func TestImplementationLaunch_ForcedCompactionIgnoresTheThreshold(t *testing.T) 
 }
 
 func TestImplementationLaunch_RefusalLeavesTaskUnchanged(t *testing.T) {
-	for _, name := range []string{"invalid command", "cannot open log", "cannot spawn shell", "cannot write Task"} {
+	for _, name := range []string{"invalid command", "cannot open log", "cannot spawn shell", "cannot write Task", "cannot spawn shell with nothing to compact", "cannot spawn shell after an archive failure"} {
 		t.Run(name, func(t *testing.T) {
 			testRefusedCompactionLaunch(t, name)
 		})
@@ -454,6 +454,9 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	}
 	recordTestNonce(t, sb.WorkDir())
 	task := checkpointTask(30)
+	if refusal == "cannot spawn shell with nothing to compact" {
+		task = checkpointTask(0)
+	}
 	if err := sb.WritePrompt(task); err != nil {
 		t.Fatal(err)
 	}
@@ -466,8 +469,12 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 			t.Fatal(err)
 		}
 		command = "true"
-	case "cannot spawn shell":
+	case "cannot spawn shell", "cannot spawn shell with nothing to compact":
 		command = "true"
+		t.Setenv("PATH", t.TempDir())
+	case "cannot spawn shell after an archive failure":
+		command = "true"
+		run.archiveWriter = func(string, []byte, os.FileMode) error { return errors.New("archive refused") }
 		t.Setenv("PATH", t.TempDir())
 	case "cannot write Task":
 		command = "true"
@@ -476,6 +483,9 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	result := run.Run(context.Background(), &prompt.Engine{}, command, prompt.RenderConfig{TaskPrompt: task})
 	if result.Status != "failure" {
 		t.Fatalf("status = %s, want failure", result.Status)
+	}
+	if run.launcherStarted {
+		t.Fatal("a refused launch spent the compaction request")
 	}
 	got, err := os.ReadFile(filepath.Join(sb.WorkDir(), ".sandman", "task.md"))
 	if err != nil || string(got) != task {
@@ -800,6 +810,42 @@ func TestImplementationLaunch_LeavesTheIssuesRuntimeContextAlone(t *testing.T) {
 
 	requireCompactedLaunchKeeps(t, launch, composedFor(t, task), issue,
 		"## Sandman Runtime Context\n- Review command: `/current-review-command`")
+}
+
+// The settings go to the runtime's section, never to issue text or a sample,
+// whatever settings those quote.
+func TestImplementationLaunch_PlacesSettingsByPositionNotContent(t *testing.T) {
+	quoted := "## Runtime Context\n\n- Review command: `/issue-command`\n"
+	template := "# Task\n\n## Issue Context\n\n{{ISSUE_BODY}}\n\n## Runtime Context\n\n- Current branch: `b`\n\n## Footer\n\nF.\n"
+	field := "- Review command: `/current-review-command`"
+	for name, tc := range map[string]struct {
+		issue, history, kept, want string
+	}{
+		"issue quotation before a section without settings": {issue: quoted, kept: quoted, want: "- Current branch: `b`\n" + field},
+		"later sample that starts with another heading": {
+			history: "\n## Notes\n\n```md\n# Example Task\n\n## Runtime Context\n\n- Review command: `/sample-command`\n```\n",
+			kept:    "- Review command: `/sample-command`\n```\n",
+			want:    "- Current branch: `b`\n" + field,
+		},
+		"tagged issue fence before the section": {
+			issue: quoted + "\n```bash\nlog\n", history: "\n```\n",
+			kept: quoted + "\n```bash\nlog\n",
+			want: "## Sandman Runtime Context\n" + field,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: template}, prompt.IssueData{Body: tc.issue}, testTaskNonce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task := withCheckpoints(rendered+tc.history, 30)
+			task = prompt.ContinuationTaskPromptWithReviewSettings(task, "/current-review-command", true, 1800)
+
+			launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), tc.kept, tc.want)
+		})
+	}
 }
 
 // composedFor is the Task a launch composes before compaction.

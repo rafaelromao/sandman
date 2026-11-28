@@ -63,42 +63,51 @@ updates it.
   template had no section after the requirements, which would move into the
   archive; the operator accepts that by asking. Anything else is left
   unchanged.
-- **What moves.** Only what follows the structure is history. The fewest oldest
-  sections move for the Task, with a pointer naming exactly what moved, to fit;
-  a result that would not be smaller is not written. The located Next Step
-  keeps its first 4 KiB, a prefix that never resumes past the cut. The rest of
-  the structure, both Runtime Context headings the runtime updates, every
-  `## Plan`, execution checklists, status lines and
-  Sandman's sections are kept byte for byte. So is a section whose code block
-  swallowed one of those, unless the block is clearly a language-tagged example
-  that starts with that heading while a real one exists. If an agent removes
-  the Next Step markers the step is kept whole; if it removes the closing
-  marker and the layout cannot be verified, the Task is left unchanged.
+- **What moves.** Only what follows the structure is history. The fewest
+  oldest sections move for the Task, with a pointer naming exactly what moved,
+  to fit; a result that would not be smaller is not written. The located Next
+  Step keeps its first 4 KiB, a prefix that never resumes past the cut. It is
+  cut at a line break outside code blocks; when the first line or block alone
+  exceeds the limit, it is cut inside and the block closed, so the step is
+  never reduced to its heading. The rest of the structure, both Runtime
+  Context headings the runtime updates, every `## Plan`, execution checklists,
+  status lines and Sandman's sections are kept byte for byte. So is a section
+  whose code block swallowed one of those, unless the block is clearly a
+  language-tagged example that starts with that heading while a real one
+  exists. If an agent removes the Next Step markers the step is kept whole; if
+  it removes the closing marker and the layout cannot be verified, the Task is
+  left unchanged.
 - **Code blocks.** They are read across the whole Task. One that crosses the
   end of the structure stays whole, with the pointer after it, and a Next Step
-  whose bounds fall inside one is not capped. Refreshing the review settings
-  at a continuation follows the same reading: lines in code blocks are not
-  rewritten, and when the Runtime Context section holding the settings sits
-  inside one, Sandman appends a `## Sandman Runtime Context` section rather
-  than rewrite another section of that name, such as one in the issue.
+  whose bounds fall inside one is not capped.
+- **Review settings.** A continuation refreshes them in the last Runtime
+  Context section, chosen by position and never by what a section quotes.
+  Clear code samples are left out: a closed, language-tagged block with no
+  other H2, inside another section. Lines in code blocks are not rewritten,
+  and when the chosen heading is inside a block, Sandman appends a `## Sandman
+  Runtime Context` section, reused afterwards, rather than rewrite an earlier
+  one. A template without the section still takes an issue's section of that
+  name for it, as before.
 - **Where.** Compaction happens once, where the composed Task is written before
   an implementation launch, so every continuation path shares it. Reviews,
   quota probes of the reviewer, health repairs and other prompt-only launches
   are never compacted.
 - **On request.** `sandman run --continue --compact` asks the first
   implementation launch of each continued issue the operator selected to
-  compact its Task, even under the threshold. The request travels with the
-  admitted row and is spent by its first launch, so a start refused before
-  then changes no Task, and retries and later re-entries follow the threshold.
-  Ready continuations and dependencies added to the batch are left to the
-  automatic rule. The CLI itself writes no Task. A restart before the first
-  launch drops the request. Command and environment validation and opening the
-  required run log all happen before the continuation Task or archive is written.
-  If the sandbox definitively refuses before spawning the launcher, Sandman
-  restores the previous Task and removes the unused archive. It retains the
-  archive if restoration fails or the launcher started. A failed atomic Task
-  write also removes the unused archive; the run log reports success only once
-  the launch is no longer subject to this rollback.
+  compact its Task, even under the threshold, aiming for the same size.
+  Selecting a Specification selects the issues it expands to. The request
+  travels with the admitted row and is spent by its first launch, so a start
+  refused before then changes no Task, and retries and later re-entries follow
+  the threshold. Ready continuations and dependencies added to the batch are
+  left to the automatic rule. The CLI itself writes no Task. A restart before
+  the first launch drops the request. Command and environment validation and
+  opening the required run log all happen before the continuation Task or
+  archive is written. If the sandbox definitively refuses before spawning the
+  launcher, Sandman restores the previous Task, whether or not anything moved,
+  and removes any unused archive. It retains the archive if restoration fails
+  or the launcher started. A failed atomic Task write also removes the unused
+  archive; the run log reports success only once the launch is no longer
+  subject to this rollback.
 - **At the source.** Review evidence stores each long repeated string once,
   referring later copies to the first by JSON pointer. The shared skills ask
   the agent to keep the Task a current-state checkpoint.

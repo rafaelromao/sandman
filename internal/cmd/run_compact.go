@@ -13,6 +13,7 @@ import (
 // issue.
 func requestTaskCompaction(cmd *cobra.Command, issues []int) map[int]bool {
 	if len(issues) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "[--compact] no continued issue is selected, so no Task is compacted")
 		return nil
 	}
 	compact := make(map[int]bool, len(issues))
@@ -24,11 +25,22 @@ func requestTaskCompaction(cmd *cobra.Command, issues []int) map[int]bool {
 }
 
 // selectedIssues returns the continued issues the operator selected, by
-// number, label, query or picker, in continuation order.
-func selectedIssues(continued, selected []int) []int {
+// number, label, query or picker, in continuation order. Selecting a
+// Specification selects the issues it expands to, which children maps.
+func selectedIssues(continued, selected []int, children map[int][]int) []int {
+	chosen := map[int]bool{}
+	pending := slices.Clone(selected)
+	for len(pending) > 0 {
+		num := pending[0]
+		pending = pending[1:]
+		if !chosen[num] {
+			chosen[num] = true
+			pending = append(pending, children[num]...)
+		}
+	}
 	var out []int
 	for _, num := range continued {
-		if slices.Contains(selected, num) {
+		if chosen[num] {
 			out = append(out, num)
 		}
 	}

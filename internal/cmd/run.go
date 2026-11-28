@@ -840,7 +840,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				// batch has admitted it, so a refused start changes no Task.
 				// Only continued issues the operator selected; never rows
 				// added as ready continuations or dependencies.
-				req.CompactTasks = requestTaskCompaction(cmd, selectedIssues(continueIssues, issues))
+				req.CompactTasks = requestTaskCompaction(cmd, selectedIssues(continueIssues, issues, resolvedBatch.ParentChildren))
 			}
 
 			result, err := deps.BatchRunner.RunBatch(ctx, req)

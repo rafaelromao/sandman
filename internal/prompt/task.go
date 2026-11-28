@@ -172,8 +172,7 @@ func continuationTaskPrompt(content string, reviewTimeout int) string {
 }
 
 // EnsureReviewSettingsContext reconciles the current effective settings in the
-// Runtime Context section (see runtimeContextSection), leaving all other Task
-// content untouched.
+// last Runtime Context section, leaving all other Task content untouched.
 // reviewTimeout is rendered as informational only for blind review.
 func EnsureReviewSettingsContext(content, reviewCommand string, reviewCommandSet bool, reviewTimeout int) string {
 	command := strings.TrimSpace(reviewCommand)
@@ -470,36 +469,21 @@ func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
 	return trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n\n" + line + "\n"
 }
 
-// runtimeContextSection returns the Runtime Context section the runtime
-// updates and which lines belong to code blocks. It is the last one holding
-// one of its settings; without any, the last one outside code blocks. It
-// returns -1, -1 when there is none, or when the one holding the settings is
-// inside a code block: the caller then appends a section rather than rewrite
-// issue text or a code sample on a guess. A language-tagged block that starts
-// with the heading is a sample and never counts.
+// runtimeContextSection returns the last runtime-context section, so an issue
+// body containing similarly named text is never treated as Sandman metadata,
+// and which lines belong to code blocks. A code sample of the section does not
+// count. It returns -1, -1 when there is none, or when the last one is inside
+// a code block: the caller then appends a section rather than rewrite issue
+// text or a code block on a guess.
 func runtimeContextSection(lines []string) (start, end int, fenced []bool) {
 	fenced = fencedLines(lines)
-	owned, last := -1, -1
+	start = -1
 	for i, line := range lines {
-		if !isRuntimeContextHeading(line) || fenced[i] && startsTaggedBlock(lines, i) {
-			continue
-		}
-		if !fenced[i] {
-			last = i
-		}
-		if holdsRuntimeSettings(lines, fenced, i) {
-			owned = i
+		if isRuntimeContextHeading(line) && !(fenced[i] && isSample(lines, fenced, i)) {
+			start = i
 		}
 	}
-	switch {
-	case owned >= 0 && !fenced[owned]:
-		start = owned
-	case owned < 0:
-		start = last
-	default:
-		start = -1
-	}
-	if start < 0 {
+	if start < 0 || fenced[start] {
 		return -1, -1, fenced
 	}
 
@@ -522,37 +506,39 @@ func isRuntimeContextHeading(line string) bool {
 	return heading == reviewTimeoutContextHeading || heading == runtimeContextHeading
 }
 
-// startsTaggedBlock reports whether the line is the first text of a code block
-// opened with a language tag.
-func startsTaggedBlock(lines []string, at int) bool {
-	for i := at - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) == "" {
+// isSample reports whether the heading at is clearly an example: it is in a
+// closed, language-tagged code block that holds no other H2, inside a section
+// that is not itself a Runtime Context. A block that swallowed the template's
+// sections holds their headings.
+func isSample(lines []string, fenced []bool, at int) bool {
+	var opener fence
+	from, section := -1, ""
+	for i := 0; i < at; i++ {
+		if !fenced[i] {
+			if strings.HasPrefix(lines[i], "## ") {
+				section = lines[i]
+			}
 			continue
 		}
-		opener, ok := parseFence(strings.TrimRight(lines[i], "\r\n"))
-		return ok && opener.info
+		if f, ok := parseFence(strings.TrimRight(lines[i], "\r\n")); ok {
+			switch {
+			case from < 0:
+				opener, from = f, i
+			case f.closes(opener):
+				from = -1
+			}
+		}
 	}
-	return false
-}
-
-// holdsRuntimeSettings reports whether the section headed at has a setting the
-// runtime writes. For a heading outside code blocks, fenced lines do not count.
-func holdsRuntimeSettings(lines []string, fenced []bool, at int) bool {
-	for i := at + 1; i < len(lines); i++ {
-		if fenced[at] != fenced[i] {
-			if fenced[at] {
-				return false
-			}
-			continue
+	if from < 0 || !opener.info || isRuntimeContextHeading(section) {
+		return false
+	}
+	for i := from + 1; i < len(lines) && fenced[i]; i++ {
+		line := strings.TrimRight(lines[i], "\r\n")
+		if f, ok := parseFence(line); ok && f.closes(opener) {
+			return i > at
 		}
-		if strings.HasPrefix(lines[i], "## ") {
+		if i != at && strings.HasPrefix(line, "## ") {
 			return false
-		}
-		trimmed := strings.TrimSpace(lines[i])
-		for _, prefix := range []string{reviewCommandContextPrefix, reviewModeContextPrefix, reviewTimeoutContextPrefix} {
-			if strings.HasPrefix(trimmed, prefix) {
-				return true
-			}
 		}
 	}
 	return false

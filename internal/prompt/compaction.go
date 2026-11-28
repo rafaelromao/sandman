@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // TaskHistoryHeading names the Sandman-owned section that points a compacted
@@ -398,7 +399,7 @@ func capNextStep(structure string, from, to int, topLevel map[string]bool) (stri
 	var moved []string
 	// The cut ends with a blank line, which counts against the limit.
 	room := nextStepLimit - len("\n\n")
-	cut := false
+	cut, hasText := false, false
 	for _, section := range sections {
 		switch {
 		case section.text == "":
@@ -407,8 +408,14 @@ func capNextStep(structure string, from, to int, topLevel map[string]bool) (stri
 		case !cut && len(section.text) <= room:
 			b.WriteString(section.text)
 			room -= len(section.text)
+			hasText = hasText || textBelowHeading(section, section.text)
 		case !cut && room > len(section.heading):
-			b.WriteString(trimTrailingNewlines(cutOutsideFence(section.text, room)) + "\n\n")
+			prefix := cutOutsideFence(section.text, room)
+			if !hasText && !textBelowHeading(section, prefix) {
+				// The first line or code block alone exceeds the limit.
+				prefix = cutInside(section.text, room)
+			}
+			b.WriteString(trimTrailingNewlines(prefix) + "\n\n")
 			cut = true
 			moved = append(moved, fmt.Sprintf("%s (beyond the first %d KiB)", section.label(), nextStepLimit/1024))
 		default:
@@ -461,6 +468,46 @@ func swallowsProtected(body string, topLevel map[string]bool) bool {
 		}
 	}
 	return example
+}
+
+// textBelowHeading reports whether prefix, a prefix of the section, holds
+// anything besides its heading.
+func textBelowHeading(section taskSection, prefix string) bool {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(prefix), section.heading)) != ""
+}
+
+// cutInside returns at most limit bytes of text, ending between characters and
+// closing a code block left open.
+func cutInside(text string, limit int) string {
+	prefix := runePrefix(text, limit)
+	var open fence
+	for line := range strings.SplitSeq(prefix, "\n") {
+		if f, ok := parseFence(strings.TrimRight(line, "\r")); ok {
+			switch {
+			case open.char == 0:
+				open = f
+			case f.closes(open):
+				open = fence{}
+			}
+		}
+	}
+	if open.char == 0 {
+		return prefix
+	}
+	closer := "\n" + strings.Repeat(string(open.char), open.length)
+	return runePrefix(text, limit-len(closer)) + closer
+}
+
+// runePrefix returns the longest prefix of text of at most limit bytes that
+// does not split a character.
+func runePrefix(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:max(limit, 0)]
 }
 
 // cutOutsideFence returns the longest prefix of text, ending at a line break

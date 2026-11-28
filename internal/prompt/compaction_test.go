@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const (
@@ -826,5 +827,44 @@ func TestBuiltInTaskBounds_LocatesExactOffsets(t *testing.T) {
 			task[bounds.StructureEnd:] != "\n## Checkpoint\n\nnotes\n" {
 			t.Fatalf("body %q: ok = %t, bounds = %+v", body, ok, bounds)
 		}
+	}
+}
+
+// A Next Step whose first line or code block is longer than the limit keeps
+// its beginning rather than only its heading, and leaves no block open.
+func TestCompactTask_KeepsTheBeginningOfALongNextStep(t *testing.T) {
+	for name, step := range map[string]string{
+		"one long paragraph":   "NOW: fix the test. " + strings.Repeat("h\u00e9 earlier context. ", 400),
+		"leading code block":   "```\nNOW: fix the test.\n" + strings.Repeat("FAIL some test line\n", 300) + "```",
+		"after a bare heading": "## Current state\n\nNOW: fix the test. " + strings.Repeat("earlier context. ", 400),
+	} {
+		t.Run(name, func(t *testing.T) {
+			task := strings.Replace(structuredTask(checkpoints(12, 1000)...), "Implement the first slice.", step, 1)
+
+			got := compact(task, true)
+
+			from := strings.Index(got.Content, nextStepHeading)
+			kept := got.Content[from:strings.Index(got.Content, "## Required Order")]
+			if !got.Compacted || !strings.Contains(kept, "NOW: fix the test.") || len(kept) < nextStepLimit/2 || len(kept) > nextStepLimit+100 {
+				t.Fatalf("compacted = %t, kept %d bytes: %.200q", got.Compacted, len(kept), kept)
+			}
+			if !utf8.ValidString(got.Content) || strings.Count(kept, "```")%2 != 0 {
+				t.Fatalf("split a character or left a block open: %q", kept[len(kept)-200:])
+			}
+		})
+	}
+}
+
+// A custom template's Runtime Context without settings yet still gets them,
+// not an issue's quotation of that section.
+func TestEnsureReviewSettingsContext_LeavesAnIssuesQuotationAlone(t *testing.T) {
+	quoted := "## Runtime Context\n\n- Review command: `/old review`\n- Delegated review response timeout: `600` seconds\n"
+	content := "## Issue Context\n\n" + quoted + "\n## Runtime Context\n\n- Current branch: `b`\n\n## Completion Requirements\n"
+
+	got := EnsureReviewSettingsContext(content, "/oc review", true, 1800)
+
+	if !strings.HasPrefix(got, "## Issue Context\n\n"+quoted+"\n## Runtime Context\n") ||
+		!strings.Contains(got, "- Current branch: `b`\n- Review command: `/oc review`\n") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
