@@ -470,7 +470,7 @@ func runtimeContextSection(lines []string) (start, end int) {
 	start = -1
 	for i, line := range lines {
 		switch strings.TrimSpace(line) {
-		case reviewTimeoutContextHeading, "## Runtime Context":
+		case reviewTimeoutContextHeading, runtimeContextHeading:
 			start = i
 		}
 	}

@@ -25,9 +25,11 @@ const nextStepLimit = 4 * 1024
 // movedHeadingsListed bounds the moved headings the history pointer names.
 const movedHeadingsListed = 20
 
-// runtimeHeadings are Sandman's own sections. They are composed at every
-// launch, so compaction always keeps them.
+// runtimeHeadings are the sections Sandman composes or rewrites at launches,
+// including both Runtime Context headings it updates (see
+// runtimeContextSection), so compaction always keeps them.
 var runtimeHeadings = map[string]bool{
+	runtimeContextHeading:             true,
 	reviewTimeoutContextHeading:       true,
 	reviewEvidenceHeading:             true,
 	continuationFreshnessGuardHeading: true,

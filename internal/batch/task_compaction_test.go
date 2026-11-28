@@ -630,3 +630,31 @@ func noncedDir(t *testing.T) string {
 	recordTestNonce(t, dir)
 	return dir
 }
+
+// Without markers only the Next Step section is editable: a template section
+// after it, before the review boundary, stays on stdin and disk.
+func TestImplementationLaunch_KeepsATemplateSectionAfterAnUnmarkedNextStep(t *testing.T) {
+	gate := "## Deployment Gate\n\n- [ ] " + strings.Repeat("rollback verified. ", 600) + "\n\n"
+	template := strings.Replace(prompt.DefaultPrompt(), "## Managed Review Boundary\n", gate+"## Managed Review Boundary\n", 1)
+	templatePath := filepath.Join(t.TempDir(), "prompt.md")
+	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := withCheckpoints(strings.Replace(template, "{{ISSUE_BODY}}", "", 1), 30)
+	task = strings.Replace(task, "## Next Step\n", "## Next Step\n\nCurrent checkpoint.\n"+strings.Repeat("Obsolete step.\n", 1000), 1)
+
+	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task, PromptFile: templatePath}, testTaskCompactBytes, nil, func(run *AgentRun) {
+		run.forceTaskCompaction = true
+	})
+
+	written, err := os.ReadFile(filepath.Join(launch.workDir, ".sandman", "task.md"))
+	if err != nil || string(written) != launch.stdin {
+		t.Fatalf("worktree Task differs from the launched one (%v)", err)
+	}
+	if !strings.Contains(launch.stdin, gate) {
+		t.Fatalf("the template's section left the Task:\n%s", launch.stdin)
+	}
+	if strings.Contains(launch.stdin, "## Checkpoint 1\n") || strings.Count(launch.stdin, "Obsolete step.") >= 300 {
+		t.Fatal("history did not move or Next Step was not capped")
+	}
+}

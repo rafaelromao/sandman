@@ -54,16 +54,18 @@ updates it.
   --compact` can. On request it is located only for the built-in layout: the
   template puts the issue body alone under `## Issue Context` before `##
   Runtime Context` and ends with the built-in `## Completion Requirements`, and
-  the Task holds the current issue body and those requirements verbatim. Its
-  Next Step group ends at `## Managed Review Boundary`. This cannot prove that
+  the Task holds the current issue body and those requirements verbatim. Only
+  its `## Next Step` section is capped: nothing proves that the sections after
+  it were added by the agent rather than the template. This cannot prove that
   an older template had no section after the requirements, which would move
   into the archive; the operator accepts that by asking. Anything else is left
   unchanged.
 - **What moves.** Only what follows the structure is history. The fewest oldest
   sections move for the Task, with a pointer naming exactly what moved, to fit;
-  a result that would not be smaller is not written. The marked Next Step group
+  a result that would not be smaller is not written. The located Next Step
   keeps its first 4 KiB, a prefix that never resumes past the cut. The rest of
-  the structure, every `## Plan`, execution checklists, status lines and
+  the structure, both Runtime Context headings the runtime updates, every
+  `## Plan`, execution checklists, status lines and
   Sandman's sections are kept byte for byte. So is a section whose code block
   swallowed one of those, unless the block is clearly a language-tagged example
   that starts with that heading while a real one exists. If an agent removes

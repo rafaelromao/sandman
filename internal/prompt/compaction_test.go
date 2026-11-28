@@ -569,11 +569,13 @@ func incidentTask(rendered string) (task, report string) {
 	return ContinuationTaskPromptWithReviewSettings(TaskWithReviewEvidence(rendered, evidence), "/sandman review", true, 1800), report
 }
 
+// requireIncidentCompacted compacts an incident-shaped Task and checks what
+// every layout keeps and moves.
 func requireIncidentCompacted(t *testing.T, task, report string, bounds TaskBounds) TaskCompactionResult {
 	t.Helper()
 	got := CompactTask(task, TaskCompaction{Threshold: 48 * 1024, Target: 36 * 1024, ArchivePath: ".sandman/task-history/a.md", Bounds: &bounds})
-	if !got.Compacted || got.After*2 > got.Before || got.After > 48*1024 {
-		t.Fatalf("compacted = %t (%s): %d -> %d bytes, want under half and under the threshold", got.Compacted, got.Reason, got.Before, got.After)
+	if !got.Compacted {
+		t.Fatalf("not compacted: %s", got.Reason)
 	}
 	for i := 1; i <= 22; i++ {
 		if strings.Contains(got.Content, fmt.Sprintf("## Checkpoint %d\n", i)) {
@@ -586,9 +588,16 @@ func requireIncidentCompacted(t *testing.T, task, report string, bounds TaskBoun
 			t.Errorf("lost %q", kept[:min(len(kept), 40)])
 		}
 	}
-	if strings.Contains(got.Content, "oldest step") {
-		t.Error("kept the end of Next Step")
+	checklist := strings.Index(got.Content, "## Execution Checklist")
+	for _, section := range splitTaskSections(got.Content[checklist:]) {
+		if section.heading == nextStepHeading {
+			if len(section.text) > nextStepLimit || !strings.Contains(section.text, "newest step") {
+				t.Errorf("the Next Step section is %d bytes", len(section.text))
+			}
+			return got
+		}
 	}
+	t.Error("lost the Next Step section")
 	return got
 }
 
@@ -596,6 +605,9 @@ func requireIncidentCompacted(t *testing.T, task, report string, bounds TaskBoun
 // layout locates it, as do the upgrade variants of the same shape.
 func TestCompactTask_IncidentReplay(t *testing.T) {
 	legacy := func(body string) string { return strings.Replace(DefaultPrompt(), "{{ISSUE_BODY}}", body, 1) }
+	// Without markers only the Next Step section itself is capped: the
+	// sections after it may be the template's, so they stay.
+	attached := "## Review-Fix Checkpoint\n\n" + strings.Repeat(paragraph("older step", 1000), 3) + paragraph("oldest step", 1000)
 	for name, tc := range map[string]struct {
 		body  string
 		after func(string) string
@@ -621,6 +633,12 @@ func TestCompactTask_IncidentReplay(t *testing.T) {
 			if !strings.Contains(got.Content, strings.TrimSpace(tc.body)) {
 				t.Fatal("the issue body changed")
 			}
+			if !strings.Contains(got.Content, attached) {
+				t.Fatal("a section after Next Step changed")
+			}
+			if got.After*3 > got.Before*2 {
+				t.Fatalf("%d -> %d bytes, want under two thirds", got.Before, got.After)
+			}
 		})
 	}
 	t.Run("marked render", func(t *testing.T) {
@@ -630,7 +648,11 @@ func TestCompactTask_IncidentReplay(t *testing.T) {
 			t.Fatal("the markers were not located")
 		}
 
-		requireIncidentCompacted(t, task, report, bounds)
+		got := requireIncidentCompacted(t, task, report, bounds)
+
+		if got.After*2 > got.Before || got.After > 48*1024 || strings.Contains(got.Content, "oldest step") {
+			t.Fatalf("%d -> %d bytes, want under half and the threshold, with Next Step capped", got.Before, got.After)
+		}
 	})
 }
 
@@ -736,5 +758,18 @@ func TestCompactTask_KeepsANoteAfterThePointerThatSwallowedAPlan(t *testing.T) {
 				t.Fatalf("compacted = %t (%s); the swallowed plan moved:\n%s", got.Compacted, got.Reason, got.Content)
 			}
 		})
+	}
+}
+
+// The runtime updates either Runtime Context heading, wherever it is, so
+// compaction keeps both.
+func TestCompactTask_KeepsEveryRuntimeContextTheRuntimeUpdates(t *testing.T) {
+	context := "\n## Runtime Context\n\n- Review command: `/sandman review`\n"
+	task := structuredTask(append([]string{context}, checkpoints(12, 1000)...)...)
+
+	got := compactTo(task, 1024, true)
+
+	if !got.Compacted || !strings.Contains(got.Content, context) || strings.Contains(got.Content, "## Checkpoint 12\n") {
+		t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
 	}
 }

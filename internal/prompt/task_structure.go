@@ -166,7 +166,6 @@ const (
 	issueContextHeading    = "## Issue Context"
 	runtimeContextHeading  = "## Runtime Context"
 	completionHeading      = "## Completion Requirements"
-	reviewBoundaryHeading  = "## Managed Review Boundary"
 	issueBodyPlaceholder   = "{{ISSUE_BODY}}"
 	builtInIssueBlockStart = issueContextHeading + "\n\n"
 )
@@ -188,7 +187,9 @@ func lastTemplateSection(template string) string {
 // be verified: the template puts the issue body alone under `## Issue
 // Context`, before `## Runtime Context`, and ends with the built-in `##
 // Completion Requirements`. The Task must hold the current issue body there and
-// those requirements verbatim; otherwise nothing is located.
+// those requirements verbatim; otherwise nothing is located. Only the `##
+// Next Step` section itself is editable: without markers nothing proves that
+// the sections after it were added by the agent and not by the template.
 func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds, bool) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
@@ -209,13 +210,11 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 	bodyEnd := at + len(body)
 
 	var bounds TaskBounds
-	offset, step := bodyEnd, -1
+	offset := bodyEnd
 	for _, section := range splitTaskSections(content[bodyEnd:]) {
 		switch {
-		case section.heading == nextStepHeading && step < 0:
-			step = offset
-		case section.heading == reviewBoundaryHeading && step >= 0 && bounds.NextStepEnd == 0:
-			bounds.NextStepStart, bounds.NextStepEnd = step, offset
+		case section.heading == nextStepHeading && bounds.NextStepEnd == 0:
+			bounds.NextStepStart, bounds.NextStepEnd = offset, offset+len(section.text)
 		case section.heading == completionHeading && strings.HasPrefix(section.text+"\n", requirements+"\n"):
 			bounds.StructureEnd = offset + min(len(requirements)+1, len(section.text))
 			return bounds, true
