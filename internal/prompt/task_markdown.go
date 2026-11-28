@@ -46,7 +46,17 @@ type markdownBlock struct {
 	fence      fence  // zero for any other block
 	info       bool   // a fenced block with an info string
 	htmlKind   int    // an HTML block's type, 1 to 5, when it needs a closer
+	quotes     int    // the block quote markers before an HTML block's lines
 	indented   bool   // an indented code block
+}
+
+// unquoted returns line without its first quotes block quote markers, whose
+// ">" is no part of a block's content.
+func unquoted(line string, quotes int) string {
+	for range quotes {
+		line = strings.TrimPrefix(strings.TrimLeft(line, " \t"), ">")
+	}
+	return line
 }
 
 // endsBy reports whether prefix, which cuts the block's last line, already
@@ -57,7 +67,8 @@ func (b markdownBlock) endsBy(prefix string) bool {
 	if b.fence.char == 0 {
 		// An HTML block can end on the line that opens it, which a marker
 		// further down does not.
-		return (at <= b.start || !isSandmanMarker(line)) && holdsHTMLEnd(line, b.htmlKind)
+		content := unquoted(line, b.quotes)
+		return (at <= b.start || !isSandmanMarker(content)) && holdsHTMLEnd(content, b.htmlKind)
 	}
 	if at <= b.start {
 		return false
@@ -450,7 +461,9 @@ func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
 		if node.HasClosure() {
 			block.end = lineEnd(d.content, node.ClosureLine.Start)
 		}
-		block.closed = node.HasClosure() || holdsHTMLEnd(first, kind)
+		// The first line as the parser takes it, without what holds the block.
+		opening := node.Lines().At(0)
+		block.closed = node.HasClosure() || holdsHTMLEnd(string(opening.Value([]byte(d.content))), kind)
 		at := max(strings.IndexByte(first, '<'), 0)
 		end, opener := htmlEnds[kind], htmlOpeners[kind]
 		if kind == 1 {
@@ -463,6 +476,7 @@ func (d *taskDocument) addHTML(node *ast.HTMLBlock) {
 			}
 		}
 		block.htmlKind, block.opening = kind, at+opener
+		block.quotes = strings.Count(first[:at], ">")
 		block.closer = closerPrefix(first[:at]) + end
 	}
 	d.blocks = append(d.blocks, block)

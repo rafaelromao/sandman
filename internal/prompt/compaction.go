@@ -457,7 +457,7 @@ func compactRead(doc taskDocument, opts TaskCompaction, style capStyle) TaskComp
 	b.WriteString(prefix + separator)
 	pointer := renderHistoryPointer(opts, len(content)-keptSize, moved)
 	// The pointer is a section, and the comment ending it a block.
-	want.sections = append(want.sections, b.Len())
+	want.sections = append(want.sections, sectionStart{offset: b.Len()})
 	endMarker := b.Len() + strings.LastIndex(pointer, taskHistoryEnd)
 	want.blocks = append(want.blocks, blockSpan{endMarker, endMarker + len(taskHistoryEnd), true})
 	b.WriteString(pointer)
@@ -573,11 +573,17 @@ func (g *gapCount) drop(i int) {
 // start, and where its code and HTML blocks start and end and whether each is
 // closed.
 type outline struct {
-	sections []int
+	sections []sectionStart
 	blocks   []blockSpan
 	// What is copied is written in the order it is read, so each of these
 	// moves forward through the headings and blocks once.
 	heading, block int
+}
+
+// sectionStart is a section's place; nested says its heading is inside a list.
+type sectionStart struct {
+	offset int
+	nested bool
 }
 
 // blockSpan is a block's place; end leaves out its trailing blank space, which
@@ -599,13 +605,11 @@ func (o *outline) copied(d taskDocument, from, to, at int) {
 func (o *outline) cut(d taskDocument, from, to, at, end int) {
 	for ; o.heading < len(d.headings) && d.headings[o.heading].start < to; o.heading++ {
 		if h := d.headings[o.heading]; h.start >= from && h.startsSection() {
-			o.sections = append(o.sections, at+h.start-from)
+			o.sections = append(o.sections, sectionStart{at + h.start - from, !h.underlined && !h.topLevel})
 		}
 	}
 	for ; o.block < len(d.blocks) && d.blocks[o.block].start < to; o.block++ {
-		// An indented code block can hide no heading, and is one or not
-		// with what the lines above it are.
-		if b := d.blocks[o.block]; b.start >= from && !b.indented {
+		if b := d.blocks[o.block]; b.start >= from {
 			span := blockSpan{at + b.start - from, at + b.start - from + len(strings.TrimRight(d.content[b.start:b.end], blankSpace)), b.closed}
 			if end >= 0 && b.end > to {
 				span.end, span.closed = end, true
@@ -676,7 +680,12 @@ func capNextStep(doc taskDocument, want *outline, end, from, to int, style capSt
 	var kept []bool
 	size := 0
 	if from < to {
+		// Past the step's own section, which a cut keeps from its start, a
+		// heading inside a list stays with the section holding the list.
 		sections = doc.sections(from, to)
+		if len(sections) > 2 {
+			sections = append(sections[:2:2], joinNested(sections[2:])...)
+		}
 		kept = make([]bool, len(sections))
 		for i, offset := 0, from; i < len(sections); i++ {
 			if kept[i] = keeps(offset, sections[i]); !kept[i] {

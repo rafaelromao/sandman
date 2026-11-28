@@ -936,3 +936,72 @@ func TestCompactTask_MovesAListsHeadingsWithTheList(t *testing.T) {
 		})
 	}
 }
+
+// A quote marker's ">" does not close a declaration inside the quote.
+func TestCompactTask_ClosesADeclarationCutInAQuote(t *testing.T) {
+	for name, quote := range map[string]struct{ first, next string }{
+		"quote":        {"> ", "> "},
+		"nested quote": {"> > ", "> > "},
+		"quoted list":  {"> - ", ">   "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			step := quote.first + "<!DOCTYPE\n" + quote.next + strings.Repeat("y", 8000) + ">\n"
+			task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n", "Implement the first slice.\n"+step, 1)
+
+			got := compact(task, true)
+
+			from, to := strings.Index(got.Content, nextStepHeading), strings.Index(got.Content, "## Required Order")
+			if !got.Compacted || from < 0 || to < from || to-from < nextStepLimit/2 {
+				t.Fatalf("compacted = %t (%s)", got.Compacted, got.Reason)
+			}
+			requireClosedBlocks(t, got.Content[from:to], 2, name)
+			if kept := strings.TrimRight(got.Content[from:to], "\n"); !strings.HasSuffix(kept, "\n"+quote.next+">") {
+				t.Fatalf("no closer inside the quote: %q", kept[len(kept)-40:])
+			}
+		})
+	}
+}
+
+// A plan indented under a list item in Next Step keeps the item, so it still
+// reads as it did.
+func TestCompactTask_KeepsANextStepPlanWithItsList(t *testing.T) {
+	list := "## Old checkpoint\n\n- Original list item\n  ## Plan\n\n    Verify the rollback.\n"
+	task := strings.Replace(structuredTask(checkpoints(10, 1000)...), "Implement the first slice.\n",
+		"Implement the first slice.\n"+paragraph("now", 6000)+"\n"+list, 1)
+
+	got := compact(task, true)
+
+	if !got.Compacted || !strings.Contains(got.Content, list) || strings.Count(got.Content, "now now") > nextStepLimit/4 {
+		t.Fatalf("compacted = %t (%s):\n%s", got.Compacted, got.Reason, got.Content)
+	}
+	at := strings.Index(got.Content, "    Verify the rollback.")
+	for _, block := range readTask(got.Content).blocks {
+		if block.start <= at && at < block.end {
+			t.Fatalf("the plan's instruction became code:\n%s", got.Content)
+		}
+	}
+}
+
+// A section that leaves or joins a list reads differently.
+func TestReadsAs_ComparesWhatHoldsSections(t *testing.T) {
+	content := "## A\n\n- item\n\n  ## B\n\n    text\n"
+	var want outline
+	want.copied(readTask(content), 0, len(content), 0)
+
+	if !readsAs(content, want) || readsAs("## A\n\n  item\n\n  ## B\n\n    text\n", want) {
+		t.Fatalf("outline = %+v", want)
+	}
+}
+
+func TestReadTask_AQuoteMarkerClosesNoDeclaration(t *testing.T) {
+	for content, closed := range map[string]bool{
+		"> <!DOCTYPE\n> text\n":     false,
+		"> > <!DOCTYPE\n> > text\n": false,
+		"> <!DOCTYPE>\n":            true,
+		"> <!DOCTYPE\n> text>\n":    true,
+	} {
+		if blocks := readTask(content).blocks; len(blocks) != 1 || blocks[0].closed != closed {
+			t.Errorf("%q: blocks = %+v, want closed %t", content, blocks, closed)
+		}
+	}
+}
