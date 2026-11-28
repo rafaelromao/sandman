@@ -4,6 +4,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -112,4 +114,105 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// Anything at the sidecar's path other than a small regular file is read as no
+// markers, at once: opening a named pipe does not wait for a writer.
+func TestReadTaskNonce_OnlyFromASmallRegularFile(t *testing.T) {
+	for name, place := range map[string]func(t *testing.T, path string){
+		"named pipe": func(t *testing.T, path string) {
+			if err := syscall.Mkfifo(path, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"directory": func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"oversized file": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte(strings.Repeat("a", maxTaskNonceBytes+1)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"empty file": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, taskAnchorsName())
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			place(t, path)
+
+			if nonce, ok := readWithin(t, dir); ok {
+				t.Fatalf("read nonce %q", nonce)
+			}
+		})
+	}
+}
+
+// readWithin reads a worktree's nonce, failing the test if that blocks.
+func readWithin(t *testing.T, dir string) (string, bool) {
+	t.Helper()
+	type read struct {
+		nonce string
+		ok    bool
+	}
+	done := make(chan read, 1)
+	go func() {
+		nonce, ok := readTaskNonce(dir)
+		done <- read{nonce, ok}
+	}()
+	select {
+	case r := <-done:
+		return r.nonce, r.ok
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading the marker sidecar blocked")
+		return "", false
+	}
+}
+
+// A launch whose sidecar is a named pipe launches promptly: an oversized
+// automatic continuation goes out unchanged with no archive, and a forced one
+// is still read from the verified built-in layout.
+func TestImplementationLaunch_TreatsANonRegularSidecarAsNoMarkers(t *testing.T) {
+	toPipe := func(run *AgentRun) {
+		path := filepath.Join(run.sandbox.WorkDir(), taskAnchorsName())
+		if err := os.Remove(path); err != nil {
+			panic(err)
+		}
+		if err := syscall.Mkfifo(path, 0o644); err != nil {
+			panic(err)
+		}
+	}
+	task := checkpointTask(30)
+	archives := func(launch compactionLaunch) []string {
+		found, _ := filepath.Glob(filepath.Join(launch.workDir, ".sandman", "task-history", "*.md"))
+		return found
+	}
+	t.Run("valid sidecar", func(t *testing.T) {
+		launch := launchWithCompaction(t, task, testTaskCompactBytes)
+		if !strings.Contains(launch.stdin, "## Sandman Task History") || len(archives(launch)) != 1 {
+			t.Fatal("a marked Task was not compacted")
+		}
+	})
+	t.Run("automatic", func(t *testing.T) {
+		launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, toPipe)
+		if strings.Contains(launch.stdin, "## Sandman Task History") || !strings.Contains(launch.stdin, "## Checkpoint 1\n") || len(archives(launch)) != 0 {
+			t.Fatal("a Task without readable markers was compacted automatically")
+		}
+	})
+	t.Run("forced", func(t *testing.T) {
+		launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, toPipe, func(run *AgentRun) {
+			run.forceTaskCompaction = true
+		})
+		if !strings.Contains(launch.stdin, "## Sandman Task History") || len(archives(launch)) != 1 {
+			t.Fatal("a forced compaction did not read the built-in layout")
+		}
+	})
 }

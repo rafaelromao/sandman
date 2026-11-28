@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -160,20 +161,34 @@ func taskBounds(req TaskCompactionRequest, content string) *prompt.TaskBounds {
 
 // readTaskNonce returns the nonce recorded in a worktree. One that cannot be
 // read inside the worktree, such as through a symlink leading out of it, is
-// unavailable.
+// unavailable, and so is anything at that path other than a small regular
+// file: opening never waits for a writer, as a named pipe's would, and the
+// read is bounded.
 func readTaskNonce(workDir string) (string, bool) {
 	worktree, err := os.OpenRoot(workDir)
 	if err != nil {
 		return "", false
 	}
 	defer worktree.Close()
-	data, err := worktree.ReadFile(taskAnchorsName())
+	file, err := worktree.OpenFile(taskAnchorsName(), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxTaskNonceBytes+1))
+	if err != nil || len(data) > maxTaskNonceBytes {
 		return "", false
 	}
 	nonce := strings.TrimSpace(string(data))
 	return nonce, nonce != ""
 }
+
+// maxTaskNonceBytes bounds the marker sidecar, many times the size of the
+// nonce a render records.
+const maxTaskNonceBytes = 256
 
 func taskAnchorsName() string {
 	return filepath.Join(".sandman", taskAnchorsFile)

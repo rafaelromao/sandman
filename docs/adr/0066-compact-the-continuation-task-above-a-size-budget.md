@@ -55,7 +55,8 @@ updates it.
   substituted into it. Only sections Sandman removes and rewrites at launches
   may follow the end marker. The nonce is written and read inside the worktree
   only, like the archive: a sidecar reached through a symlink leading out of
-  it is not written, and reads as no markers. Issue text cannot forge the
+  it is not written, and it or anything there other than a small regular file
+  reads as no markers, without waiting on it. Issue text cannot forge the
   nonce. A Next Step with a placeholder anywhere from its heading to the next
   one is not marked: what it expands to is unknown, and it can be the issue
   body. Neither is one holding an H1 or underlined heading, since sections are
