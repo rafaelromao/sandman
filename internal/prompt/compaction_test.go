@@ -215,7 +215,7 @@ func TestMarkTemplate_MarksTheNextStepGroupAndTheEndOfTheStructure(t *testing.T)
 	marked := markTemplate(DefaultPrompt(), testNonce)
 
 	for _, want := range []string{
-		structureMarker(nextStepStartMarker, testNonce) + "\n## Next Step\n" + structureMarker(nextStepStartMarker, testNonce) + "\n",
+		structureMarker(nextStepStartMarker, testNonce) + "\n## Next Step\n" + structureMarker(nextStepBodyMarker, testNonce) + "\n",
 		"## Managed Review Boundary\n" + structureMarker(nextStepEndMarker, testNonce) + "\n",
 	} {
 		if !strings.Contains(marked, want) {
@@ -870,19 +870,45 @@ func TestCompactTask_ReplacesAPointerSavedWithCRLF(t *testing.T) {
 	}
 }
 
-// Either copy of the Next Step marker locates the step from its heading.
+// Either Next Step marker locates the step from its heading.
 func TestMarkedTaskBounds_LocatesNextStepFromEitherMarker(t *testing.T) {
 	marked := structuredTask()
-	marker := structureMarker(nextStepStartMarker, testNonce) + "\n"
+	above := structureMarker(nextStepStartMarker, testNonce) + "\n"
+	below := structureMarker(nextStepBodyMarker, testNonce) + "\n"
 	for name, task := range map[string]string{
-		"both":                              marked,
-		"only above":                        strings.Replace(marked, nextStepHeading+"\n"+marker, nextStepHeading+"\n", 1),
-		"only below":                        strings.Replace(marked, marker, "", 1),
-		"a blank line before the one below": strings.Replace(strings.Replace(marked, marker, "", 1), nextStepHeading+"\n", nextStepHeading+"\n\n", 1),
+		"both":                       marked,
+		"only above":                 strings.Replace(marked, below, "", 1),
+		"only below":                 strings.Replace(marked, above, "", 1),
+		"a blank line before below":  strings.Replace(strings.Replace(marked, above, "", 1), nextStepHeading+"\n", nextStepHeading+"\n\n", 1),
+		"below moved away from head": strings.Replace(strings.Replace(marked, below, "", 1), "## Required Order\n", below+"## Required Order\n", 1),
 	} {
 		bounds, ok := MarkedTaskBounds(task, testNonce)
 		if !ok || !strings.HasPrefix(task[bounds.NextStepStart:], nextStepHeading+"\n") || !strings.HasPrefix(task[bounds.NextStepEnd:], "## Required Order\n") {
 			t.Errorf("%s: ok = %t, bounds = %+v", name, ok, bounds)
+		}
+	}
+}
+
+// Markdown allows an H2 to be indented by up to three spaces.
+func TestSplitTaskSections_ReadsIndentedHeadings(t *testing.T) {
+	content := "## A\n  ## B\n   ##\tC\n    ## code\n##D\n### E\n"
+
+	if got := headingsIn(content); strings.Join(got, "|") != "## A|## B|## C" {
+		t.Fatalf("headings = %q", got)
+	}
+}
+
+// A template whose Next Step holds a heading sections are not split at leaves
+// the step unmarked: where it ends is not established.
+func TestMarkTemplate_LeavesNextStepUnmarkedBeforeAnotherKindOfHeading(t *testing.T) {
+	for name, gate := range map[string]string{
+		"H1":               "# Deployment Gate\n",
+		"underlined title": "Deployment Gate\n---\n",
+		"double underline": "Deployment Gate\n  ===\n",
+	} {
+		marked := markTemplate("## Next Step\n\nStart.\n\n"+gate+"\n- [ ] gate\n\n## Footer\n\nF.\n", testNonce)
+		if strings.Contains(marked, nextStepStartMarker) || strings.Contains(marked, nextStepEndMarker) || !strings.Contains(marked, taskEndMarker) {
+			t.Errorf("%s:\n%s", name, marked)
 		}
 	}
 }

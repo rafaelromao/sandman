@@ -912,6 +912,36 @@ func TestImplementationLaunch_IgnoresAnotherTasksMarkers(t *testing.T) {
 	}
 }
 
+// The cap starts at the template's own Next Step and ends at the next heading,
+// however either is written around it.
+func TestImplementationLaunch_CapsOnlyTheTemplatesNextStep(t *testing.T) {
+	obsolete := strings.Repeat("Obsolete step.\n", 1000)
+	issueStep := "## Next Step\n" + strings.Repeat("\n", 4600)
+	gate := "  ## Deployment Gate\n\n- [ ] rollback verified.\n"
+	for name, tc := range map[string]struct {
+		template, issue string
+		kept            []string
+	}{
+		"an indented template heading after it": {template: "## Next Step\n\nCurrent action.\n\n" + gate + "\n## Footer\n\nF.\n", kept: []string{"  ## Deployment Gate\n", "\n- [ ] rollback verified.\n"}},
+		"the issue's own Next Step before it":   {template: "## Issue Context\n\n{{ISSUE_BODY}}\n## Next Step\n\nCurrent action.\n\n## Footer\n\nF.\n", issue: issueStep, kept: []string{issueStep}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{PromptFlag: "# Task\n\n" + tc.template}, prompt.IssueData{Body: tc.issue}, testTaskNonce)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task := withCheckpoints(strings.Replace(rendered, "Current action.\n", "Current action.\n"+obsolete, 1), 30)
+
+			launch := launchWithCompaction(t, task, testTaskCompactBytes)
+
+			requireCompactedLaunchKeeps(t, launch, composedFor(t, task), append(tc.kept, "Current action.\n")...)
+			if n := strings.Count(launch.stdin, "Obsolete step."); n >= 300 {
+				t.Errorf("Next Step was not capped: %d lines remain", n)
+			}
+		})
+	}
+}
+
 // composedFor is the Task a launch composes before compaction.
 func composedFor(t *testing.T, task string) string {
 	t.Helper()

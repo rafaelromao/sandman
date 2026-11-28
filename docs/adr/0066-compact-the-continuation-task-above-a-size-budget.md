@@ -49,12 +49,15 @@ updates it.
   substituted into it. Only sections Sandman removes and rewrites at launches
   may follow the end marker. Issue text cannot forge the nonce. A Next Step
   with a placeholder anywhere from its heading to the next one is not marked:
-  what it expands to is unknown, and it can be the issue body. The marker is
-  written twice around the Next Step heading because launches rewrite
-  sections: rewriting the one above takes only the upper copy, and an agent
-  rewriting the step takes only the lower one. Either copy locates the step
-  from its heading. Composing a launch does not read the markers, and a marker
-  with another nonce is text.
+  what it expands to is unknown, and it can be the issue body. Neither is one
+  holding an H1 or underlined heading, since sections are split at H2 headings
+  (indented by up to three spaces, as Markdown allows) and where it ends is
+  not established. The marker is written twice around the Next Step heading
+  because launches rewrite sections: rewriting the one above takes only the
+  upper copy, and an agent rewriting the step takes only the lower one. The
+  lower marker names the heading right above it; the upper one names the first
+  such heading after it, so neither reaches back into the issue. Composing a
+  launch does not read the markers, and a marker with another nonce is text.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
   decision, is never compacted automatically; the run log says that
   `--continue --compact` can. On request it is located only for the built-in
@@ -62,12 +65,12 @@ updates it.
   before `## Runtime Context` and ends with the built-in `## Completion
   Requirements`, and the Task holds the current issue body and those
   requirements verbatim. Only its `## Next Step` section is capped, and only
-  when the Task holds exactly one before the requirements and the template's
-  holds no placeholder: nothing proves that the sections after it were added
-  by the agent rather than the template. This cannot prove that an older
-  template had no section after the requirements, which would move into the
-  archive; the operator accepts that by asking. Anything else is left
-  unchanged.
+  when the Task holds exactly one before the requirements, neither it nor the
+  template's holds an H1 or underlined heading, and the template's holds no
+  placeholder: nothing proves that the sections after it were added by the
+  agent rather than the template. This cannot prove that an older template had
+  no section after the requirements, which would move into the archive; the
+  operator accepts that by asking. Anything else is left unchanged.
 - **What moves.** Only what follows the structure is history. The fewest
   oldest sections move for the Task, with a pointer naming exactly what moved,
   to fit; a result that would not be smaller is not written. The located Next

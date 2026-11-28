@@ -118,8 +118,8 @@ func splitTaskSectionsFrom(content string, from int) []taskSection {
 	headings := []string{""}
 	starts := []int{first}
 	for i := first; i < len(lines); i++ {
-		if trimmed := strings.TrimRight(lines[i], "\r\n"); !fenced[i] && strings.HasPrefix(trimmed, "## ") {
-			headings = append(headings, strings.TrimSpace(trimmed))
+		if heading, ok := h2Heading(lines[i]); ok && !fenced[i] {
+			headings = append(headings, heading)
 			starts = append(starts, i)
 		}
 	}
@@ -132,6 +132,17 @@ func splitTaskSectionsFrom(content string, from int) []taskSection {
 		sections[n] = taskSection{heading: headings[n], text: strings.Join(lines[start:end], "")}
 	}
 	return sections
+}
+
+// h2Heading reports whether a line is an H2, which Markdown allows to be
+// indented by up to three spaces, and returns it as "## title".
+func h2Heading(line string) (string, bool) {
+	line = strings.TrimRight(line, "\r\n")
+	body := strings.TrimLeft(line, " ")
+	if len(line)-len(body) > 3 || body != "##" && !strings.HasPrefix(body, "## ") && !strings.HasPrefix(body, "##\t") {
+		return "", false
+	}
+	return strings.TrimSpace("## " + strings.TrimSpace(body[2:])), true
 }
 
 // lineAt returns the index of the first line starting at or after byte offset.

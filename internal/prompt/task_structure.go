@@ -19,7 +19,10 @@ type TaskBounds struct {
 // HTML comments, so they do not show when rendered, and carry a per-render
 // nonce recorded outside the Task, so issue text cannot forge them.
 const (
+	// nextStepStartMarker precedes the Next Step heading; nextStepBodyMarker
+	// follows it.
 	nextStepStartMarker = "sandman:next-step-start"
+	nextStepBodyMarker  = "sandman:next-step-body"
 	// nextStepEndMarker follows the heading of the section after Next Step;
 	// nextStepLastMarker closes a Next Step that ends the structure.
 	nextStepEndMarker  = "sandman:next-step-end"
@@ -79,7 +82,7 @@ func markTemplate(template, nonce string) string {
 			heading, _, _ := strings.Cut(sections[next].text, "\n")
 			groupEnd += len(heading)
 		}
-		if keyPattern.MatchString(template[offsets[step]:groupEnd]) {
+		if span := template[offsets[step]:groupEnd]; keyPattern.MatchString(span) || holdsOtherHeading(span) {
 			step, next = -1, -1
 		}
 	}
@@ -94,8 +97,8 @@ func markTemplate(template, nonce string) string {
 		b.WriteString(line + "\n")
 		written = at
 	}
-	// The marker goes both above and below the heading: a launch rewriting the
-	// section above takes only the first, an agent rewriting the step only the
+	// A marker goes above and below the heading: a launch rewriting the section
+	// above takes only the first, an agent rewriting the step only the
 	// second.
 	if step >= 0 {
 		insert(offsets[step], structureMarker(nextStepStartMarker, nonce))
@@ -103,7 +106,7 @@ func markTemplate(template, nonce string) string {
 		if nl := strings.IndexByte(sections[step].text, '\n'); nl >= 0 {
 			headingEnd = offsets[step] + nl + 1
 		}
-		insert(headingEnd, structureMarker(nextStepStartMarker, nonce))
+		insert(headingEnd, structureMarker(nextStepBodyMarker, nonce))
 	}
 	if next >= 0 {
 		headingEnd := offsets[next+1]
@@ -137,6 +140,54 @@ func findLine(content, line string) (int, int) {
 	return -1, -1
 }
 
+// nextStepStart returns the offset of the marked Next Step heading, or -1. The
+// marker below the heading names the one right above it; the marker above
+// names the first one after it. Neither ever reaches back into earlier text.
+func nextStepStart(content, nonce string) int {
+	if below, _ := findLine(content, structureMarker(nextStepBodyMarker, nonce)); below >= 0 {
+		at := strings.LastIndex(strings.TrimRight(content[:below], "\r\n"), "\n") + 1
+		line, _, _ := strings.Cut(content[at:below], "\n")
+		if heading, ok := h2Heading(line); ok && heading == nextStepHeading {
+			return at
+		}
+	}
+	_, offset := findLine(content, structureMarker(nextStepStartMarker, nonce))
+	if offset < 0 {
+		return -1
+	}
+	for _, section := range splitTaskSectionsFrom(content, offset) {
+		if section.heading == nextStepHeading {
+			return offset
+		}
+		offset += len(section.text)
+	}
+	return -1
+}
+
+// holdsOtherHeading reports whether text has, outside code blocks, a heading
+// that ends a section but that sections are not split at: an H1, or a line
+// underlined as a heading.
+func holdsOtherHeading(text string) bool {
+	lines := strings.SplitAfter(text, "\n")
+	fenced := fencedLines(lines)
+	for i, line := range lines {
+		line = strings.TrimRight(line, "\r\n")
+		body := strings.TrimLeft(line, " ")
+		if fenced[i] || len(line)-len(body) > 3 {
+			continue
+		}
+		if body == "#" || strings.HasPrefix(body, "# ") || strings.HasPrefix(body, "#\t") {
+			return true
+		}
+		underline := strings.TrimRight(body, " \t")
+		if underline != "" && (strings.Trim(underline, "=") == "" || strings.Trim(underline, "-") == "") &&
+			i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // MarkedTaskBounds locates the structure a fresh render marked with nonce. It
 // reports false when the end marker is gone. When both copies of the Next Step
 // marker or the end of the group are gone, or the heading is renamed, the group
@@ -150,36 +201,19 @@ func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 		return TaskBounds{}, false
 	}
 	bounds := TaskBounds{StructureEnd: structureEnd}
-	marker, from := findLine(content[:closing], structureMarker(nextStepStartMarker, nonce))
-	if from < 0 {
-		return bounds, true
-	}
-	// With only the copy below the heading left, the step starts above it.
-	above := strings.LastIndex(strings.TrimRight(content[:marker], "\r\n"), "\n") + 1
-	if line, _, _ := strings.Cut(content[above:marker], "\n"); strings.TrimSpace(line) == nextStepHeading {
-		from = above
-	}
 	to, _ := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
 	if to >= 0 {
 		// The group ends at the heading the marker follows.
 		heading := strings.LastIndex(strings.TrimRight(content[:to], "\r\n"), "\n") + 1
-		if !strings.HasPrefix(content[heading:], "## ") {
+		if _, ok := h2Heading(content[heading:to]); !ok {
 			return bounds, true
 		}
 		to = heading
 	} else if to, _ = findLine(content[:closing], structureMarker(nextStepLastMarker, nonce)); to < 0 {
 		return bounds, true
 	}
-	if from < to {
-		// The step starts at its heading, never at anything above it.
-		offset := from
-		for _, section := range splitTaskSectionsFrom(content, from) {
-			if offset < to && section.heading == nextStepHeading {
-				bounds.NextStepStart, bounds.NextStepEnd = offset, to
-				break
-			}
-			offset += len(section.text)
-		}
+	if from := nextStepStart(content[:to], nonce); from >= 0 {
+		bounds.NextStepStart, bounds.NextStepEnd = from, to
 	}
 	return bounds, true
 }
@@ -212,8 +246,9 @@ func lastTemplateSection(template string) string {
 // those requirements verbatim; otherwise nothing is located. Only the `##
 // Next Step` section itself is editable: without markers nothing proves that
 // the sections after it were added by the agent and not by the template. It is
-// editable only if the Task holds exactly one before the requirements and the
-// template's holds no placeholder.
+// editable only if the Task holds exactly one before the requirements, and
+// neither it nor the template's holds a heading sections are not split at, nor
+// the template's a placeholder.
 func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds, bool) {
 	template, err := loadTemplate(cfg)
 	if err != nil {
@@ -247,7 +282,7 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 			bounds.NextStepStart, bounds.NextStepEnd = offset, offset+len(section.text)
 		case section.heading == completionHeading && strings.HasPrefix(section.text+"\n", requirements+"\n"):
 			bounds.StructureEnd = offset + min(len(requirements)+1, len(section.text))
-			if steps != 1 || placeholderInNextStep(template) {
+			if steps != 1 || unverifiableNextStep(template) || holdsOtherHeading(content[bounds.NextStepStart:bounds.NextStepEnd]) {
 				bounds.NextStepStart, bounds.NextStepEnd = 0, 0
 			}
 			return bounds, true
@@ -257,11 +292,11 @@ func BuiltInTaskBounds(cfg RenderConfig, content, issueBody string) (TaskBounds,
 	return TaskBounds{}, false
 }
 
-// placeholderInNextStep reports whether a template's Next Step section holds a
-// placeholder.
-func placeholderInNextStep(template string) bool {
+// unverifiableNextStep reports whether a template's Next Step section holds a
+// placeholder or a heading it is not split at.
+func unverifiableNextStep(template string) bool {
 	for _, section := range splitTaskSections(template) {
-		if section.heading == nextStepHeading && keyPattern.MatchString(section.text) {
+		if section.heading == nextStepHeading && (keyPattern.MatchString(section.text) || holdsOtherHeading(section.text)) {
 			return true
 		}
 	}
