@@ -20,9 +20,22 @@ type TaskBounds struct {
 // nonce recorded outside the Task, so issue text cannot forge them.
 const (
 	nextStepStartMarker = "sandman:next-step-start"
-	nextStepEndMarker   = "sandman:next-step-end"
-	taskEndMarker       = "sandman:task-end"
+	// nextStepEndMarker follows the heading of the section after Next Step;
+	// nextStepLastMarker closes a Next Step that ends the structure.
+	nextStepEndMarker  = "sandman:next-step-end"
+	nextStepLastMarker = "sandman:next-step-last"
+	taskEndMarker      = "sandman:task-end"
 )
+
+// composedHeadings are the sections Sandman removes and writes again at
+// launches, so a marker placed inside one would be lost with it.
+var composedHeadings = map[string]bool{
+	reviewEvidenceHeading:             true,
+	continuationFreshnessGuardHeading: true,
+	contextRecoveryGuardHeading:       true,
+	ciOwnershipContextHeading:         true,
+	managedHandoffContextHeading:      true,
+}
 
 func structureMarker(name, nonce string) string {
 	return "<!-- " + name + " " + nonce + " -->"
@@ -30,19 +43,21 @@ func structureMarker(name, nonce string) string {
 
 // markTemplate writes the structure markers into a template before
 // substitution, so they sit at the template's positions whatever the issue
-// body holds. The Next Step group is marked unless the issue body is
-// substituted into it: from its heading to the next template section, whose
-// heading line the end marker follows so that rewriting Next Step keeps it.
+// body holds. The structure ends after the template and every place the issue
+// body is substituted into. The Next Step group is marked unless the issue
+// body is substituted into it: from its heading to the next template section,
+// whose heading line the end marker follows so that rewriting Next Step keeps
+// it.
 func markTemplate(template, nonce string) string {
 	sections := splitTaskSections(template)
 	offsets := make([]int, len(sections)+1)
 	for i, section := range sections {
 		offsets[i+1] = offsets[i] + len(section.text)
 	}
-	// The structure ends before the template's trailing Sandman sections,
-	// which are composed again at every launch.
+	// The structure ends before trailing sections Sandman composes again at
+	// every launch, unless the template puts the issue body in one.
 	last := len(sections) - 1
-	for last > 0 && runtimeHeadings[sections[last].heading] {
+	for last > 0 && composedHeadings[sections[last].heading] && !strings.Contains(sections[last].text, issueBodyPlaceholder) {
 		last--
 	}
 	end := offsets[last+1]
@@ -55,7 +70,7 @@ func markTemplate(template, nonce string) string {
 	if step >= 0 {
 		groupEnd := end
 		for i := step + 1; i <= last && next < 0; i++ {
-			if !runtimeHeadings[sections[i].heading] {
+			if !composedHeadings[sections[i].heading] {
 				next, groupEnd = i, offsets[i]
 			}
 		}
@@ -86,7 +101,7 @@ func markTemplate(template, nonce string) string {
 	}
 	closing := structureMarker(taskEndMarker, nonce)
 	if step >= 0 && next < 0 {
-		closing = structureMarker(nextStepEndMarker, nonce) + "\n" + closing
+		closing = structureMarker(nextStepLastMarker, nonce) + "\n" + closing
 	}
 	insert(end, closing)
 	b.WriteString(template[written:])
@@ -122,18 +137,19 @@ func MarkedTaskBounds(content, nonce string) (TaskBounds, bool) {
 	}
 	bounds := TaskBounds{StructureEnd: structureEnd}
 	_, from := findLine(content[:closing], structureMarker(nextStepStartMarker, nonce))
-	to, after := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
-	if from < 0 || to < from {
+	if from < 0 {
 		return bounds, true
 	}
-	// The end marker follows the heading of the section after Next Step, or,
-	// when Next Step is the last one, closes the structure.
-	if strings.TrimSpace(content[after:closing]) != "" {
+	to, _ := findLine(content[:closing], structureMarker(nextStepEndMarker, nonce))
+	if to >= 0 {
+		// The group ends at the heading the marker follows.
 		heading := strings.LastIndex(strings.TrimRight(content[:to], "\r\n"), "\n") + 1
 		if !strings.HasPrefix(content[heading:], "## ") {
 			return bounds, true
 		}
 		to = heading
+	} else if to, _ = findLine(content[:closing], structureMarker(nextStepLastMarker, nonce)); to < 0 {
+		return bounds, true
 	}
 	if from < to {
 		bounds.NextStepStart, bounds.NextStepEnd = from, to

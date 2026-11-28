@@ -228,12 +228,12 @@ func TestMarkTemplate_MarksTheNextStepGroupAndTheEndOfTheStructure(t *testing.T)
 	}
 }
 
-func TestMarkTemplate_PlacesTheEndOfTheStructureBeforeSandmanSections(t *testing.T) {
-	template := "## Issue\n\n{{ISSUE_BODY}}\n\n" + reviewTimeoutContextHeading + "\n\n- x\n"
+func TestMarkTemplate_EndsTheStructureBeforeSectionsSandmanRewrites(t *testing.T) {
+	template := "## Issue\n\n{{ISSUE_BODY}}\n\n" + managedHandoffContextHeading + "\n\n- x\n"
 
 	marked := markTemplate(template, testNonce)
 
-	if at := strings.Index(marked, structureMarker(taskEndMarker, testNonce)); at < 0 || at > strings.Index(marked, reviewTimeoutContextHeading) {
+	if at := strings.Index(marked, structureMarker(taskEndMarker, testNonce)); at < 0 || at > strings.Index(marked, managedHandoffContextHeading) {
 		t.Fatalf("marked:\n%s", marked)
 	}
 }
@@ -656,6 +656,37 @@ func TestBuiltInTaskBounds_RefusesLayoutsItCannotVerify(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if bounds, ok := BuiltInTaskBounds(tc.cfg, tc.task, tc.body); ok {
 				t.Fatalf("located %+v", bounds)
+			}
+		})
+	}
+}
+
+// A template section named like one of Sandman's can hold the issue body; the
+// structure still ends after it.
+func TestMarkTemplate_EndsTheStructureAfterEveryIssueSubstitution(t *testing.T) {
+	template := "## Next Step\n\nStart.\n\n## Footer\n\nF.\n\n" + reviewTimeoutContextHeading + "\n\n{{ISSUE_BODY}}\n"
+	issue := "## Acceptance criteria\n\n" + paragraph("criterion", 3000)
+	task := renderMarked(template, issue) + strings.Join(checkpoints(12, 1000), "")
+
+	got := compactTo(task, 8*1024, true)
+
+	if !got.Compacted || !strings.Contains(got.Content, issue) || strings.Contains(got.Content, "## Checkpoint 1\n") {
+		t.Fatalf("compacted = %t (%s); the issue left the Task", got.Compacted, got.Reason)
+	}
+}
+
+// A section after Next Step can be empty; its heading is still not part of the
+// editable group.
+func TestCompactTask_KeepsAnEmptySectionAfterNextStep(t *testing.T) {
+	for name, trailer := range map[string]string{"empty": "", "blank lines": "\n\n"} {
+		t.Run(name, func(t *testing.T) {
+			template := "## Issue\n\n{{ISSUE_BODY}}\n\n## Next Step\n\nStart.\n\n## Project Sign-off\n" + trailer
+			task := strings.Replace(renderMarked(template, "Issue."), "Start.\n", "Start.\n"+paragraph("now", 9000), 1)
+
+			got := compact(task, true)
+
+			if !got.Compacted || !strings.Contains(got.Content, "## Project Sign-off\n") {
+				t.Fatalf("compacted = %t; the sign-off heading moved:\n%s", got.Compacted, got.Content)
 			}
 		})
 	}

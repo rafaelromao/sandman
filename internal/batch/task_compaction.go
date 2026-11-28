@@ -21,6 +21,10 @@ import (
 // worktree.
 const taskAnchorsFile = "task-anchors"
 
+// unmarkedTaskNote says why an automatic compaction skips a Task without
+// structure markers.
+const unmarkedTaskNote = "the Task has no structure markers; `sandman run --continue --compact` can compact it on request"
+
 // maxArchiveNames bounds the names tried for one archive: the timestamp name,
 // then that name with "-2", "-3", ... when an earlier compaction in the same
 // second already holds it.
@@ -38,7 +42,7 @@ type TaskCompactionRequest struct {
 	// Force compacts below the threshold, as `--continue --compact` does.
 	Force bool
 	// Template and IssueBody verify the built-in layout of a Task that
-	// carries no markers.
+	// carries no markers, which only a forced compaction uses.
 	Template  prompt.RenderConfig
 	IssueBody string
 	Now       time.Time
@@ -63,7 +67,7 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 		write = atomicfs.WriteAtomicNew
 	}
 	unchanged := prompt.TaskCompactionResult{Content: content, Before: len(content), After: len(content)}
-	bounds := taskBounds(req.WorkDir, req.Template, content, req.IssueBody)
+	bounds := taskBounds(req, content)
 	// Every archive gets its own name, so a second compaction in the same
 	// second never replaces the first one's only copy of what it moved.
 	for n := 1; n <= maxArchiveNames; n++ {
@@ -80,6 +84,9 @@ func CompactWorktreeTask(content string, req TaskCompactionRequest) (prompt.Task
 			Bounds:      bounds,
 		})
 		if !result.Compacted {
+			if bounds == nil && !req.Force && result.Reason != "" {
+				result.Reason = unmarkedTaskNote
+			}
 			return result, nil
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -126,15 +133,20 @@ func taskArchiveName(label string, now time.Time, n int) string {
 }
 
 // taskBounds locates the structure of a worktree's Task from the markers its
-// fresh render recorded, or, for a Task without them, from the built-in
-// layout. It returns nil when neither is verified.
-func taskBounds(workDir string, template prompt.RenderConfig, content, issueBody string) *prompt.TaskBounds {
-	if data, err := os.ReadFile(filepath.Join(workDir, ".sandman", taskAnchorsFile)); err == nil {
+// fresh render recorded. A Task without them, such as one rendered before
+// Sandman marked Tasks, is located from the built-in layout only when the
+// operator asked for the compaction: the layout cannot prove that an older
+// template had no section after it. It returns nil when nothing is located.
+func taskBounds(req TaskCompactionRequest, content string) *prompt.TaskBounds {
+	if data, err := os.ReadFile(filepath.Join(req.WorkDir, ".sandman", taskAnchorsFile)); err == nil {
 		if bounds, ok := prompt.MarkedTaskBounds(content, strings.TrimSpace(string(data))); ok {
 			return &bounds
 		}
 	}
-	if bounds, ok := prompt.BuiltInTaskBounds(template, content, issueBody); ok {
+	if !req.Force {
+		return nil
+	}
+	if bounds, ok := prompt.BuiltInTaskBounds(req.Template, content, req.IssueBody); ok {
 		return &bounds
 	}
 	return nil
@@ -150,7 +162,7 @@ func newTaskNonce() (string, error) {
 }
 
 // recordTaskNonce stores the nonce of a fresh Task's markers. A failure is
-// reported and leaves later compaction to the built-in layout.
+// reported and leaves the Task to compaction on request only.
 func (r *AgentRun) recordTaskNonce(nonce string) {
 	if nonce == "" {
 		return

@@ -23,16 +23,45 @@ import (
 
 const testTaskCompactBytes = 48 * 1024
 
-// checkpointTask is the built-in template, for an issue with an empty body,
-// followed by count agent checkpoint sections of about 2 KiB each, the shape a
-// long continuation grows into.
+// testTaskNonce is the marker nonce of the test Tasks.
+const testTaskNonce = "test-nonce"
+
+// checkpointTask is a fresh marked render of the built-in template, for an
+// issue with an empty body, followed by count agent checkpoint sections of
+// about 2 KiB each, the shape a long continuation grows into.
 func checkpointTask(count int) string {
+	rendered, err := (&prompt.Engine{}).RenderMarked(prompt.RenderConfig{}, prompt.IssueData{Number: 7, Title: "Compaction"}, testTaskNonce)
+	if err != nil {
+		panic(err)
+	}
+	return withCheckpoints(rendered, count)
+}
+
+// unmarkedTask is checkpointTask as a Task rendered before markers.
+func unmarkedTask(count int) string {
+	return withCheckpoints(strings.Replace(prompt.DefaultPrompt(), "{{ISSUE_BODY}}", "", 1), count)
+}
+
+func withCheckpoints(rendered string, count int) string {
 	var b strings.Builder
-	b.WriteString(strings.Replace(prompt.DefaultPrompt(), "{{ISSUE_BODY}}", "", 1))
+	b.WriteString(rendered)
 	for i := 1; i <= count; i++ {
 		fmt.Fprintf(&b, "\n## Checkpoint %d\n\n%s\n", i, strings.Repeat(fmt.Sprintf("checkpoint %d detail. ", i), 100))
 	}
 	return b.String()
+}
+
+// recordTestNonce records checkpointTask's markers in a worktree, as a fresh
+// launch does.
+func recordTestNonce(t *testing.T, workDir string) {
+	t.Helper()
+	path := filepath.Join(workDir, ".sandman", taskAnchorsFile)
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	if err := atomicfs.WriteAtomic(path, []byte(testTaskNonce+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // compactionLaunch runs one implementation launch of task through a worktree
@@ -70,6 +99,7 @@ func launchInWorktree(t *testing.T, root string, renderCfg prompt.RenderConfig, 
 	if err := sb.Start(sandbox.SandboxStart{Continue: statErr == nil}); err != nil {
 		t.Fatal(err)
 	}
+	recordTestNonce(t, sb.WorkDir())
 	launch := compactionLaunch{workDir: sb.WorkDir(), runFolder: filepath.Join(root, "run")}
 	run := NewAgentRunWithLayout(&github.Issue{Number: 7, Title: "Compaction"}, "compaction", sb, paths.NewLayout(&config.Config{}, root))
 	run.preset, run.runID = "opencode-v2", "261127100000-abcd-7"
@@ -152,18 +182,32 @@ func TestImplementationLaunch_CompactsAnOversizedTask(t *testing.T) {
 	}
 }
 
-// A Task rendered before Sandman marked Tasks is located by the built-in
-// layout, with the current issue body.
-func TestImplementationLaunch_CompactsAnUnmarkedBuiltInTask(t *testing.T) {
+// A Task rendered before Sandman marked Tasks is compacted only on request,
+// from the built-in layout with the current issue body; automatic compaction
+// leaves it alone and says how to ask.
+func TestImplementationLaunch_CompactsAnUnmarkedBuiltInTaskOnlyOnRequest(t *testing.T) {
 	issue := "## Goal\n\nKeep the goal.\n\n## Acceptance criteria\n\nKeep every criterion."
-	task := strings.Replace(checkpointTask(30), "## Issue Context\n\n", "## Issue Context\n\n"+issue, 1)
+	task := strings.Replace(unmarkedTask(30), "## Issue Context\n\n", "## Issue Context\n\n"+issue, 1)
 	task = strings.Replace(task, "## Next Step\n", "## Next Step\n\nCurrent checkpoint.\n"+strings.Repeat("Obsolete step.\n", 1000), 1)
-	launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
-		run.issue.Body = issue
-	})
-	if len(launch.stdin) >= testTaskCompactBytes || !strings.Contains(launch.stdin, issue) ||
-		!strings.Contains(launch.stdin, "Current checkpoint.") || strings.Count(launch.stdin, "Obsolete step.") >= 300 {
-		t.Fatalf("legacy launch did not retain the issue and cap the step: %d bytes", len(launch.stdin))
+	for name, force := range map[string]bool{"automatic": false, "on request": true} {
+		t.Run(name, func(t *testing.T) {
+			launch := launchInWorktree(t, t.TempDir(), prompt.RenderConfig{TaskPrompt: task}, testTaskCompactBytes, nil, func(run *AgentRun) {
+				run.issue.Body = issue
+				run.forceTaskCompaction = force
+			})
+
+			log, _ := os.ReadFile(filepath.Join(launch.runFolder, "run.log"))
+			if !force {
+				if !strings.Contains(launch.stdin, "## Checkpoint 1\n") || !strings.Contains(string(log), "--continue --compact") {
+					t.Fatalf("an unmarked Task was compacted automatically, or the log does not say how to:\n%s", log)
+				}
+				return
+			}
+			if len(launch.stdin) >= testTaskCompactBytes || !strings.Contains(launch.stdin, issue) ||
+				!strings.Contains(launch.stdin, "Current checkpoint.") || strings.Count(launch.stdin, "Obsolete step.") >= 300 {
+				t.Fatalf("the requested compaction did not keep the issue and cap the step: %d bytes\n%s", len(launch.stdin), log)
+			}
+		})
 	}
 }
 
@@ -311,6 +355,7 @@ func TestRunSession_PassesTheConfiguredTaskCompactThreshold(t *testing.T) {
 // retry can be, each keep their own archive and pointer.
 func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T) {
 	workDir := t.TempDir()
+	recordTestNonce(t, workDir)
 	now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
 	compact := func(content string) prompt.TaskCompactionResult {
 		t.Helper()
@@ -344,7 +389,7 @@ func TestCompactWorktreeTask_SameSecondCompactionsKeepEveryArchive(t *testing.T)
 // the reason, whatever its size.
 func TestCompactWorktreeTask_LeavesUnverifiedLayoutsAlone(t *testing.T) {
 	issue := "## Acceptance criteria\n\n- [ ] keep me\n"
-	history := checkpointTask(30)[len(checkpointTask(0)):]
+	history := unmarkedTask(30)[len(unmarkedTask(0)):]
 	custom := "# Task\n\n## Next Step\n\nStart.\n\n## Issue Context\n\n{{ISSUE_BODY}}\n"
 	for name, tc := range map[string]struct {
 		task string
@@ -352,8 +397,8 @@ func TestCompactWorktreeTask_LeavesUnverifiedLayoutsAlone(t *testing.T) {
 		body string
 	}{
 		"custom template ending with the issue body": {strings.Replace(custom, "{{ISSUE_BODY}}", issue, 1) + history, prompt.RenderConfig{PromptFlag: custom}, issue},
-		"custom template with the built-in Task":     {checkpointTask(30), prompt.RenderConfig{PromptFlag: custom}, ""},
-		"built-in Task with an edited issue":         {checkpointTask(30), prompt.RenderConfig{}, issue},
+		"custom template with the built-in Task":     {unmarkedTask(30), prompt.RenderConfig{PromptFlag: custom}, ""},
+		"built-in Task with an edited issue":         {unmarkedTask(30), prompt.RenderConfig{}, issue},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -407,6 +452,7 @@ func testRefusedCompactionLaunch(t *testing.T, refusal string) {
 	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
 		t.Fatal(err)
 	}
+	recordTestNonce(t, sb.WorkDir())
 	task := checkpointTask(30)
 	if err := sb.WritePrompt(task); err != nil {
 		t.Fatal(err)

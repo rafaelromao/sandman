@@ -43,16 +43,21 @@ updates it.
   and edited sections can all reuse template titles. A fresh implementation
   render therefore writes comment markers into its Task, carrying a per-render
   nonce recorded in `.sandman/task-anchors`: before the template's
-  `## Next Step`, after the heading of the section that follows it, and at the
-  end of the template and issue content. Issue text cannot forge the nonce. A
-  Next Step that the issue body is substituted into is not marked.
+  `## Next Step`, after the heading of the section that follows it (or with a
+  distinct marker when it is last), and after the template and every issue
+  substitution. Only sections Sandman removes and rewrites at launches may
+  follow the end marker. Issue text cannot forge the nonce. A Next Step that
+  the issue body is substituted into is not marked.
 - **Unmarked Tasks.** A Task without markers, such as one rendered before this
-  decision, is located only for the built-in layout: the template puts the
-  issue body alone under `## Issue Context` before `## Runtime Context` and ends
-  with the built-in `## Completion Requirements`, and the Task holds the current
-  issue body and those requirements verbatim. Its Next Step group ends at
-  `## Managed Review Boundary`. Anything else is left unchanged, and the run
-  log says there is no recorded structure.
+  decision, is never compacted automatically; the run log says that `--continue
+  --compact` can. On request it is located only for the built-in layout: the
+  template puts the issue body alone under `## Issue Context` before `##
+  Runtime Context` and ends with the built-in `## Completion Requirements`, and
+  the Task holds the current issue body and those requirements verbatim. Its
+  Next Step group ends at `## Managed Review Boundary`. This cannot prove that
+  an older template had no section after the requirements, which would move
+  into the archive; the operator accepts that by asking. Anything else is left
+  unchanged.
 - **What moves.** Only what follows the structure is history. The fewest oldest
   sections move for the Task, with a pointer naming exactly what moved, to fit;
   a result that would not be smaller is not written. The marked Next Step group

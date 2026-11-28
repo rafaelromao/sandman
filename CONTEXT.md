@@ -456,7 +456,7 @@ _Avoid_: Summarising the Task, trimming the Task.
 The complete Task as it was before a compaction, written as a new file, never replacing one, to `.sandman/task-history/<RunID>-<UTC timestamp>.md` in the worktree (`-2`, `-3`, ... for later compactions in the same second) before the compacted Task, and named in the Task's `## Sandman Task History` section.
 
 **Task anchors**:
-The comment markers a fresh implementation render writes into its Task, around the template's `## Next Step` and at the end of the template and issue content, carrying a nonce recorded in `.sandman/task-anchors`. Compaction keeps what precedes the end marker, caps only the marked Next Step, and treats what follows as history. A Task without markers is located only for the built-in layout.
+The comment markers a fresh implementation render writes into its Task, around the template's `## Next Step` and at the end of the template and issue content, carrying a nonce recorded in `.sandman/task-anchors`. Compaction keeps what precedes the end marker, caps only the marked Next Step, and treats what follows as history. A Task without markers is compacted only on request (`--continue --compact`), from the verified built-in layout.
 
 **Default Task Prompt**:
 The canonical bootstrap prompt template embedded in Sandman at `internal/prompt/default-task-prompt.md`.
