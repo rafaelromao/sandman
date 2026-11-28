@@ -300,15 +300,19 @@ func (d *taskDocument) addHeading(node *ast.Heading) {
 		return
 	}
 	heading := markdownHeading{start: start, end: lineEnd(d.content, at), level: node.Level, topLevel: node.Parent().Kind() == ast.KindDocument}
-	// A paragraph cannot begin as an ATX heading does, so only an underlined
-	// title lacks the number signs.
-	if rest := strings.TrimLeft(body, "#"); len(rest) == len(body) || strings.TrimLeft(rest, " \t\r\n") == rest && rest != "" {
-		// An underlined title behind a quote or list marker does not begin its
-		// line.
-		if at-start > indent || node.Lines().Len() == 0 {
+	// An underlined heading is placed where its title's first line is, an ATX
+	// one before its title, at its number signs.
+	heading.underlined = node.Lines().Len() > 0 && node.Lines().At(0).Start == at
+	if !heading.underlined {
+		// One behind a quote or list marker does not begin its line, and a
+		// section needs a name h2Heading reads.
+		if _, named := h2Heading(line); !strings.HasPrefix(body, "#") || node.Level == 2 && !named {
 			return
 		}
-		heading.underlined = true
+	} else {
+		if at-start > indent {
+			return // behind a quote or list marker
+		}
 		for i := range node.Lines().Len() {
 			segment := node.Lines().At(i)
 			heading.title = append(heading.title, strings.TrimSpace(d.content[segment.Start:segment.Stop]))

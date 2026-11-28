@@ -100,10 +100,19 @@ func TestSplitTaskSections_ReadsUnderlinedHeadings(t *testing.T) {
 		"underline inside a fence":   {"```\nTitle\n---\n```\n", ""},
 		"underline inside a comment": {"<!--\nTitle\n---\n-->\n", ""},
 		"indented too far to be one": {"    Title\n    ---\n", ""},
+		"seven number signs":         {"####### x\n---\n", "## ####### x"},
+		"a hash tag":                 {"#tag\n---\n", "## #tag"},
 	} {
 		if got := strings.Join(headingsIn(tc.content), "|"); got != tc.want {
 			t.Errorf("%s: headings = %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+// A line the section names cannot be read from starts no section.
+func TestSplitTaskSections_StartsNoUnnamedSections(t *testing.T) {
+	if sections := splitTaskSections("##\fx\n"); len(sections) != 1 {
+		t.Fatalf("sections = %+v", sections)
 	}
 }
 
